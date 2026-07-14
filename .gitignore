@@ -1,0 +1,14 @@
+# SwiftPM / build
+.build/
+.swiftpm/
+DerivedData/
+
+# Assembled app bundle (produced by Scripts/bundle.sh)
+*.app/
+
+# macOS
+.DS_Store
+
+# Xcode user state (in case the project is opened in Xcode)
+xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
