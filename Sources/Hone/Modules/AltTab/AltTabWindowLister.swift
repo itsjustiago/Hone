@@ -90,8 +90,9 @@ enum AltTabWindowLister {
         var out: [WindowInfo] = []
         for axWindow in AX.elements(axApp, "AXWindows") {
             guard AX.bool(axWindow, "AXMinimized") == true else { continue }
-            let subrole = AX.string(axWindow, "AXSubrole")
-            guard subrole == nil || subrole == "AXStandardWindow" else { continue }
+            // Keep every real minimized window; some apps report them as AXDialog
+            // rather than AXStandardWindow. Only palettes/panels are filtered out.
+            guard !isAuxiliarySubrole(AX.string(axWindow, "AXSubrole")) else { continue }
 
             let pos = AX.point(axWindow, "AXPosition") ?? .zero
             let size = AX.size(axWindow, "AXSize") ?? CGSize(width: 1280, height: 800)

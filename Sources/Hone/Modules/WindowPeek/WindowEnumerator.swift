@@ -28,8 +28,10 @@ enum WindowEnumerator {
         let allWindows = cgWindows(forPID: pid, options: [.optionAll, .excludeDesktopElements])
         for axWindow in axWindows {
             guard AX.bool(axWindow, "AXMinimized") == true else { continue }
-            let subrole = AX.string(axWindow, "AXSubrole")
-            guard subrole == nil || subrole == "AXStandardWindow" else { continue }
+            // A minimized window is a real, restorable window whatever its subrole —
+            // some apps flip minimized document windows to AXDialog (Finder does), so
+            // requiring AXStandardWindow here made them vanish. Only skip palettes.
+            guard !isAuxiliarySubrole(AX.string(axWindow, "AXSubrole")) else { continue }
 
             let pos = AX.point(axWindow, "AXPosition") ?? .zero
             let size = AX.size(axWindow, "AXSize") ?? .zero

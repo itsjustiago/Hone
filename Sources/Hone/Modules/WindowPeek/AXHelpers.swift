@@ -98,6 +98,17 @@ enum AX {
     }
 }
 
+/// Whether an `AXSubrole` is a palette / panel rather than a real, switchable
+/// window. Used to filter minimized windows: a minimized window keeps a valid
+/// subrole (often `AXStandardWindow`, but some apps report `AXDialog`), and all of
+/// those are worth showing — only floating auxiliary panels are not.
+func isAuxiliarySubrole(_ subrole: String?) -> Bool {
+    switch subrole {
+    case "AXFloatingWindow", "AXSystemFloatingWindow", "AXUnknown": return true
+    default: return false
+    }
+}
+
 /// Converts a bottom-left-origin AppKit point (e.g. `NSEvent.mouseLocation`) to
 /// the top-left-origin coordinate space used by CoreGraphics and the AX API.
 @MainActor
