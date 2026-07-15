@@ -86,9 +86,10 @@ private struct ModuleDetailView: View {
                     PermissionBanner(tint: module.tint) { permissions.openAccessibilitySettings() }
                 }
 
+                let dimmed = module.isAvailable && !module.isMomentary && !module.isEnabled
                 module.makeSettingsView()
-                    .disabled(module.isAvailable && !module.isEnabled)
-                    .opacity(module.isAvailable && !module.isEnabled ? 0.45 : 1)
+                    .disabled(dimmed)
+                    .opacity(dimmed ? 0.45 : 1)
             }
             .padding(22)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -107,14 +108,21 @@ private struct ModuleDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
-            Toggle("", isOn: Binding(
-                get: { module.isEnabled },
-                set: { manager.setEnabled($0, for: module) }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .tint(module.tint)
-            .controlSize(.large)
+            if module.isMomentary {
+                Button(module.actionLabel, action: module.performAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(module.tint)
+                    .controlSize(.large)
+            } else {
+                Toggle("", isOn: Binding(
+                    get: { module.isEnabled },
+                    set: { manager.setEnabled($0, for: module) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(module.tint)
+                .controlSize(.large)
+            }
         }
     }
 }

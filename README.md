@@ -14,6 +14,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 |------|----------|--------|--------------|
 | **Scroll** | MOS | ✅ Working | Reverses the physical mouse wheel independently of the trackpad, and turns discrete wheel notches into smooth, eased pixel scrolling. |
 | **Window Peek** | DockDoor | ✅ Working (v1) | Hover a Dock icon to preview that app's open windows as live thumbnails, then click one to focus it. |
+| **Clean Keyboard** | — | ✅ Working | Temporarily locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A full-screen curtain counts down; unlock with Esc ×3, the on-screen button, or the timer. |
 
 ## Requirements
 
@@ -57,9 +58,15 @@ Sources/Hone/
 ├── UI/             MenuBarContent · SettingsView
 └── Modules/
     ├── Scroll/     ScrollModule · ScrollEventTap · ScrollAnimator · ScrollSettings(+View)
-    └── WindowPeek/ WindowPeekModule · WindowPeekController · DockObserver ·
-                    WindowEnumerator · WindowFocuser · WindowPeekPanel(+View) · AXHelpers
+    ├── WindowPeek/ WindowPeekModule · WindowPeekController · DockObserver ·
+    │               WindowEnumerator · WindowFocuser · WindowPeekPanel(+View) · AXHelpers
+    └── CleanKeyboard/ CleanKeyboardModule · CleanKeyboardController · KeyboardBlocker ·
+                    CleanKeyboardOverlay(+View) · CleanKeyboardSettings(+View)
 ```
+
+Most tools are on/off **toggles**, but a module can instead be **momentary** —
+it exposes a one-shot button (`performAction()`) rather than a persistent switch.
+Clean Keyboard is the first of these.
 
 ### How the Scroll tool works
 
@@ -83,6 +90,26 @@ thumbnail per window. `WindowPeekPanel` — a borderless, non-activating floatin
 panel — shows them above the icon; clicking one calls `WindowFocuser`, which
 activates the app and raises the matching AX window. Hover-intent keeps the panel
 alive while you move from the icon to the panel.
+
+### How the Clean Keyboard tool works
+
+Hit **Limpar** and `KeyboardBlocker` installs a session-level `CGEventTap` that
+**swallows** every `keyDown`/`keyUp`/`flagsChanged` (and, optionally, the
+`NSSystemDefined` media/function keys) — so wiping the keys types nothing and
+fires no shortcuts. The mouse is deliberately left untouched. A shield-level
+curtain (`CleanKeyboardOverlay`, one panel per screen) shows a countdown and the
+ways out.
+
+Three independent unlock paths, so you can never get stuck:
+
+- the **countdown** lifts the lock automatically (default 30s, configurable);
+- the on-screen **Desbloquear** button (mouse still works);
+- pressing **Esc three times** — detected inside the tap, ignoring key-repeat and
+  resetting on any other key, so a flat-hand wipe can't trigger it by accident.
+
+The tap is created **before** the curtain appears (and only if Accessibility is
+granted), so the overlay never claims the keys are locked when they aren't. The
+tap is per-process: quitting or crashing Hone restores the keyboard instantly.
 
 ## Adding a new tool
 

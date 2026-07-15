@@ -27,12 +27,14 @@ final class ModuleManager {
         modules = [
             ScrollModule(),
             WindowPeekModule(),
+            CleanKeyboardModule(),
         ]
     }
 
     /// Start every module that was left enabled last session (if permission allows).
+    /// Momentary tools (e.g. Clean Keyboard) run on demand, never at launch.
     private func applyEnabledStates() {
-        for module in modules where module.isEnabled && module.isAvailable {
+        for module in modules where module.isEnabled && module.isAvailable && !module.isMomentary {
             if module.requiresAccessibility && !permissions.isAccessibilityTrusted {
                 // Keep the persisted "on" state but don't start until trusted.
                 continue
