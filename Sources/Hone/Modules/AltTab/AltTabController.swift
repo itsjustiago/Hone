@@ -59,9 +59,27 @@ final class AltTabController {
         // Front window is index 0 (where we are now); start on the neighbour so a
         // quick tap-and-release flips to the previously used window.
         selection.index = backward ? entries.count - 1 : 1
-        overlay.show(selection: selection, tint: tint)
+        overlay.show(selection: selection, tint: tint,
+                     onHover: { [weak self] index in self?.hover(index) },
+                     onPick: { [weak self] entry in self?.pick(entry) },
+                     onCancel: { [weak self] in self?.cancel() })
         isOpen = true
         return true
+    }
+
+    /// The mouse moved over a tile — follow it.
+    private func hover(_ index: Int) {
+        guard isOpen, selection.entries.indices.contains(index) else { return }
+        selection.index = index
+    }
+
+    /// A tile was clicked — focus it now, even if the modifier is still down. The
+    /// tap's modal session is ended too, so the later modifier-release is a no-op.
+    private func pick(_ entry: AltTabEntry) {
+        guard isOpen else { return }
+        closeOverlay()
+        tap.endSession()
+        WindowFocuser.focus(entry.window)
     }
 
     private func step(backward: Bool) {

@@ -6,6 +6,12 @@ import SwiftUI
 struct AltTabView: View {
     let selection: AltTabSelection
     var tint: Color = .teal
+    /// Click a tile — focus that window now.
+    var onPick: (AltTabEntry) -> Void = { _ in }
+    /// Mouse moved over a tile — make it the highlight.
+    var onHover: (Int) -> Void = { _ in }
+    /// Click outside the grid — dismiss without switching.
+    var onCancel: () -> Void = {}
 
     private let tileWidth: CGFloat = 208
     private let thumbHeight: CGFloat = 122
@@ -13,6 +19,8 @@ struct AltTabView: View {
     var body: some View {
         ZStack {
             Color.black.opacity(0.32).ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { onCancel() }
 
             VStack(spacing: 14) {
                 grid
@@ -39,12 +47,16 @@ struct AltTabView: View {
                     spacing: 14
                 ) {
                     ForEach(selection.entries) { entry in
-                        WindowTile(entry: entry,
-                                   selected: entry.id == selection.index,
-                                   tint: tint,
-                                   width: tileWidth,
-                                   thumbHeight: thumbHeight)
-                            .id(entry.id)
+                        Button { onPick(entry) } label: {
+                            WindowTile(entry: entry,
+                                       selected: entry.id == selection.index,
+                                       tint: tint,
+                                       width: tileWidth,
+                                       thumbHeight: thumbHeight)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { if $0 { onHover(entry.id) } }
+                        .id(entry.id)
                     }
                 }
                 .padding(4)
