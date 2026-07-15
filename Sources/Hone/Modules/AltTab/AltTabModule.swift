@@ -30,11 +30,9 @@ final class AltTabModule: HoneModule {
     }
 
     func start() {
-        // Window previews — static or live — need Screen Recording; ask once. The
-        // switcher still works without it, showing app icons instead of previews.
-        if !Permissions.shared.isScreenRecordingTrusted {
-            Permissions.shared.requestScreenRecording()
-        }
+        // Only the content preview modes need Screen Recording; the default icon
+        // mode never captures, so the recording indicator never appears.
+        requestScreenRecordingIfNeeded()
         controller.start(settings: settings, tint: tint)
     }
 
@@ -46,6 +44,18 @@ final class AltTabModule: HoneModule {
     /// tap starts listening for the new key immediately.
     func reloadModifier() {
         controller.updateModifier(settings.modifier)
+    }
+
+    /// Called from settings when the preview mode changes — prompt for Screen
+    /// Recording if the new mode needs it and it isn't granted yet.
+    func previewModeChanged() {
+        requestScreenRecordingIfNeeded()
+    }
+
+    private func requestScreenRecordingIfNeeded() {
+        if settings.previewMode.needsScreenRecording && !Permissions.shared.isScreenRecordingTrusted {
+            Permissions.shared.requestScreenRecording()
+        }
     }
 
     func makeSettingsView() -> AnyView {

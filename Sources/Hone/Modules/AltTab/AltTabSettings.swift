@@ -36,6 +36,30 @@ enum AltTabModifier: String, CaseIterable, Identifiable {
     }
 }
 
+/// How each window is drawn in the switcher.
+///
+/// `icons` never captures the screen, so the macOS recording indicator never
+/// appears — the trade-off being you see the app's icon, not its contents.
+/// `snapshot` and `live` show real window content, which always needs Screen
+/// Recording and therefore lights the indicator (a blink per open for snapshot,
+/// steadily for live). Icons are the default precisely because they never record.
+enum AltTabPreviewMode: String, CaseIterable, Identifiable {
+    case icons, snapshot, live
+
+    var id: String { rawValue }
+
+    var display: String {
+        switch self {
+        case .icons: return "Ícones"
+        case .snapshot: return "Fixa"
+        case .live: return "Ao vivo"
+        }
+    }
+
+    /// True for the modes that capture window content.
+    var needsScreenRecording: Bool { self != .icons }
+}
+
 /// Persisted knobs for the visual switcher.
 @MainActor
 @Observable
@@ -47,13 +71,10 @@ final class AltTabSettings {
         didSet { d.set(modifier.rawValue, forKey: "altTab.modifier") }
     }
 
-    /// Refresh each preview continuously while the switcher is open (a live view
-    /// of the window) instead of a single snapshot taken when it opens. Live keeps
-    /// the screen-recording indicator lit the whole time; static only blinks it
-    /// once. Either way, showing window *content* needs Screen Recording — without
-    /// it, previews fall back to the app icon.
-    var livePreviews: Bool {
-        didSet { d.set(livePreviews, forKey: "altTab.livePreviews") }
+    /// How windows are previewed: app icons (no screen capture), a static snapshot,
+    /// or a live view. See `AltTabPreviewMode` for the recording-indicator trade-off.
+    var previewMode: AltTabPreviewMode {
+        didSet { d.set(previewMode.rawValue, forKey: "altTab.previewMode") }
     }
 
     /// Also list minimized windows (read via the Accessibility API).
@@ -63,7 +84,7 @@ final class AltTabSettings {
 
     init() {
         modifier = AltTabModifier(rawValue: d.string(forKey: "altTab.modifier") ?? "") ?? .option
-        livePreviews = (d.object(forKey: "altTab.livePreviews") as? Bool) ?? false
+        previewMode = AltTabPreviewMode(rawValue: d.string(forKey: "altTab.previewMode") ?? "") ?? .icons
         includeMinimized = (d.object(forKey: "altTab.includeMinimized") as? Bool) ?? true
     }
 }
