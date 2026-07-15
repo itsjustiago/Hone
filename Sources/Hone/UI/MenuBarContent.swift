@@ -42,7 +42,8 @@ struct MenuBarContent: View {
 
             VStack(spacing: 2) {
                 ForEach(manager.modules, id: \.id) { module in
-                    ModuleRow(module: module, manager: manager, innerPad: contentInset - edge)
+                    ModuleRow(module: module, manager: manager,
+                              innerPad: contentInset - edge, dismiss: dismiss)
                 }
             }
             .padding(.horizontal, edge)
@@ -93,7 +94,7 @@ struct MenuBarContent: View {
     }
 
     private var activeSummary: String {
-        let active = manager.modules.filter { $0.isAvailable && $0.isEnabled }.count
+        let active = manager.modules.filter { $0.isAvailable && $0.isEnabled && !$0.isMomentary }.count
         switch active {
         case 0: return "Nenhuma ferramenta ativa"
         case 1: return "1 ferramenta ativa"
@@ -156,6 +157,7 @@ private struct ModuleRow: View {
     let module: any HoneModule
     @Bindable var manager: ModuleManager
     let innerPad: CGFloat
+    var dismiss: () -> Void = {}
     @State private var hovering = false
 
     var body: some View {
@@ -170,16 +172,7 @@ private struct ModuleRow: View {
                     .foregroundStyle(statusColor)
             }
             Spacer(minLength: 8)
-            if module.isAvailable {
-                Toggle("", isOn: Binding(
-                    get: { module.isEnabled },
-                    set: { manager.setEnabled($0, for: module) }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(module.tint)
-                .controlSize(.small)
-            }
+            trailingControl
         }
         .padding(.horizontal, innerPad)
         .padding(.vertical, 7)
@@ -193,9 +186,34 @@ private struct ModuleRow: View {
         .animation(.easeInOut(duration: 0.16), value: module.isEnabled)
     }
 
+    @ViewBuilder
+    private var trailingControl: some View {
+        if !module.isAvailable {
+            EmptyView()
+        } else if module.isMomentary {
+            // Momentary tools run once — a button, not a persistent switch.
+            Button(module.actionLabel) {
+                dismiss()
+                module.performAction()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(module.tint)
+            .controlSize(.small)
+        } else {
+            Toggle("", isOn: Binding(
+                get: { module.isEnabled },
+                set: { manager.setEnabled($0, for: module) }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .tint(module.tint)
+            .controlSize(.small)
+        }
+    }
+
     /// A tool that is switched on "lights up" with its tint — the highlight ported
     /// from Sleepy's hero card so active tools read at a glance.
-    private var isActive: Bool { module.isAvailable && module.isEnabled }
+    private var isActive: Bool { module.isAvailable && module.isEnabled && !module.isMomentary }
 
     private var rowBackground: AnyShapeStyle {
         if isActive { return AnyShapeStyle(module.tint.opacity(hovering ? 0.16 : 0.10)) }
@@ -205,10 +223,11 @@ private struct ModuleRow: View {
 
     private var statusText: String {
         if !module.isAvailable { return "Em breve" }
+        if module.isMomentary { return "Bloqueia as teclas para limpar" }
         return module.isEnabled ? "Ativo" : "Desligado"
     }
     private var statusColor: AnyShapeStyle {
-        if module.isAvailable && module.isEnabled { return AnyShapeStyle(module.tint) }
+        if module.isAvailable && module.isEnabled && !module.isMomentary { return AnyShapeStyle(module.tint) }
         return AnyShapeStyle(.secondary)
     }
 }

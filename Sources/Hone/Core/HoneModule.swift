@@ -29,8 +29,17 @@ protocol HoneModule: AnyObject {
     /// Whether the tool needs the Accessibility permission to work.
     var requiresAccessibility: Bool { get }
 
+    /// A *momentary* tool performs a one-shot action (e.g. "lock the keyboard so I
+    /// can wipe it clean") instead of running in the background. When `true`, the
+    /// menu and settings show a button that calls `performAction()` rather than an
+    /// on/off switch, and the tool is left out of the "N tools active" count.
+    var isMomentary: Bool { get }
+
+    /// Button label for a momentary tool (e.g. "Limpar"). Ignored for toggles.
+    var actionLabel: String { get }
+
     /// Persisted on/off state. The setter is expected to `start()`/`stop()` the
-    /// module and write the value to `UserDefaults`.
+    /// module and write the value to `UserDefaults`. Unused by momentary tools.
     var isEnabled: Bool { get set }
 
     /// Begin intercepting / observing. Called when enabled (and permission granted).
@@ -39,6 +48,9 @@ protocol HoneModule: AnyObject {
     /// Tear down taps, timers and observers. Called when disabled or on quit.
     func stop()
 
+    /// Run a momentary tool's action. No-op for toggle tools.
+    func performAction()
+
     /// The module's settings pane. Return `AnyView(EmptyView())` if there is none.
     func makeSettingsView() -> AnyView
 }
@@ -46,6 +58,9 @@ protocol HoneModule: AnyObject {
 extension HoneModule {
     var requiresAccessibility: Bool { false }
     var tint: Color { .accentColor }
+    var isMomentary: Bool { false }
+    var actionLabel: String { "" }
+    func performAction() {}
     func makeSettingsView() -> AnyView { AnyView(EmptyView()) }
 }
 
