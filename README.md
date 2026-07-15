@@ -14,6 +14,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 |------|----------|--------|--------------|
 | **Scroll** | MOS | ✅ Working | Reverses the physical mouse wheel independently of the trackpad, and turns discrete wheel notches into smooth, eased pixel scrolling. |
 | **Window Peek** | DockDoor | ✅ Working (v1) | Hover a Dock icon to preview that app's open windows as live thumbnails, then click one to focus it. |
+| **Alt-Tab Visual** | [AltTab](https://github.com/lwouis/alt-tab-macos) | ✅ Working (v1) | Hold ⌥ Option and tap Tab for a full-screen grid of every open window (live thumbnails); keep tapping to cycle, release to switch. |
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
 
 ## Requirements
@@ -60,6 +61,8 @@ Sources/Hone/
     ├── Scroll/     ScrollModule · ScrollEventTap · ScrollAnimator · ScrollSettings(+View)
     ├── WindowPeek/ WindowPeekModule · WindowPeekController · DockObserver ·
     │               WindowEnumerator · WindowFocuser · WindowPeekPanel(+View) · AXHelpers
+    ├── AltTab/     AltTabModule · AltTabController · AltTabHotKeyTap ·
+    │               AltTabWindowLister · AltTabOverlay(+View) · AltTabSettings(+View)
     └── CleanKeyboard/ CleanKeyboardModule · CleanKeyboardController · KeyboardBlocker ·
                     CleanKeyboardOverlay(+View) · CleanKeyboardSettings(+View)
 ```
@@ -90,6 +93,22 @@ thumbnail per window. `WindowPeekPanel` — a borderless, non-activating floatin
 panel — shows them above the icon; clicking one calls `WindowFocuser`, which
 activates the app and raises the matching AX window. Hover-intent keeps the panel
 alive while you move from the icon to the panel.
+
+### How the Alt-Tab Visual tool works
+
+`AltTabHotKeyTap` — a session-level `CGEventTap` modelled on the Clean Keyboard
+blocker — watches for the activation modifier (⌥ Option by default; ⌃/⌘ optional)
+plus **Tab**. On the first press it asks `AltTabWindowLister` for every open
+window across all regular apps: a single global `CGWindowList` pass keeps them in
+front-to-back (most-recently-used) order, minimized windows are appended via the
+AX API, and each gets a thumbnail (Screen Recording) or its app icon as fallback.
+`AltTabOverlay` — a borderless, non-activating, full-screen panel — draws the
+grid; while it's up the tap is **modal**, so Tab/Shift-Tab, the arrow keys, Return
+and Esc drive the highlight and never leak to the app underneath. Releasing the
+modifier (or Return) commits: `WindowFocuser` activates the app and raises the
+matching AX window — restoring it first if it was minimized. Esc cancels. Because
+selection starts on the *second* window, a quick tap-and-release flips straight to
+the previously used window, exactly like the system switcher.
 
 ### How the Clean Keyboard tool works
 
