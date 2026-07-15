@@ -27,6 +27,7 @@ final class ModuleManager {
         modules = [
             ScrollModule(),
             WindowPeekModule(),
+            AltTabModule(),
             CleanKeyboardModule(),
         ]
     }
