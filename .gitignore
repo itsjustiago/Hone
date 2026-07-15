@@ -6,6 +6,9 @@ DerivedData/
 # Assembled app bundle (produced by Scripts/bundle.sh)
 *.app/
 
+# Release artifact (uploaded to GitHub Releases, not tracked)
+Hone.zip
+
 # macOS
 .DS_Store
 
