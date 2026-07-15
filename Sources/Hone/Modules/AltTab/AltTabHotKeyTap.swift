@@ -74,6 +74,12 @@ final class AltTabHotKeyTap {
         return true
     }
 
+    /// End the modal session from the outside (e.g. the mouse committed a pick),
+    /// so a still-held modifier releasing later doesn't fire a second commit.
+    func endSession() {
+        isActive = false
+    }
+
     func stop() {
         guard isRunning else { return }
         if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
