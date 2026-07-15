@@ -30,9 +30,9 @@ final class AltTabModule: HoneModule {
     }
 
     func start() {
-        // Thumbnails need Screen Recording; ask once, but the switcher still works
-        // (app icons instead of previews) if the user declines.
-        if settings.showThumbnails && !Permissions.shared.isScreenRecordingTrusted {
+        // Window previews — static or live — need Screen Recording; ask once. The
+        // switcher still works without it, showing app icons instead of previews.
+        if !Permissions.shared.isScreenRecordingTrusted {
             Permissions.shared.requestScreenRecording()
         }
         controller.start(settings: settings, tint: tint)

@@ -26,7 +26,7 @@ struct AltTabEntry: Identifiable, Equatable {
 /// on-screen, so they're gathered per app via the Accessibility API and appended.
 enum AltTabWindowLister {
     @MainActor
-    static func allWindows(captureThumbnails: Bool, includeMinimized: Bool) -> [AltTabEntry] {
+    static func allWindows(includeMinimized: Bool) -> [AltTabEntry] {
         let ownPID = ProcessInfo.processInfo.processIdentifier
 
         // Only apps that show up in the Dock / Cmd-Tab — skips menu-bar agents,
@@ -35,7 +35,9 @@ enum AltTabWindowLister {
             .filter { $0.activationPolicy == .regular && $0.processIdentifier != ownPID }
             .map { $0.processIdentifier })
 
-        let canCapture = captureThumbnails && Permissions.shared.isScreenRecordingTrusted
+        // A single snapshot per window, taken now (before the overlay covers the
+        // screen). Live refreshing, when enabled, is layered on by the controller.
+        let canCapture = Permissions.shared.isScreenRecordingTrusted
         var windows: [WindowInfo] = []
 
         // 1. On-screen windows across every app, in z-order.
