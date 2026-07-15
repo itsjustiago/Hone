@@ -24,6 +24,8 @@ final class AltTabController {
     private var isOpen = false
     private var settings: AltTabSettings?
     private var tint: Color = .teal
+    /// Drives live-preview refreshing while the switcher is open (nil when static).
+    private var liveTimer: Timer?
 
     func start(settings: AltTabSettings, tint: Color) {
         self.settings = settings
@@ -50,8 +52,7 @@ final class AltTabController {
 
     private func activate(backward: Bool) -> Bool {
         guard let settings else { return false }
-        let entries = AltTabWindowLister.allWindows(captureThumbnails: settings.showThumbnails,
-                                                    includeMinimized: settings.includeMinimized)
+        let entries = AltTabWindowLister.allWindows(includeMinimized: settings.includeMinimized)
         // Nothing to switch between — leave keys flowing normally.
         guard entries.count >= 2 else { return false }
 
@@ -64,7 +65,36 @@ final class AltTabController {
                      onPick: { [weak self] entry in self?.pick(entry) },
                      onCancel: { [weak self] in self?.cancel() })
         isOpen = true
+
+        // Static previews (the snapshot from the lister) are enough by default;
+        // only keep re-capturing when the user asked for a live view.
+        if settings.livePreviews && Permissions.shared.isScreenRecordingTrusted {
+            startLiveRefresh()
+        }
         return true
+    }
+
+    /// Re-capture each visible window periodically so its preview stays live. Kept
+    /// modest — a handful of windows on a slow tick — since it holds the
+    /// screen-recording indicator on the whole time it runs.
+    private func startLiveRefresh() {
+        liveTimer?.invalidate()
+        liveTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshThumbnails() }
+        }
+    }
+
+    private func refreshThumbnails() {
+        guard isOpen else { return }
+        var entries = selection.entries
+        var changed = false
+        for i in entries.indices where !entries[i].window.isMinimized && entries[i].window.id != 0 {
+            if let image = WindowEnumerator.thumbnail(for: entries[i].window.id) {
+                entries[i].window.thumbnail = image
+                changed = true
+            }
+        }
+        if changed { selection.entries = entries }
     }
 
     /// The mouse moved over a tile — follow it.
@@ -103,6 +133,8 @@ final class AltTabController {
     }
 
     private func closeOverlay() {
+        liveTimer?.invalidate()
+        liveTimer = nil
         overlay.hide()
         selection.entries = []
         selection.index = 0

@@ -47,10 +47,13 @@ final class AltTabSettings {
         didSet { d.set(modifier.rawValue, forKey: "altTab.modifier") }
     }
 
-    /// Capture a live thumbnail of each window (needs Screen Recording). Off or
-    /// ungranted, cards fall back to the app's icon — still fully usable.
-    var showThumbnails: Bool {
-        didSet { d.set(showThumbnails, forKey: "altTab.showThumbnails") }
+    /// Refresh each preview continuously while the switcher is open (a live view
+    /// of the window) instead of a single snapshot taken when it opens. Live keeps
+    /// the screen-recording indicator lit the whole time; static only blinks it
+    /// once. Either way, showing window *content* needs Screen Recording — without
+    /// it, previews fall back to the app icon.
+    var livePreviews: Bool {
+        didSet { d.set(livePreviews, forKey: "altTab.livePreviews") }
     }
 
     /// Also list minimized windows (read via the Accessibility API).
@@ -60,7 +63,7 @@ final class AltTabSettings {
 
     init() {
         modifier = AltTabModifier(rawValue: d.string(forKey: "altTab.modifier") ?? "") ?? .option
-        showThumbnails = (d.object(forKey: "altTab.showThumbnails") as? Bool) ?? true
+        livePreviews = (d.object(forKey: "altTab.livePreviews") as? Bool) ?? false
         includeMinimized = (d.object(forKey: "altTab.includeMinimized") as? Bool) ?? true
     }
 }

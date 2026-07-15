@@ -36,10 +36,10 @@ struct AltTabSettingsView: View {
 
             SettingsSection(title: "Pré-visualizações") {
                 ToggleRow(
-                    title: "Miniaturas das janelas ao vivo",
-                    subtitle: "Captura uma imagem de cada janela. Precisa de Gravação de Ecrã — sem ela, mostra o ícone da app.",
+                    title: "Pré-visualizações ao vivo",
+                    subtitle: "Ligado, as miniaturas atualizam-se em tempo real (grava o ecrã enquanto o alternador está aberto). Desligado, capta uma imagem fixa só ao abrir — menos intrusivo. Ver o conteúdo das janelas precisa de Gravação de Ecrã à mesma; sem ela, mostra o ícone da app.",
                     tint: tint,
-                    isOn: $settings.showThumbnails
+                    isOn: $settings.livePreviews
                 )
                 RowDivider()
                 ToggleRow(

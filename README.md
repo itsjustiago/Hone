@@ -14,7 +14,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 |------|----------|--------|--------------|
 | **Scroll** | MOS | ✅ Working | Reverses the physical mouse wheel independently of the trackpad, and turns discrete wheel notches into smooth, eased pixel scrolling. |
 | **Window Peek** | DockDoor | ✅ Working (v1) | Hover a Dock icon to preview that app's open windows as live thumbnails, then click one to focus it. |
-| **Alt-Tab Visual** | [AltTab](https://github.com/lwouis/alt-tab-macos) | ✅ Working (v1) | Hold ⌥ Option and tap Tab for a full-screen grid of every open window (live thumbnails); keep tapping to cycle, release to switch. |
+| **Alt-Tab Visual** | [AltTab](https://github.com/lwouis/alt-tab-macos) | ✅ Working (v1) | Hold ⌥ Option and tap Tab for a full-screen grid of every open window (static or live previews); cycle by keyboard or mouse, release to switch. |
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
 
 ## Requirements
@@ -101,14 +101,20 @@ blocker — watches for the activation modifier (⌥ Option by default; ⌃/⌘ 
 plus **Tab**. On the first press it asks `AltTabWindowLister` for every open
 window across all regular apps: a single global `CGWindowList` pass keeps them in
 front-to-back (most-recently-used) order, minimized windows are appended via the
-AX API, and each gets a thumbnail (Screen Recording) or its app icon as fallback.
-`AltTabOverlay` — a borderless, non-activating, full-screen panel — draws the
-grid; while it's up the tap is **modal**, so Tab/Shift-Tab, the arrow keys, Return
+AX API, and each gets a preview or, without Screen Recording, its app icon as
+fallback. Previews are a **static** one-shot snapshot by default (the indicator
+only blinks); a setting switches them to **live** — the controller re-captures on
+a timer while the overlay is open (the indicator stays lit). `AltTabOverlay` — a
+borderless, non-activating, full-screen panel — draws the grid and takes the
+mouse, so a window can be **hovered to highlight and clicked to focus**; a click
+on the dimmed backdrop cancels. Hover only kicks in after real pointer movement,
+so a cursor resting over the grid can't hijack the keyboard's starting selection.
+Alongside the mouse the tap is **modal**: Tab/Shift-Tab, the arrow keys, Return
 and Esc drive the highlight and never leak to the app underneath. Releasing the
-modifier (or Return) commits: `WindowFocuser` activates the app and raises the
-matching AX window — restoring it first if it was minimized. Esc cancels. Because
-selection starts on the *second* window, a quick tap-and-release flips straight to
-the previously used window, exactly like the system switcher.
+modifier (or Return, or a click) commits: `WindowFocuser` activates the app and
+raises the matching AX window — restoring it first if it was minimized. Esc
+cancels. Because selection starts on the *second* window, a quick tap-and-release
+flips straight to the previously used window, exactly like the system switcher.
 
 ### How the Clean Keyboard tool works
 
