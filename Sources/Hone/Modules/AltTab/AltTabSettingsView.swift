@@ -35,12 +35,20 @@ struct AltTabSettingsView: View {
             }
 
             SettingsSection(title: "Pré-visualizações") {
-                ToggleRow(
-                    title: "Pré-visualizações ao vivo",
-                    subtitle: "Ligado, as miniaturas atualizam-se em tempo real (grava o ecrã enquanto o alternador está aberto). Desligado, capta uma imagem fixa só ao abrir — menos intrusivo. Ver o conteúdo das janelas precisa de Gravação de Ecrã à mesma; sem ela, mostra o ícone da app.",
-                    tint: tint,
-                    isOn: $settings.livePreviews
-                )
+                SettingsRow(
+                    title: "Mostrar",
+                    subtitle: "Ícones não gravam o ecrã — nunca aparece o indicador de gravação. Fixa capta uma imagem ao abrir e Ao vivo atualiza em tempo real; ambas mostram o conteúdo das janelas, mas precisam de Gravação de Ecrã e acendem o indicador na barra."
+                ) {
+                    Picker("", selection: $settings.previewMode) {
+                        ForEach(AltTabPreviewMode.allCases) { mode in
+                            Text(mode.display).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 120)
+                    .onChange(of: settings.previewMode) { _, _ in module.previewModeChanged() }
+                }
                 RowDivider()
                 ToggleRow(
                     title: "Incluir janelas minimizadas",

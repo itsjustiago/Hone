@@ -52,7 +52,8 @@ final class AltTabController {
 
     private func activate(backward: Bool) -> Bool {
         guard let settings else { return false }
-        let entries = AltTabWindowLister.allWindows(includeMinimized: settings.includeMinimized)
+        let entries = AltTabWindowLister.allWindows(captureContent: settings.previewMode.needsScreenRecording,
+                                                    includeMinimized: settings.includeMinimized)
         // Nothing to switch between — leave keys flowing normally.
         guard entries.count >= 2 else { return false }
 
@@ -66,9 +67,8 @@ final class AltTabController {
                      onCancel: { [weak self] in self?.cancel() })
         isOpen = true
 
-        // Static previews (the snapshot from the lister) are enough by default;
-        // only keep re-capturing when the user asked for a live view.
-        if settings.livePreviews && Permissions.shared.isScreenRecordingTrusted {
+        // Icons and static snapshots need no upkeep; only the live view re-captures.
+        if settings.previewMode == .live && Permissions.shared.isScreenRecordingTrusted {
             startLiveRefresh()
         }
         return true
