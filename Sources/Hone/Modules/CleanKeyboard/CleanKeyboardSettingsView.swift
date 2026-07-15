@@ -9,13 +9,6 @@ struct CleanKeyboardSettingsView: View {
         let tint = module.tint
 
         VStack(alignment: .leading, spacing: 18) {
-            SettingsSection(title: "Desbloqueio automático") {
-                SliderRow(title: "Duração do bloqueio",
-                          valueLabel: durationLabel,
-                          tint: tint,
-                          value: $settings.duration, range: 10...120)
-            }
-
             SettingsSection(title: "Teclas") {
                 ToggleRow(
                     title: "Bloquear teclas de função e multimédia",
@@ -40,16 +33,12 @@ struct CleanKeyboardSettingsView: View {
                 }
             }
 
-            Label("Enquanto está bloqueado, desbloqueia carregando **Esc** três vezes, clicando em **Desbloquear**, ou esperando pelo fim da contagem.",
+            Label("Enquanto está bloqueado, desbloqueia carregando **Esc** três vezes ou clicando em **Desbloquear** no cartão.",
                   systemImage: "info.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 6)
         }
-    }
-
-    private var durationLabel: String {
-        "\(Int(module.settings.duration)) segundos"
     }
 }

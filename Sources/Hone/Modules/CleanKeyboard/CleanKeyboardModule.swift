@@ -10,7 +10,7 @@ final class CleanKeyboardModule: HoneModule {
     let title = "Limpar Teclado"
     let summary = "Bloqueia o teclado durante uns segundos para o limpares sem carregar em teclas."
     let iconSystemName = "keyboard.fill"
-    let tint = Color.teal
+    let tint = Color.blue
     let isAvailable = true
     let requiresAccessibility = true
     let isMomentary = true

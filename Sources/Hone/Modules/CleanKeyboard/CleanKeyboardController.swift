@@ -1,13 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Orchestrates a keyboard-cleaning session: block the keys, raise the curtain,
-/// count down, and lift everything again — via the timer, the on-screen button,
-/// or the Esc ×3 gesture, whichever comes first.
+/// Orchestrates a keyboard-cleaning session: block the keys and float the little
+/// "locked" card, then lift both again — via the card's button or the Esc ×3
+/// gesture.
 ///
-/// Ordering matters for safety: the event tap is started *before* the overlay is
+/// Ordering matters for safety: the event tap is started *before* the card is
 /// shown, and if the tap can't start (no Accessibility permission) nothing is
-/// shown at all — the curtain never lies about the keys being locked.
+/// shown at all — the card never claims the keys are locked when they aren't.
 @MainActor
 @Observable
 final class CleanKeyboardController {
@@ -15,11 +15,9 @@ final class CleanKeyboardController {
 
     private let blocker = KeyboardBlocker()
     private let overlay = CleanKeyboardOverlay()
-    private var state: CleanKeyboardOverlayState?
-    private var timer: Timer?
 
-    /// Lock the keyboard and show the curtain. Returns silently (after prompting
-    /// for Accessibility) if the lock can't be established.
+    /// Lock the keyboard and show the card. Returns silently (after prompting for
+    /// Accessibility) if the lock can't be established.
     func engage(settings: CleanKeyboardSettings, tint: Color) {
         guard !isEngaged else { return }
 
@@ -32,36 +30,20 @@ final class CleanKeyboardController {
         blocker.blockFunctionKeys = settings.blockFunctionKeys
         blocker.onUnlockGesture = { [weak self] in self?.disengage() }
         guard blocker.start() else {
-            // Trusted but the OS still refused the tap — don't show a fake curtain.
+            // Trusted but the OS still refused the tap — don't show a fake card.
             Permissions.shared.requestAccessibility()
             return
         }
 
-        let total = Int(settings.duration.rounded())
-        let state = CleanKeyboardOverlayState(total: total)
-        self.state = state
-        overlay.show(state: state, tint: tint) { [weak self] in self?.disengage() }
-
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let state = self.state else { return }
-                state.remaining -= 1
-                if state.remaining <= 0 { self.disengage() }
-            }
-        }
-
+        overlay.show(tint: tint) { [weak self] in self?.disengage() }
         isEngaged = true
     }
 
-    /// Restore the keyboard and tear the curtain down. Safe to call repeatedly.
+    /// Restore the keyboard and dismiss the card. Safe to call repeatedly.
     func disengage() {
         guard isEngaged else { return }
-        timer?.invalidate()
-        timer = nil
         blocker.stop()
         overlay.hide()
-        state = nil
         isEngaged = false
     }
 }
