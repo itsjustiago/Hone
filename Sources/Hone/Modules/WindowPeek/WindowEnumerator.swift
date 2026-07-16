@@ -16,12 +16,17 @@ enum WindowEnumerator {
         let axWindows = AX.elements(axApp, "AXWindows")
 
         var result: [WindowInfo] = []
+        // CGWindowIDs already claimed, so a minimized window with the same frame as
+        // an on-screen one can't be matched to that window's id (and steal its
+        // thumbnail — the cause of the "same page shown twice" duplicate).
+        var usedIDs = Set<CGWindowID>()
 
         // 1. Windows on the current Space — from CGWindowList (always shown).
         for window in onScreen {
             let title = window.title.isEmpty ? nearestAXTitle(axWindows, to: window.bounds) : window.title
             result.append(WindowInfo(id: window.id, title: title, ownerPID: pid,
                                      bounds: window.bounds, thumbnail: nil, isMinimized: false))
+            usedIDs.insert(window.id)
         }
 
         // 2. Minimized windows — from AX, appended on top.
@@ -40,7 +45,9 @@ enum WindowEnumerator {
                 bounds = CGRect(x: bounds.minX, y: bounds.minY, width: 1280, height: 800)
             }
 
-            result.append(WindowInfo(id: matchWindowID(allWindows, to: bounds),
+            let matchedID = matchWindowID(allWindows, to: bounds, excluding: usedIDs)
+            if matchedID != 0 { usedIDs.insert(matchedID) }
+            result.append(WindowInfo(id: matchedID,
                                      title: AX.string(axWindow, "AXTitle") ?? "",
                                      ownerPID: pid, bounds: bounds,
                                      thumbnail: nil, isMinimized: true))
@@ -98,10 +105,11 @@ enum WindowEnumerator {
         return bestTitle
     }
 
-    private static func matchWindowID(_ windows: [CGWin], to bounds: CGRect) -> CGWindowID {
+    private static func matchWindowID(_ windows: [CGWin], to bounds: CGRect,
+                                      excluding used: Set<CGWindowID>) -> CGWindowID {
         var bestID: CGWindowID = 0
         var bestDistance: CGFloat = 120
-        for window in windows {
+        for window in windows where !used.contains(window.id) {
             let distance = abs(window.bounds.minX - bounds.minX)
                 + abs(window.bounds.minY - bounds.minY)
                 + abs(window.bounds.width - bounds.width)
