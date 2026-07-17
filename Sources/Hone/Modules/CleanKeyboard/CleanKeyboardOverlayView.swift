@@ -7,8 +7,10 @@ struct CleanKeyboardOverlayView: View {
     var tint: Color
     var onUnlock: () -> Void
 
-    /// Generous transparent margin so neither shadow layer is clipped by the panel.
-    private let shadowRoom: CGFloat = 46
+    /// Transparent margin so neither shadow layer is clipped by the panel. The
+    /// ambient layer (blur 30, y 18) reaches ~2×30+18 = 78pt below the card, so
+    /// anything less shows a hard cut edge. Symmetric to keep the card centred.
+    private let shadowRoom: CGFloat = 80
 
     @State private var appeared = false
 
