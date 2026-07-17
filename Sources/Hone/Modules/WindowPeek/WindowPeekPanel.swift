@@ -42,6 +42,13 @@ final class WindowPeekPanel {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false // the SwiftUI view draws its own shadow
+        // Pin to a dark HUD appearance so the frosted card and its label text stay
+        // legible over ANY background. With no fixed appearance the panel follows
+        // the system: over a light desktop the translucent `.regularMaterial` turns
+        // light and the `.secondary` title text washes out. Forcing dark keeps the
+        // glass dark and the text light — same choice as Mission Control / the macOS
+        // window switcher, which are always dark regardless of wallpaper or mode.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         return panel
     }
