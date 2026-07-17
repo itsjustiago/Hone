@@ -2,6 +2,11 @@ import SwiftUI
 
 /// The floating row of window previews shown on Dock hover.
 struct WindowPeekView: View {
+    /// Transparent margin around the card so the drop shadow (blur 18, y 8)
+    /// isn't clipped by the hosting panel's bounds. The panel compensates for
+    /// this inset when positioning, so it must stay in sync with the shadow.
+    static let shadowInset: CGFloat = 32
+
     let appName: String
     let windows: [WindowInfo]
     let onSelect: (WindowInfo) -> Void
@@ -27,7 +32,7 @@ struct WindowPeekView: View {
                 .strokeBorder(.white.opacity(0.10), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
-        .padding(10) // room for the shadow inside the hosting view
+        .padding(Self.shadowInset)
         .onHover { onHoverChange($0) }
     }
 }

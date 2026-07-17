@@ -53,13 +53,17 @@ final class WindowPeekPanel {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let iconTopAppKit = primaryHeight - iconFrame.minY
 
+        // The hosting view carries a transparent shadow inset on every side;
+        // position and clamp against the visible card, not the panel frame.
+        let inset = WindowPeekView.shadowInset
+
         var x = iconFrame.midX - size.width / 2
-        let y = iconTopAppKit + 6 // small gap above the icon
+        let y = iconTopAppKit + 16 - inset // visible card sits 16pt above the icon
 
         let appKitIconCenter = NSPoint(x: iconFrame.midX, y: iconTopAppKit)
         let screen = NSScreen.screens.first { $0.frame.contains(appKitIconCenter) } ?? NSScreen.main
         if let visible = screen?.visibleFrame {
-            x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
+            x = min(max(x, visible.minX + 8 - inset), visible.maxX - size.width - 8 + inset)
         }
         return NSPoint(x: x, y: y)
     }
