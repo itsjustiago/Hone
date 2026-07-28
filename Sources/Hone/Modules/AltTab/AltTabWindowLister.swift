@@ -15,6 +15,12 @@ struct AltTabEntry: Identifiable, Equatable {
     static func == (lhs: AltTabEntry, rhs: AltTabEntry) -> Bool {
         lhs.id == rhs.id && lhs.window == rhs.window
     }
+
+    /// The same window at a new list position. Closing a window from the switcher
+    /// shortens the list, and `id` *is* the position, so the rest renumber.
+    func renumbered(to id: Int) -> AltTabEntry {
+        AltTabEntry(id: id, window: window, appName: appName, appIcon: appIcon)
+    }
 }
 
 /// Builds the cross-app window list for the switcher in global front-to-back

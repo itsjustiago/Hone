@@ -20,6 +20,7 @@ final class AltTabOverlay {
               tint: Color,
               onHover: @escaping (Int) -> Void,
               onPick: @escaping (AltTabEntry) -> Void,
+              onClose: @escaping (AltTabEntry) -> Void,
               onCancel: @escaping () -> Void) {
         hide()
 
@@ -42,7 +43,8 @@ final class AltTabOverlay {
         }
 
         let root = AltTabView(selection: selection, tint: tint,
-                              onPick: onPick, onHover: gatedHover, onCancel: onCancel)
+                              onPick: onPick, onHover: gatedHover,
+                              onClose: onClose, onCancel: onCancel)
         let hosting = NSHostingView(rootView: root)
 
         let panel = NSPanel(contentRect: frame,
