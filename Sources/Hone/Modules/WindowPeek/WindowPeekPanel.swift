@@ -12,9 +12,11 @@ final class WindowPeekPanel {
               windows: [WindowInfo],
               near iconFrame: CGRect,
               onSelect: @escaping (WindowInfo) -> Void,
+              onClose: @escaping (WindowInfo) -> Void,
               onHoverChange: @escaping (Bool) -> Void) {
         let root = WindowPeekView(appName: appName, windows: windows,
-                                  onSelect: onSelect, onHoverChange: onHoverChange)
+                                  onSelect: onSelect, onClose: onClose,
+                                  onHoverChange: onHoverChange)
         let hosting = NSHostingView(rootView: root)
         hosting.layout()
         let size = hosting.fittingSize
@@ -29,6 +31,17 @@ final class WindowPeekPanel {
 
     func hide() {
         panel?.orderOut(nil)
+    }
+
+    /// Whether the pointer is over the visible card (the panel frame minus the
+    /// transparent shadow margin). Re-drawing the panel swaps the hosting view,
+    /// and the outgoing one can report a hover exit the pointer never made — this
+    /// is the ground truth the close timer checks before acting on it.
+    var containsMouse: Bool {
+        guard let panel, panel.isVisible else { return false }
+        return panel.frame.insetBy(dx: WindowPeekView.shadowInset,
+                                   dy: WindowPeekView.shadowInset)
+            .contains(NSEvent.mouseLocation)
     }
 
     private func makePanel() -> NSPanel {
