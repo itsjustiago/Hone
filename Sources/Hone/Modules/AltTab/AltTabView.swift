@@ -15,36 +15,80 @@ struct AltTabView: View {
 
     private let tileWidth: CGFloat = 208
     private let thumbHeight: CGFloat = 122
+    /// One number for every gap inside the panel — tile-to-tile and tile-to-edge —
+    /// so the material reads as an even margin around the grid on all four sides.
+    private let gap: CGFloat = 14
+    /// Breathing room between the panel and the edge of the screen.
+    private let screenInset: CGFloat = 40
+    /// Never spread wider than this, however big the display is.
+    private let maxColumns = 5
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.32).ignoresSafeArea()
-                .contentShape(Rectangle())
-                .onTapGesture { onCancel() }
+        GeometryReader { geo in
+            ZStack {
+                Color.black.opacity(0.32).ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { onCancel() }
 
-            VStack(spacing: 14) {
-                grid
-                caption
+                panel(in: geo.size)
             }
-            .padding(22)
-            .frame(maxWidth: 1140)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(.white.opacity(0.10), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.4), radius: 40, y: 18)
-            .padding(40)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
     }
 
-    private var grid: some View {
+    /// The panel is sized from the grid it draws — exactly the columns wide and the
+    /// rows tall that the open windows need — instead of stretching to a fixed
+    /// width, which used to leave a wide band of empty material beside the tiles.
+    private func panel(in size: CGSize) -> some View {
+        let columns = columnCount(in: size.width)
+        let gridWidth = CGFloat(columns) * tileWidth + CGFloat(columns - 1) * gap
+
+        return VStack(spacing: gap) {
+            grid(columns: columns, maxHeight: maxGridHeight(in: size.height))
+            caption.frame(maxWidth: gridWidth)
+        }
+        .frame(width: gridWidth)
+        .padding(gap)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.4), radius: 40, y: 18)
+        .padding(screenInset)
+    }
+
+    /// How many tiles fit per row. Past the point where they'd wrap, the columns
+    /// are levelled down so the rows are evenly filled — six windows land as 3×2
+    /// rather than 5 + a lonely one, which keeps the panel compact.
+    private func columnCount(in width: CGFloat) -> Int {
+        let usable = width - 2 * (screenInset + gap)
+        let fits = max(1, Int((usable + gap) / (tileWidth + gap)))
+        let cap = min(fits, maxColumns)
+        let count = max(1, selection.entries.count)
+        guard count > cap else { return count }
+        let rows = (count + cap - 1) / cap
+        return (count + rows - 1) / rows
+    }
+
+    /// Leave the grid at most two thirds of the display, and never more than what
+    /// the panel can hold once the caption and the margins have taken their share.
+    private func maxGridHeight(in height: CGFloat) -> CGFloat {
+        let room = height - 2 * (screenInset + gap) - captionRoom
+        return max(thumbHeight, min(height * 0.66, room))
+    }
+
+    /// Caption line plus the gap above it.
+    private var captionRoom: CGFloat { 24 + gap }
+
+    private func grid(columns: Int, maxHeight: CGFloat) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: tileWidth, maximum: tileWidth), spacing: 14)],
-                    spacing: 14
+                    columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: gap),
+                                   count: columns),
+                    spacing: gap
                 ) {
                     ForEach(selection.entries) { entry in
                         Button { onPick(entry) } label: {
@@ -59,10 +103,11 @@ struct AltTabView: View {
                         .id(entry.id)
                     }
                 }
-                .padding(4)
             }
-            .frame(maxHeight: NSScreen.main.map { $0.frame.height * 0.66 } ?? 620)
-            .fixedSize(horizontal: false, vertical: selection.entries.count <= 10)
+            // Hug the rows, and only start scrolling once they'd outgrow the screen —
+            // otherwise a short list sits in a tall, half-empty panel.
+            .frame(maxHeight: maxHeight)
+            .fixedSize(horizontal: false, vertical: true)
             .onChange(of: selection.index) { _, index in
                 withAnimation(.easeOut(duration: 0.14)) {
                     proxy.scrollTo(index, anchor: .center)
@@ -81,6 +126,8 @@ struct AltTabView: View {
             }
             Text(entry?.appName ?? "")
                 .fontWeight(.semibold)
+                .lineLimit(1)
+                .layoutPriority(1)
             if let title = entry?.window.title, !title.isEmpty {
                 Text("— \(title)")
                     .foregroundStyle(.secondary)
@@ -89,7 +136,6 @@ struct AltTabView: View {
             }
         }
         .font(.system(size: 14))
-        .frame(maxWidth: 640)
     }
 }
 
