@@ -155,8 +155,11 @@ private struct WindowTile: View {
 
     /// Pointer over the tile — what reveals the close button.
     @State private var hovering = false
-    /// Pointer over the close button itself, which then darkens.
+    /// Pointer over the close button itself, which then goes red.
     @State private var closeHovering = false
+
+    /// The macOS close-button red, so the affordance reads as the red dot itself.
+    private static let closeRed = Color(red: 1, green: 0.37, blue: 0.34)
 
     var body: some View {
         VStack(spacing: 7) {
@@ -204,8 +207,9 @@ private struct WindowTile: View {
                 .foregroundStyle(.white)
                 .frame(width: 20, height: 20)
                 // Dark disc with a hairline rim: legible over a bright thumbnail
-                // and over the grey icon placeholder alike.
-                .background(.black.opacity(closeHovering ? 0.8 : 0.55), in: Circle())
+                // and over the grey icon placeholder alike. Under the pointer it
+                // lights up in the traffic-light red of the button it stands for.
+                .background(closeHovering ? Self.closeRed : .black.opacity(0.55), in: Circle())
                 .overlay(Circle().strokeBorder(.white.opacity(0.28), lineWidth: 1))
                 .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
                 .contentShape(Circle())
