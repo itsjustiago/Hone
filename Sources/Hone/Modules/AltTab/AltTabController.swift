@@ -120,7 +120,7 @@ final class AltTabController {
     private func close(_ entry: AltTabEntry) {
         guard isOpen,
               let position = selection.entries.firstIndex(where: { $0.id == entry.id }),
-              AltTabWindowCloser.close(entry.window)
+              WindowCloser.close(entry.window)
         else { return }
 
         var entries = selection.entries

@@ -10,6 +10,8 @@ struct WindowPeekView: View {
     let appName: String
     let windows: [WindowInfo]
     let onSelect: (WindowInfo) -> Void
+    /// The card's X was clicked — close that window, keep the panel up.
+    let onClose: (WindowInfo) -> Void
     let onHoverChange: (Bool) -> Void
 
     var body: some View {
@@ -21,7 +23,9 @@ struct WindowPeekView: View {
 
             HStack(spacing: 10) {
                 ForEach(windows) { window in
-                    WindowCard(window: window) { onSelect(window) }
+                    WindowCard(window: window,
+                               onSelect: { onSelect(window) },
+                               onClose: { onClose(window) })
                 }
             }
         }
@@ -40,6 +44,7 @@ struct WindowPeekView: View {
 private struct WindowCard: View {
     let window: WindowInfo
     let onSelect: () -> Void
+    let onClose: () -> Void
     @State private var hovering = false
 
     private let thumbHeight: CGFloat = 128
@@ -50,27 +55,28 @@ private struct WindowCard: View {
     }
 
     var body: some View {
-        Button(action: onSelect) {
-            VStack(spacing: 6) {
-                thumbnail
-                HStack(spacing: 4) {
-                    if window.isMinimized {
-                        Image(systemName: "minus.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.orange)
-                    }
-                    Text(window.title.isEmpty ? "Sem título" : window.title)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+        VStack(spacing: 6) {
+            thumbnail
+            HStack(spacing: 4) {
+                if window.isMinimized {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
                 }
-                .font(.caption)
-                .frame(maxWidth: thumbWidth)
-                .foregroundStyle(hovering ? .primary : .secondary)
+                Text(window.title.isEmpty ? "Sem título" : window.title)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
+            .font(.caption)
+            .frame(maxWidth: thumbWidth)
+            .foregroundStyle(hovering ? .primary : .secondary)
         }
-        .buttonStyle(.plain)
         .scaleEffect(hovering ? 1.03 : 1)
         .animation(.easeOut(duration: 0.12), value: hovering)
+        // A plain tap rather than a Button, so the close badge overlaid on the
+        // thumbnail is the one taking clicks in its own corner.
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
         .onHover { hovering = $0 }
     }
 
@@ -108,5 +114,8 @@ private struct WindowCard: View {
                 .strokeBorder(hovering ? Color.accentColor : .white.opacity(0.12),
                               lineWidth: hovering ? 2 : 1)
         )
+        .overlay(alignment: .topLeading) {
+            CloseBadge(visible: hovering, action: onClose)
+        }
     }
 }

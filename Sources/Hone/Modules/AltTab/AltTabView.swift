@@ -155,11 +155,6 @@ private struct WindowTile: View {
 
     /// Pointer over the tile — what reveals the close button.
     @State private var hovering = false
-    /// Pointer over the close button itself, which then goes red.
-    @State private var closeHovering = false
-
-    /// The macOS close-button red, so the affordance reads as the red dot itself.
-    private static let closeRed = Color(red: 1, green: 0.37, blue: 0.34)
 
     var body: some View {
         VStack(spacing: 7) {
@@ -191,38 +186,8 @@ private struct WindowTile: View {
         .onTapGesture(perform: onPick)
         .onHover { inside in
             hovering = inside
-            if !inside { closeHovering = false }
             onHover(inside)
         }
-    }
-
-    /// The close affordance, in the corner the red button sits in on every real
-    /// window. It only fades in under the pointer, so a keyboard-driven switch
-    /// stays free of chrome — and it can't be clicked while invisible, which
-    /// leaves the whole tile picking the window as before.
-    private var closeButton: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                // Dark disc with a hairline rim: legible over a bright thumbnail
-                // and over the grey icon placeholder alike. Under the pointer it
-                // lights up in the traffic-light red of the button it stands for.
-                .background(closeHovering ? Self.closeRed : .black.opacity(0.55), in: Circle())
-                .overlay(Circle().strokeBorder(.white.opacity(0.28), lineWidth: 1))
-                .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .onHover { closeHovering = $0 }
-        .padding(6)
-        .opacity(hovering ? 1 : 0)
-        .scaleEffect(hovering ? 1 : 0.82)
-        .allowsHitTesting(hovering)
-        .animation(.easeOut(duration: 0.12), value: hovering)
-        .animation(.easeOut(duration: 0.12), value: closeHovering)
-        .help("Fechar janela")
     }
 
     @ViewBuilder
@@ -269,6 +234,8 @@ private struct WindowTile: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 1)
         )
-        .overlay(alignment: .topLeading) { closeButton }
+        .overlay(alignment: .topLeading) {
+            CloseBadge(visible: hovering, action: onClose)
+        }
     }
 }
