@@ -64,6 +64,7 @@ final class AltTabController {
         overlay.show(selection: selection, tint: tint,
                      onHover: { [weak self] index in self?.hover(index) },
                      onPick: { [weak self] entry in self?.pick(entry) },
+                     onClose: { [weak self] entry in self?.close(entry) },
                      onCancel: { [weak self] in self?.cancel() })
         isOpen = true
 
@@ -110,6 +111,35 @@ final class AltTabController {
         closeOverlay()
         tap.endSession()
         WindowFocuser.focus(entry.window)
+    }
+
+    /// A tile's X was clicked — close that window and drop it from the grid, with
+    /// the switcher left open so several can go in a row. The list only changes
+    /// when the app actually accepted the close, so a window that refuses (no
+    /// close button) keeps its tile instead of vanishing from a list it's still in.
+    private func close(_ entry: AltTabEntry) {
+        guard isOpen,
+              let position = selection.entries.firstIndex(where: { $0.id == entry.id }),
+              AltTabWindowCloser.close(entry.window)
+        else { return }
+
+        var entries = selection.entries
+        entries.remove(at: position)
+        // `id` is the position in this array, so the survivors renumber — the
+        // highlight is an index into the very same list.
+        selection.entries = entries.enumerated().map { $0.element.renumbered(to: $0.offset) }
+
+        // Closed the last one: there is nothing left to switch to.
+        guard !selection.entries.isEmpty else {
+            closeOverlay()
+            tap.endSession()
+            return
+        }
+        // Keep the highlight on the window it was on. When it was the closed tile
+        // itself, the next window slides into that slot and inherits the ring.
+        var index = selection.index
+        if position < index { index -= 1 }
+        selection.index = min(max(index, 0), selection.entries.count - 1)
     }
 
     private func step(backward: Bool) {

@@ -10,6 +10,8 @@ struct AltTabView: View {
     var onPick: (AltTabEntry) -> Void = { _ in }
     /// Mouse moved over a tile — make it the highlight.
     var onHover: (Int) -> Void = { _ in }
+    /// The tile's X was clicked — close that window, keep switching.
+    var onClose: (AltTabEntry) -> Void = { _ in }
     /// Click outside the grid — dismiss without switching.
     var onCancel: () -> Void = {}
 
@@ -91,16 +93,15 @@ struct AltTabView: View {
                     spacing: gap
                 ) {
                     ForEach(selection.entries) { entry in
-                        Button { onPick(entry) } label: {
-                            WindowTile(entry: entry,
-                                       selected: entry.id == selection.index,
-                                       tint: tint,
-                                       width: tileWidth,
-                                       thumbHeight: thumbHeight)
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { if $0 { onHover(entry.id) } }
-                        .id(entry.id)
+                        WindowTile(entry: entry,
+                                   selected: entry.id == selection.index,
+                                   tint: tint,
+                                   width: tileWidth,
+                                   thumbHeight: thumbHeight,
+                                   onPick: { onPick(entry) },
+                                   onHover: { if $0 { onHover(entry.id) } },
+                                   onClose: { onClose(entry) })
+                            .id(entry.id)
                     }
                 }
             }
@@ -140,13 +141,22 @@ struct AltTabView: View {
 }
 
 /// A single window preview: thumbnail (or app-icon placeholder), app-icon badge,
-/// title, and a selection ring driven by the switcher's highlight.
+/// title, a selection ring driven by the switcher's highlight, and the close
+/// button that appears under the pointer.
 private struct WindowTile: View {
     let entry: AltTabEntry
     let selected: Bool
     let tint: Color
     let width: CGFloat
     let thumbHeight: CGFloat
+    var onPick: () -> Void = {}
+    var onHover: (Bool) -> Void = { _ in }
+    var onClose: () -> Void = {}
+
+    /// Pointer over the tile — what reveals the close button.
+    @State private var hovering = false
+    /// Pointer over the close button itself, which then darkens.
+    @State private var closeHovering = false
 
     var body: some View {
         VStack(spacing: 7) {
@@ -174,6 +184,41 @@ private struct WindowTile: View {
         .scaleEffect(selected ? 1 : 0.97)
         .opacity(selected ? 1 : 0.82)
         .animation(.easeOut(duration: 0.13), value: selected)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture(perform: onPick)
+        .onHover { inside in
+            hovering = inside
+            if !inside { closeHovering = false }
+            onHover(inside)
+        }
+    }
+
+    /// The close affordance, in the corner the red button sits in on every real
+    /// window. It only fades in under the pointer, so a keyboard-driven switch
+    /// stays free of chrome — and it can't be clicked while invisible, which
+    /// leaves the whole tile picking the window as before.
+    private var closeButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                // Dark disc with a hairline rim: legible over a bright thumbnail
+                // and over the grey icon placeholder alike.
+                .background(.black.opacity(closeHovering ? 0.8 : 0.55), in: Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(0.28), lineWidth: 1))
+                .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { closeHovering = $0 }
+        .padding(6)
+        .opacity(hovering ? 1 : 0)
+        .scaleEffect(hovering ? 1 : 0.82)
+        .allowsHitTesting(hovering)
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: 0.12), value: closeHovering)
+        .help("Fechar janela")
     }
 
     @ViewBuilder
@@ -220,5 +265,6 @@ private struct WindowTile: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 1)
         )
+        .overlay(alignment: .topLeading) { closeButton }
     }
 }

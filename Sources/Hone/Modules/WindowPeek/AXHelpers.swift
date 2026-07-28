@@ -98,6 +98,33 @@ enum AX {
     }
 }
 
+extension AX {
+    /// The live AX element behind a listed window, so it can be raised or closed.
+    ///
+    /// Matched by exact title when the window has one — unique enough in practice —
+    /// and otherwise by the nearest top-left corner, which is all an untitled
+    /// window gives us to go on.
+    static func window(for info: WindowInfo) -> AXUIElement? {
+        let windows = elements(AXUIElementCreateApplication(info.ownerPID), "AXWindows")
+        if !info.title.isEmpty {
+            for window in windows where string(window, "AXTitle") == info.title {
+                return window
+            }
+        }
+        var best: AXUIElement?
+        var bestDistance = Double.greatestFiniteMagnitude
+        for window in windows {
+            guard let position = point(window, "AXPosition") else { continue }
+            let distance = hypot(position.x - info.bounds.minX, position.y - info.bounds.minY)
+            if distance < bestDistance {
+                bestDistance = distance
+                best = window
+            }
+        }
+        return best
+    }
+}
+
 /// Whether an `AXSubrole` is a palette / panel rather than a real, switchable
 /// window. Used to filter minimized windows: a minimized window keeps a valid
 /// subrole (often `AXStandardWindow`, but some apps report `AXDialog`), and all of
