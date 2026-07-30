@@ -66,7 +66,7 @@ enum AltTabWindowLister {
 
         // 2. Minimized windows, per app, appended after the live ones.
         if includeMinimized {
-            for pid in regularPIDs {
+            for pid in regularPIDs where !isStalled(pid) {
                 windows.append(contentsOf: minimizedWindows(pid: pid))
             }
         }
@@ -90,11 +90,35 @@ enum AltTabWindowLister {
         }
     }
 
+    /// How long an app gets to answer before the switcher moves on without it.
+    /// Apps that are up answer in well under a millisecond; the cap only ever
+    /// bites on one that is wedged or busy.
+    private static let axDeadline: Float = 0.05
+
+    /// Apps that blew the deadline, and when. Asking a wedged app again on every
+    /// summon would pay the timeout every time, so it is skipped — but only for a
+    /// while, since an app that was merely busy deserves to come back.
+    private static var stalledApps: [pid_t: Date] = [:]
+    private static let stalledGracePeriod: TimeInterval = 60
+
+    private static func isStalled(_ pid: pid_t) -> Bool {
+        guard let since = stalledApps[pid] else { return false }
+        guard Date().timeIntervalSince(since) < stalledGracePeriod else {
+            stalledApps[pid] = nil
+            return false
+        }
+        return true
+    }
+
     /// Minimized standard windows for one app, read straight from AX.
     private static func minimizedWindows(pid: pid_t) -> [WindowInfo] {
-        let axApp = AXUIElementCreateApplication(pid)
+        let (axWindows, stalled) = AX.windows(ofApplication: pid, timeout: axDeadline)
+        if stalled {
+            stalledApps[pid] = Date()
+            return []
+        }
         var out: [WindowInfo] = []
-        for axWindow in AX.elements(axApp, "AXWindows") {
+        for axWindow in axWindows {
             guard AX.bool(axWindow, "AXMinimized") == true else { continue }
             // Keep every real minimized window; some apps report them as AXDialog
             // rather than AXStandardWindow. Only palettes/panels are filtered out.

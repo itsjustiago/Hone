@@ -36,11 +36,25 @@ final class AltTabController {
         tap.onCommit = { [weak self] in self?.commit() }
         tap.onCancel = { [weak self] in self?.cancel() }
         tap.start()
+
+        // Warm up now, off the keystroke path: building the overlay (see
+        // `AltTabOverlay.prewarm`) and holding a first AX conversation with every
+        // running app, which is the expensive one — and which is also what finds
+        // the apps that don't answer, so the first ⌥-Tab already knows to skip
+        // them. Content is never captured here: warming up must not light the
+        // screen-recording indicator.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let settings = self.settings else { return }
+            self.overlay.prewarm(selection: self.selection, tint: self.tint)
+            _ = AltTabWindowLister.allWindows(captureContent: false,
+                                              includeMinimized: settings.includeMinimized)
+        }
     }
 
     func stop() {
         cancel()
         tap.stop()
+        overlay.teardown()
     }
 
     /// The modifier changed in settings — re-point the tap without a full restart.

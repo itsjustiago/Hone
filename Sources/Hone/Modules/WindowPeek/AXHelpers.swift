@@ -99,13 +99,31 @@ enum AX {
 }
 
 extension AX {
+    /// An app's windows, with a deadline and an answer to "did it just not reply?".
+    ///
+    /// The AX API talks to the target app and waits for it to answer, which a busy
+    /// or wedged app can drag out for over a second — long enough to hold up
+    /// anything on a keystroke's critical path. `timeout` caps that wait, and
+    /// `stalled` tells apart an app with no windows from one that never replied,
+    /// so the caller can stop asking it.
+    static func windows(ofApplication pid: pid_t, timeout: Float) -> (windows: [AXUIElement], stalled: Bool) {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, timeout)
+        var ref: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(app, "AXWindows" as CFString, &ref)
+        return (ref as? [AXUIElement] ?? [], status == .cannotComplete)
+    }
+
     /// The live AX element behind a listed window, so it can be raised or closed.
     ///
     /// Matched by exact title when the window has one — unique enough in practice —
     /// and otherwise by the nearest top-left corner, which is all an untitled
     /// window gives us to go on.
     static func window(for info: WindowInfo) -> AXUIElement? {
-        let windows = elements(AXUIElementCreateApplication(info.ownerPID), "AXWindows")
+        // Generous next to the switcher's own deadline — raising or closing is worth
+        // waiting a moment for — but still a deadline, so a wedged app can't hang
+        // the pointer or the key release that asked for it.
+        let windows = self.windows(ofApplication: info.ownerPID, timeout: 0.25).windows
         if !info.title.isEmpty {
             for window in windows where string(window, "AXTitle") == info.title {
                 return window
