@@ -23,16 +23,20 @@ struct AltTabEntry: Identifiable, Equatable {
     }
 }
 
-/// Builds the cross-app window list for the switcher in global front-to-back
-/// (most-recently-used) order, so selecting the second entry and releasing flips
-/// straight to the previously used window — exactly like the system switcher.
+/// Builds the cross-app window list for the switcher in most-recently-used order,
+/// so selecting the second entry and releasing flips straight to the window the
+/// user just came from — exactly like the system switcher.
 ///
-/// On-screen windows come from a single global `CGWindowList` pass to preserve
-/// that stacking order (a per-app pass would lose it). Minimized windows aren't
-/// on-screen, so they're gathered per app via the Accessibility API and appended.
+/// On-screen windows come from a single global `CGWindowList` pass, which gives
+/// them front-to-back. Minimized windows aren't on screen, so they're gathered per
+/// app via the Accessibility API and appended. Stacking order is only the starting
+/// point: `AltTabWindowOrder` then sorts the list by what the user actually used,
+/// which stacking merely resembles (see its notes for how the two come apart).
 enum AltTabWindowLister {
     @MainActor
-    static func allWindows(captureContent: Bool, includeMinimized: Bool) -> [AltTabEntry] {
+    static func allWindows(captureContent: Bool,
+                           includeMinimized: Bool,
+                           usage: AltTabWindowOrder? = nil) -> [AltTabEntry] {
         let ownPID = ProcessInfo.processInfo.processIdentifier
 
         // Only apps that show up in the Dock / Cmd-Tab — skips menu-bar agents,
@@ -64,14 +68,19 @@ enum AltTabWindowLister {
             }
         }
 
-        // 2. Minimized windows, per app, appended after the live ones.
+        // 2. Minimized windows, per app, appended after the live ones. The pids are
+        //    walked in a fixed order so the list doesn't reshuffle between summons
+        //    (a Set has no order of its own).
         if includeMinimized {
-            for pid in regularPIDs where !isStalled(pid) {
+            for pid in regularPIDs.sorted() where !isStalled(pid) {
                 windows.append(contentsOf: minimizedWindows(pid: pid))
             }
         }
 
-        // 3. Enrich with app name/icon and (optionally) a thumbnail.
+        // 3. Re-order by use rather than by stacking — see `AltTabWindowOrder`.
+        if let usage { windows = sortedByUse(windows, usage: usage) }
+
+        // 4. Enrich with app name/icon and (optionally) a thumbnail.
         var iconCache: [pid_t: (name: String, icon: NSImage?)] = [:]
         return windows.enumerated().map { index, window in
             var window = window
@@ -88,6 +97,42 @@ enum AltTabWindowLister {
             }
             return AltTabEntry(id: index, window: window, appName: app.name, appIcon: app.icon)
         }
+    }
+
+    /// Most-recently-used first, with the windows nobody has touched keeping the
+    /// order they were stacked in. Minimized windows always come after the ones
+    /// still on screen: being minimized is the opposite of being in use, and they
+    /// have no window number to be remembered by anyway.
+    @MainActor
+    static func sortedByUse(_ windows: [WindowInfo], usage: AltTabWindowOrder) -> [WindowInfo] {
+        windows.enumerated().sorted { a, b in
+            if a.element.isMinimized != b.element.isMinimized { return !a.element.isMinimized }
+            let (rankA, rankB) = (usage.rank(of: a.element.id), usage.rank(of: b.element.id))
+            if rankA != rankB { return rankA < rankB }
+            return a.offset < b.offset
+        }
+        .map(\.element)
+    }
+
+    /// Every on-screen window, front to back. The seed for the use order, and the
+    /// answer to "what is in front right now?".
+    static func windowIDsInStackingOrder() -> [CGWindowID] {
+        onScreenWindows().compactMap { $0[kCGWindowNumber as String] as? CGWindowID }
+    }
+
+    /// The frontmost window of one app — which, right after that app is activated,
+    /// is the window the user just moved to.
+    static func frontWindowID(ofApplication pid: pid_t) -> CGWindowID? {
+        onScreenWindows()
+            .first { $0[kCGWindowOwnerPID as String] as? pid_t == pid }
+            .flatMap { $0[kCGWindowNumber as String] as? CGWindowID }
+    }
+
+    /// The raw front-to-back window list, filtered to ordinary app windows.
+    private static func onScreenWindows() -> [[String: Any]] {
+        let raw = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                             kCGNullWindowID) as? [[String: Any]] ?? []
+        return raw.filter { ($0[kCGWindowLayer as String] as? Int) == 0 }
     }
 
     /// How long an app gets to answer before the switcher moves on without it.

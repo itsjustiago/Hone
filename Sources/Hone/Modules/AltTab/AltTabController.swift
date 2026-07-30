@@ -20,6 +20,8 @@ final class AltTabController {
     private let tap = AltTabHotKeyTap()
     private let overlay = AltTabOverlay()
     private let selection = AltTabSelection()
+    /// Which window the user was in, and in what order before that.
+    private let usage = AltTabWindowOrder()
 
     private var isOpen = false
     private var settings: AltTabSettings?
@@ -36,6 +38,7 @@ final class AltTabController {
         tap.onCommit = { [weak self] in self?.commit() }
         tap.onCancel = { [weak self] in self?.cancel() }
         tap.start()
+        usage.start()
 
         // Warm up now, off the keystroke path: building the overlay (see
         // `AltTabOverlay.prewarm`) and holding a first AX conversation with every
@@ -47,13 +50,15 @@ final class AltTabController {
             guard let self, let settings = self.settings else { return }
             self.overlay.prewarm(selection: self.selection, tint: self.tint)
             _ = AltTabWindowLister.allWindows(captureContent: false,
-                                              includeMinimized: settings.includeMinimized)
+                                              includeMinimized: settings.includeMinimized,
+                                              usage: self.usage)
         }
     }
 
     func stop() {
         cancel()
         tap.stop()
+        usage.stop()
         overlay.teardown()
     }
 
@@ -66,8 +71,12 @@ final class AltTabController {
 
     private func activate(backward: Bool) -> Bool {
         guard let settings else { return false }
+        // The window in front is the one being used — worth confirming here, so the
+        // top of the list is right even if an activation went unseen.
+        usage.noteFrontWindow()
         let entries = AltTabWindowLister.allWindows(captureContent: settings.previewMode.needsScreenRecording,
-                                                    includeMinimized: settings.includeMinimized)
+                                                    includeMinimized: settings.includeMinimized,
+                                                    usage: usage)
         // Nothing to switch between — leave keys flowing normally.
         guard entries.count >= 2 else { return false }
 
@@ -124,6 +133,7 @@ final class AltTabController {
         guard isOpen else { return }
         closeOverlay()
         tap.endSession()
+        usage.touch(entry.window.id)
         WindowFocuser.focus(entry.window)
     }
 
@@ -168,7 +178,10 @@ final class AltTabController {
         let target = selection.entries.indices.contains(selection.index)
             ? selection.entries[selection.index] : nil
         closeOverlay()
-        if let target { WindowFocuser.focus(target.window) }
+        if let target {
+            usage.touch(target.window.id)
+            WindowFocuser.focus(target.window)
+        }
     }
 
     private func cancel() {
