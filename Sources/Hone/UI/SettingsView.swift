@@ -160,6 +160,7 @@ private struct GeneralSettingsView: View {
     var updateChecker: UpdateChecker
     @State private var launch = LaunchAtLogin.shared
     @State private var autoCheck = Updater.autoCheckEnabled
+    @State private var showMenuBarIcon = MenuBarIcon.isVisible
 
     var body: some View {
         ScrollView {
@@ -172,6 +173,14 @@ private struct GeneralSettingsView: View {
                             .font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
+                }
+
+                SettingsSection(title: "Barra de menus") {
+                    ToggleRow(title: "Mostrar na barra de menus",
+                              subtitle: "Se desligares, abre o Hone pelo Launchpad para voltar aqui.",
+                              tint: .accentColor,
+                              isOn: Binding(get: { showMenuBarIcon },
+                                            set: { showMenuBarIcon = $0; MenuBarIcon.setVisible($0) }))
                 }
 
                 SettingsSection(title: "Arranque") {

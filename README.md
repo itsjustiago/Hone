@@ -30,7 +30,9 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 ./build.sh debug     # faster debug build
 ```
 
-`Hone` appears in the menu bar (no Dock icon). Both tools need **Accessibility**
+`Hone` appears in the menu bar (no Dock icon) — a switch in **Settings ▸ Geral ▸ Barra de
+menus** hides the icon while the enabled tools keep running; reopening Hone from Launchpad
+brings Settings back. Both tools need **Accessibility**
 access — toggle one on and macOS will prompt; grant it in System Settings ▸
 Privacy & Security ▸ Accessibility. **Window Peek** additionally uses **Screen
 Recording** for live window thumbnails (it still works without it, showing titles only).
