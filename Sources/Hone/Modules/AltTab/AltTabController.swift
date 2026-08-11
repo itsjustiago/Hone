@@ -20,6 +20,8 @@ final class AltTabController {
     private let tap = AltTabHotKeyTap()
     private let overlay = AltTabOverlay()
     private let selection = AltTabSelection()
+    /// Which window the user was in, and in what order before that.
+    private let usage = AltTabWindowOrder()
 
     private var isOpen = false
     private var settings: AltTabSettings?
@@ -36,11 +38,28 @@ final class AltTabController {
         tap.onCommit = { [weak self] in self?.commit() }
         tap.onCancel = { [weak self] in self?.cancel() }
         tap.start()
+        usage.start()
+
+        // Warm up now, off the keystroke path: building the overlay (see
+        // `AltTabOverlay.prewarm`) and holding a first AX conversation with every
+        // running app, which is the expensive one — and which is also what finds
+        // the apps that don't answer, so the first ⌥-Tab already knows to skip
+        // them. Content is never captured here: warming up must not light the
+        // screen-recording indicator.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let settings = self.settings else { return }
+            self.overlay.prewarm(selection: self.selection, tint: self.tint)
+            _ = AltTabWindowLister.allWindows(captureContent: false,
+                                              includeMinimized: settings.includeMinimized,
+                                              usage: self.usage)
+        }
     }
 
     func stop() {
         cancel()
         tap.stop()
+        usage.stop()
+        overlay.teardown()
     }
 
     /// The modifier changed in settings — re-point the tap without a full restart.
@@ -52,8 +71,12 @@ final class AltTabController {
 
     private func activate(backward: Bool) -> Bool {
         guard let settings else { return false }
+        // The window in front is the one being used — worth confirming here, so the
+        // top of the list is right even if an activation went unseen.
+        usage.noteFrontWindow()
         let entries = AltTabWindowLister.allWindows(captureContent: settings.previewMode.needsScreenRecording,
-                                                    includeMinimized: settings.includeMinimized)
+                                                    includeMinimized: settings.includeMinimized,
+                                                    usage: usage)
         // Nothing to switch between — leave keys flowing normally.
         guard entries.count >= 2 else { return false }
 
@@ -64,6 +87,7 @@ final class AltTabController {
         overlay.show(selection: selection, tint: tint,
                      onHover: { [weak self] index in self?.hover(index) },
                      onPick: { [weak self] entry in self?.pick(entry) },
+                     onClose: { [weak self] entry in self?.close(entry) },
                      onCancel: { [weak self] in self?.cancel() })
         isOpen = true
 
@@ -109,7 +133,37 @@ final class AltTabController {
         guard isOpen else { return }
         closeOverlay()
         tap.endSession()
+        usage.touch(entry.window.id)
         WindowFocuser.focus(entry.window)
+    }
+
+    /// A tile's X was clicked — close that window and drop it from the grid, with
+    /// the switcher left open so several can go in a row. The list only changes
+    /// when the app actually accepted the close, so a window that refuses (no
+    /// close button) keeps its tile instead of vanishing from a list it's still in.
+    private func close(_ entry: AltTabEntry) {
+        guard isOpen,
+              let position = selection.entries.firstIndex(where: { $0.id == entry.id }),
+              WindowCloser.close(entry.window)
+        else { return }
+
+        var entries = selection.entries
+        entries.remove(at: position)
+        // `id` is the position in this array, so the survivors renumber — the
+        // highlight is an index into the very same list.
+        selection.entries = entries.enumerated().map { $0.element.renumbered(to: $0.offset) }
+
+        // Closed the last one: there is nothing left to switch to.
+        guard !selection.entries.isEmpty else {
+            closeOverlay()
+            tap.endSession()
+            return
+        }
+        // Keep the highlight on the window it was on. When it was the closed tile
+        // itself, the next window slides into that slot and inherits the ring.
+        var index = selection.index
+        if position < index { index -= 1 }
+        selection.index = min(max(index, 0), selection.entries.count - 1)
     }
 
     private func step(backward: Bool) {
@@ -124,7 +178,10 @@ final class AltTabController {
         let target = selection.entries.indices.contains(selection.index)
             ? selection.entries[selection.index] : nil
         closeOverlay()
-        if let target { WindowFocuser.focus(target.window) }
+        if let target {
+            usage.touch(target.window.id)
+            WindowFocuser.focus(target.window)
+        }
     }
 
     private func cancel() {

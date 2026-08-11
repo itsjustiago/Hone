@@ -9,8 +9,10 @@ final class WindowPeekController {
     private let panel = WindowPeekPanel()
 
     private var closeTimer: Timer?
-    private var mouseOverPanel = false
-    private var currentPID: pid_t?
+    /// What the panel is currently showing, kept so a window closed from a card
+    /// can be dropped and the rest re-drawn without enumerating (and re-capturing)
+    /// everything again.
+    private var current: (app: DockedApp, windows: [WindowInfo])?
 
     /// Whether to capture live thumbnails (needs Screen Recording). When false or
     /// unavailable, the panel still lists windows with placeholders.
@@ -27,8 +29,7 @@ final class WindowPeekController {
         closeTimer?.invalidate()
         closeTimer = nil
         panel.hide()
-        currentPID = nil
-        mouseOverPanel = false
+        current = nil
     }
 
     private func present(_ app: DockedApp) {
@@ -37,7 +38,7 @@ final class WindowPeekController {
         var windows = WindowEnumerator.windows(forPID: app.pid)
         guard !windows.isEmpty else {
             // App has no normal windows (e.g. just launched) — don't show anything.
-            if currentPID != nil { panel.hide(); currentPID = nil }
+            if current != nil { panel.hide(); current = nil }
             return
         }
 
@@ -47,11 +48,16 @@ final class WindowPeekController {
             }
         }
 
-        currentPID = app.pid
+        draw(app: app, windows: windows)
+    }
+
+    private func draw(app: DockedApp, windows: [WindowInfo]) {
+        current = (app, windows)
         panel.show(appName: app.name,
                    windows: windows,
                    near: app.iconFrame,
                    onSelect: { [weak self] window in self?.select(window) },
+                   onClose: { [weak self] window in self?.close(window) },
                    onHoverChange: { [weak self] over in self?.panelHover(over) })
     }
 
@@ -60,8 +66,28 @@ final class WindowPeekController {
         closeNow()
     }
 
+    /// A card's X — close that window and re-draw the row without it, so several
+    /// can go in a row. The card is dropped from the list we already have rather
+    /// than re-enumerating: a just-closed window lingers in the window list for a
+    /// moment, and a fresh pass would also re-capture every thumbnail (blinking
+    /// the screen-recording indicator) for a change we already know about.
+    private func close(_ window: WindowInfo) {
+        guard let (app, windows) = current, WindowCloser.close(window) else { return }
+
+        let remaining = windows.filter { $0.id != window.id }
+        // Closed the app's last window — there is nothing left to peek at.
+        guard !remaining.isEmpty else {
+            closeNow()
+            return
+        }
+        draw(app: app, windows: remaining)
+        // The row just got narrower under the pointer, which may now be outside it.
+        // Re-check rather than trust the swapped-out view's hover reporting: the
+        // timer only closes the panel if the pointer really has left it.
+        scheduleClose()
+    }
+
     private func panelHover(_ over: Bool) {
-        mouseOverPanel = over
         if over {
             closeTimer?.invalidate()
         } else {
@@ -73,7 +99,7 @@ final class WindowPeekController {
         closeTimer?.invalidate()
         closeTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                guard let self, !self.mouseOverPanel else { return }
+                guard let self, !self.panel.containsMouse else { return }
                 self.closeNow()
             }
         }
@@ -83,7 +109,6 @@ final class WindowPeekController {
         closeTimer?.invalidate()
         closeTimer = nil
         panel.hide()
-        currentPID = nil
-        mouseOverPanel = false
+        current = nil
     }
 }

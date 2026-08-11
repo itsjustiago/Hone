@@ -20,6 +20,7 @@ final class AltTabOverlay {
               tint: Color,
               onHover: @escaping (Int) -> Void,
               onPick: @escaping (AltTabEntry) -> Void,
+              onClose: @escaping (AltTabEntry) -> Void,
               onCancel: @escaping () -> Void) {
         hide()
 
@@ -42,10 +43,50 @@ final class AltTabOverlay {
         }
 
         let root = AltTabView(selection: selection, tint: tint,
-                              onPick: onPick, onHover: gatedHover, onCancel: onCancel)
-        let hosting = NSHostingView(rootView: root)
+                              onPick: onPick, onHover: gatedHover,
+                              onClose: onClose, onCancel: onCancel)
 
-        let panel = NSPanel(contentRect: frame,
+        // Re-point the panel that already exists rather than building another one.
+        // A fresh NSPanel per summon never went away — AppKit holds every window it
+        // is given until it is closed — so each ⌥-Tab left behind a hosting view
+        // still observing the selection and still re-laying itself out on every
+        // Tab. That is what made the switcher slower the longer Hone had been up.
+        let panel = self.panel ?? makePanel()
+        if let hosting = panel.contentView as? NSHostingView<AltTabView> {
+            hosting.rootView = root
+        } else {
+            panel.contentView = NSHostingView(rootView: root)
+        }
+        panel.setFrame(frame, display: true)
+        panel.orderFrontRegardless()
+        panel.makeKey() // take tile clicks without activating Hone
+
+        self.panel = panel
+    }
+
+    func hide() {
+        if let m = moveMonitorLocal { NSEvent.removeMonitor(m); moveMonitorLocal = nil }
+        if let m = moveMonitorGlobal { NSEvent.removeMonitor(m); moveMonitorGlobal = nil }
+        // Kept, not torn down: the panel and its hosting view are what make the
+        // next summon instant. The controller empties the selection, so nothing is
+        // drawn while it waits off-screen.
+        panel?.orderOut(nil)
+    }
+
+    /// Build the panel and its hosting view ahead of the first ⌥-Tab. The first
+    /// SwiftUI render of the grid costs an order of magnitude more than the ones
+    /// after it, and this moves that cost to Hone's launch, where nobody is
+    /// waiting on a keystroke.
+    func prewarm(selection: AltTabSelection, tint: Color) {
+        guard panel == nil else { return }
+        let panel = makePanel()
+        panel.contentView = NSHostingView(rootView: AltTabView(selection: selection, tint: tint))
+        panel.contentView?.layoutSubtreeIfNeeded()
+        self.panel = panel
+    }
+
+    private func makePanel() -> NSPanel {
+        let panel = NSPanel(contentRect: NSScreen.main?.frame ?? .zero,
                             styleMask: [.borderless, .nonactivatingPanel],
                             backing: .buffered,
                             defer: false)
@@ -58,19 +99,13 @@ final class AltTabOverlay {
         panel.hasShadow = false
         panel.ignoresMouseEvents = false
         panel.acceptsMouseMovedEvents = true
-        panel.contentView = hosting
-        panel.setFrame(frame, display: true)
-        panel.orderFrontRegardless()
-        panel.makeKey() // take tile clicks without activating Hone
-
-        self.panel = panel
+        return panel
     }
 
-    func hide() {
-        if let m = moveMonitorLocal { NSEvent.removeMonitor(m); moveMonitorLocal = nil }
-        if let m = moveMonitorGlobal { NSEvent.removeMonitor(m); moveMonitorGlobal = nil }
-        panel?.orderOut(nil)
-        panel?.contentView = nil
+    /// The module was switched off — let the panel go for real.
+    func teardown() {
+        hide()
+        panel?.close()
         panel = nil
     }
 
