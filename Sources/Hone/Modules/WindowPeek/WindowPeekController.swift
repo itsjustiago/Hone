@@ -20,6 +20,7 @@ final class WindowPeekController {
 
     func start() {
         dock.onHoverApp = { [weak self] app in self?.present(app) }
+        dock.onIconMove = { [weak self] iconFrame in self?.follow(iconFrame) }
         dock.onExit = { [weak self] in self?.scheduleClose() }
         dock.start()
     }
@@ -59,6 +60,16 @@ final class WindowPeekController {
                    onSelect: { [weak self] window in self?.select(window) },
                    onClose: { [weak self] window in self?.close(window) },
                    onHoverChange: { [weak self] over in self?.panelHover(over) })
+    }
+
+    /// The hovered icon moved under the pointer — an auto-hidden Dock still sliding
+    /// up, or magnification — so slide the card with it. The card that is already up
+    /// only gets a new origin: no re-enumeration, and no re-captured thumbnails
+    /// (which would blink the screen-recording indicator for a pure move).
+    private func follow(_ iconFrame: CGRect) {
+        guard current != nil else { return }
+        current?.app.iconFrame = iconFrame
+        panel.reposition(near: iconFrame)
     }
 
     private func select(_ window: WindowInfo) {

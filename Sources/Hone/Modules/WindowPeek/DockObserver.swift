@@ -11,11 +11,15 @@ import ApplicationServices
 @MainActor
 final class DockObserver {
     var onHoverApp: ((DockedApp) -> Void)?
+    /// The hovered icon moved without the hover changing app — reported so the panel
+    /// can slide with it. See `check()`.
+    var onIconMove: ((CGRect) -> Void)?
     var onExit: (() -> Void)?
 
     private let systemWide = AXUIElementCreateSystemWide()
     private var timer: DispatchSourceTimer?
     private var lastPid: pid_t?
+    private var lastIconFrame: CGRect?
 
     func start() {
         guard timer == nil else { return }
@@ -30,6 +34,7 @@ final class DockObserver {
         timer?.cancel()
         timer = nil
         lastPid = nil
+        lastIconFrame = nil
     }
 
     private func check() {
@@ -45,23 +50,44 @@ final class DockObserver {
         let err = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &elementRef)
         guard err == .success, let element = elementRef else { return } // transient miss → keep state
 
+        // Our own panel under the pointer is not an exit. It sits above the Dock, so
+        // for the frame or two before it has caught up with a Dock still sliding up
+        // it can cover the very icon being hovered — hit-testing it must not read as
+        // "left the Dock" and close the card out from under the pointer.
+        var elementPid: pid_t = 0
+        if AXUIElementGetPid(element, &elementPid) == .success,
+           elementPid == ProcessInfo.processInfo.processIdentifier { return }
+
         guard AX.string(element, "AXSubrole") == "AXApplicationDockItem",
               let app = resolveApp(for: element)
         else { return leave() }
 
-        guard app.processIdentifier != lastPid else { return }
-        lastPid = app.processIdentifier
-
         let pos = AX.point(element, "AXPosition") ?? .zero
         let size = AX.size(element, "AXSize") ?? .zero
+        let iconFrame = CGRect(origin: pos, size: size)
+
+        // Same app, new geometry. The Dock is still animating — sliding up out of
+        // auto-hide, or magnifying under the pointer — and the first tick caught the
+        // icon mid-flight. Report the move so the panel follows instead of staying
+        // anchored to where the icon was, which is under the Dock's final position.
+        guard app.processIdentifier != lastPid else {
+            guard iconFrame != lastIconFrame else { return }
+            lastIconFrame = iconFrame
+            onIconMove?(iconFrame)
+            return
+        }
+        lastPid = app.processIdentifier
+        lastIconFrame = iconFrame
+
         onHoverApp?(DockedApp(pid: app.processIdentifier,
                               name: app.localizedName ?? AX.string(element, "AXTitle") ?? "",
-                              iconFrame: CGRect(origin: pos, size: size)))
+                              iconFrame: iconFrame))
     }
 
     private func leave() {
         guard lastPid != nil else { return }
         lastPid = nil
+        lastIconFrame = nil
         onExit?()
     }
 

@@ -7,7 +7,9 @@ struct DockedApp: Equatable {
     let pid: pid_t
     let name: String
     /// The Dock icon's frame in CoreGraphics screen coordinates (top-left origin).
-    let iconFrame: CGRect
+    /// Not fixed for the life of a hover: the Dock keeps moving the icon while it
+    /// slides up out of auto-hide, and again as it magnifies under the pointer.
+    var iconFrame: CGRect
 }
 
 /// A single window belonging to an app.

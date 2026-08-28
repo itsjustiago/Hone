@@ -29,6 +29,15 @@ final class WindowPeekPanel {
         self.panel = panel
     }
 
+    /// Follow the icon without rebuilding the card. The Dock goes on moving after
+    /// the first hover tick — sliding up out of auto-hide, magnifying under the
+    /// pointer — and the card is anchored to the icon, so it has to move too. Only
+    /// the origin changes: nothing is re-enumerated and no thumbnail is re-captured.
+    func reposition(near iconFrame: CGRect) {
+        guard let panel, panel.isVisible else { return }
+        panel.setFrameOrigin(origin(for: panel.frame.size, iconFrame: iconFrame))
+    }
+
     func hide() {
         panel?.orderOut(nil)
     }
@@ -50,7 +59,11 @@ final class WindowPeekPanel {
                             backing: .buffered,
                             defer: true)
         panel.isFloatingPanel = true
-        panel.level = .floating
+        // Above the Dock (level 20) rather than the `.floating` 3 a HUD panel
+        // normally gets: at 3 the Dock draws *over* the card and clips it wherever
+        // the two overlap — what you see when you peek at an auto-hidden Dock that
+        // is still sliding up. Still below the menu bar (24) and menus.
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
         panel.hidesOnDeactivate = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
