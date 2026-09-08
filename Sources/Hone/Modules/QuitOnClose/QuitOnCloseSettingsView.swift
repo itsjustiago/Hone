@@ -25,6 +25,22 @@ struct QuitOnCloseSettingsView: View {
                     .pickerStyle(.segmented)
                     .frame(width: 240)
                 }
+
+                RowDivider()
+
+                SettingsRow(
+                    title: "Esperar antes de sair",
+                    subtitle: "A contagem começa quando fechas a última janela. Se abrires outra antes do tempo acabar, a app fica."
+                ) {
+                    Picker("", selection: $settings.delaySeconds) {
+                        ForEach(settings.delayChoices, id: \.self) { seconds in
+                            Text(QuitOnCloseSettings.delayLabel(seconds)).tag(seconds)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 240)
+                }
             }
 
             SettingsSection(title: settings.mode == .allExcept ? "Exceções" : "Apps") {
@@ -68,7 +84,7 @@ struct QuitOnCloseSettingsView: View {
                 }
             }
 
-            Label("**⌘W** conta como fechar — o macOS não distingue o atalho do clique no botão vermelho. Uma janela **minimizada** mantém a app viva, e o **Finder** nunca é fechado.",
+            Label("**⌘W** conta como fechar — o macOS não distingue o atalho do clique no botão vermelho. A contagem só arranca depois de a app ficar mesmo sem janelas; uma janela **minimizada** mantém-na viva, e o **Finder** nunca é fechado.",
                   systemImage: "info.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)

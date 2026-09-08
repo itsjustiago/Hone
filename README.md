@@ -16,7 +16,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 | **Window Peek** | DockDoor | ✅ Working (v1) | Hover a Dock icon to preview that app's open windows as live thumbnails, then click one to focus it. |
 | **Alt-Tab Visual** | [AltTab](https://github.com/lwouis/alt-tab-macos) | ✅ Working (v1) | Hold ⌥ Option and tap Tab for a full-screen grid of every open window — app icons by default, or opt into static / live window previews; cycle by keyboard or mouse, release to switch. |
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
-| **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows. Per-app lists, and the Finder is never touched. |
+| **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows — right away, or after a delay you pick (default 1 min), cancelled if you open a window again. Per-app lists, and the Finder is never touched. |
 
 ## Requirements
 
@@ -161,6 +161,16 @@ between "zero windows" and quitting:
   windows, and is left alone;
 - zero is **confirmed a second time** one debounce later, because leaving full
   screen (and a few apps mid-transition) passes through a moment with no windows.
+
+Confirmed zero starts a countdown rather than quitting, unless the delay is set to
+*Imediato* (`0`), which behaves exactly as before. The delay is picked from a list
+(10 s to 1 h, default 1 min). `kAXWindowCreatedNotification` cancels a pending quit
+outright — the app is in use again — and a further destroyed window does **not**
+restart the countdown, so emptying an app one window at a time can't keep pushing
+its own deadline away. When the timer fires nothing from the earlier verdict is
+reused: the app is still running, still watchable, still allowed by the lists, and
+the windows are counted again (same subrole filter, same `stalled` rule) before it
+is asked to quit.
 
 Minimized windows still count as open — a window sitting in the Dock means the
 app was not closed. Quitting is `NSRunningApplication.terminate()`, the normal
