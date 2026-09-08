@@ -7,7 +7,7 @@ import SwiftUI
 final class QuitOnCloseModule: HoneModule {
     let id = "quitOnClose"
     let title = "Fechar = Sair"
-    let summary = "Fecha a última janela de uma app e ela sai por completo, em vez de ficar na Dock."
+    let summary = "Fecha a última janela de uma app e ela sai sozinha — logo, ou passado o tempo que escolheres."
     let iconSystemName = "xmark.app.fill"
     let tint = Color.red
     let isAvailable = true

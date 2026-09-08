@@ -18,6 +18,10 @@ final class AppWindowWatcher {
     /// is the controller's job — this is only the trigger.
     var onWindowDestroyed: (() -> Void)?
 
+    /// This app just opened a window — whatever was pending on the assumption
+    /// that it had none is now wrong.
+    var onWindowCreated: (() -> Void)?
+
     private let appElement: AXUIElement
     private var observer: AXObserver?
 
@@ -60,12 +64,14 @@ final class AppWindowWatcher {
         CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         self.observer = nil
         onWindowDestroyed = nil
+        onWindowCreated = nil
     }
 
     fileprivate func handle(notification: String, element: AXUIElement) {
         switch notification {
         case kAXWindowCreatedNotification:
             observe(element)
+            onWindowCreated?()
         case kAXUIElementDestroyedNotification:
             forget(element)
             onWindowDestroyed?()

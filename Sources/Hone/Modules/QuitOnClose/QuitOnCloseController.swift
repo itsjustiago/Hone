@@ -15,6 +15,9 @@ import ApplicationServices
 ///   pass through a moment with zero windows. Zero is only acted on when it is
 ///   still zero one debounce later.
 ///
+/// Confirmed zero doesn't quit on the spot unless the delay is `0`: it starts a
+/// countdown, and the whole verdict is rebuilt from scratch when it fires.
+///
 /// Nothing here captures the screen.
 @MainActor
 final class QuitOnCloseController {
@@ -31,6 +34,9 @@ final class QuitOnCloseController {
     private var watchers: [pid_t: AppWindowWatcher] = [:]
     private var workspaceObservers: [NSObjectProtocol] = []
     private var pendingChecks: [pid_t: DispatchWorkItem] = [:]
+
+    /// Apps confirmed windowless and waiting out `delaySeconds` before quitting.
+    private var pendingQuits: [pid_t: DispatchWorkItem] = [:]
     private var isRunning = false
 
     init(settings: QuitOnCloseSettings) {
@@ -82,6 +88,9 @@ final class QuitOnCloseController {
 
         for check in pendingChecks.values { check.cancel() }
         pendingChecks.removeAll()
+
+        for quit in pendingQuits.values { quit.cancel() }
+        pendingQuits.removeAll()
     }
 
     // MARK: - Watchers
@@ -92,12 +101,16 @@ final class QuitOnCloseController {
               let watcher = AppWindowWatcher(pid: pid)
         else { return }
         watcher.onWindowDestroyed = { [weak self] in self?.scheduleCheck(pid: pid) }
+        // A new window means the app is in use again, so any countdown started by
+        // an earlier close is void — the user reopened before the time was up.
+        watcher.onWindowCreated = { [weak self] in self?.cancelQuit(pid: pid) }
         watchers[pid] = watcher
     }
 
     private func detach(pid: pid_t) {
         watchers.removeValue(forKey: pid)?.stop()
         pendingChecks.removeValue(forKey: pid)?.cancel()
+        pendingQuits.removeValue(forKey: pid)?.cancel()
     }
 
     /// Apps we may watch *and* may quit, before the user's lists have a say.
@@ -128,26 +141,63 @@ final class QuitOnCloseController {
     private func check(pid: pid_t, isConfirmation: Bool) {
         pendingChecks[pid] = nil
 
+        guard let app = quittableApp(pid: pid), isWindowless(pid: pid) else { return }
+
+        guard isConfirmation else { return scheduleCheck(pid: pid, confirming: true) }
+
+        guard settings.delaySeconds > 0 else { return terminate(app) }
+
+        // The app is windowless *now* and stays that way until something opens a
+        // window — an event that cancels the countdown outright. So a second
+        // destroyed window must not restart it, or an app being emptied one window
+        // at a time would keep pushing its own deadline away.
+        guard pendingQuits[pid] == nil else { return }
+
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.quitIfStillEmpty(pid: pid) }
+        }
+        pendingQuits[pid] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(settings.delaySeconds), execute: work)
+    }
+
+    /// End of the countdown. Minutes may have passed, so nothing from the earlier
+    /// verdict is reused: eligibility, the user's lists and the window count are
+    /// all worked out again right here.
+    private func quitIfStillEmpty(pid: pid_t) {
+        pendingQuits[pid] = nil
+        guard let app = quittableApp(pid: pid), isWindowless(pid: pid) else { return }
+        terminate(app)
+    }
+
+    private func cancelQuit(pid: pid_t) {
+        pendingQuits.removeValue(forKey: pid)?.cancel()
+    }
+
+    /// The app behind a pid, if it is still one we may quit at this instant.
+    private func quittableApp(pid: pid_t) -> NSRunningApplication? {
         guard isRunning,
               let app = NSRunningApplication(processIdentifier: pid),
               isWatchable(app),
               let bundleID = app.bundleIdentifier,
               settings.allowsQuitting(bundleID)
-        else { return }
+        else { return nil }
+        return app
+    }
 
+    /// A fresh count. An app that didn't answer (`stalled`) is not windowless.
+    private func isWindowless(pid: pid_t) -> Bool {
         let result = AX.windows(ofApplication: pid, timeout: 0.25)
-        guard !result.stalled else { return }
+        guard !result.stalled else { return false }
 
         // Minimized windows still show up in `AXWindows` — and should, an app with
         // a window in the Dock has not been closed. Only floating palettes are
         // dropped, since they don't keep an app alive on their own.
-        let real = result.windows.filter { !isAuxiliarySubrole(AX.string($0, "AXSubrole")) }
-        guard real.isEmpty else { return }
+        return result.windows.allSatisfy { isAuxiliarySubrole(AX.string($0, "AXSubrole")) }
+    }
 
-        guard isConfirmation else { return scheduleCheck(pid: pid, confirming: true) }
-
-        // The normal quit AppleEvent, never `forceTerminate`: the app still gets to
-        // put up "save changes?" and can refuse.
+    /// The normal quit AppleEvent, never `forceTerminate`: the app still gets to
+    /// put up "save changes?" and can refuse.
+    private func terminate(_ app: NSRunningApplication) {
         app.terminate()
     }
 }
