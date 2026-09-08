@@ -29,6 +29,7 @@ final class ModuleManager {
             WindowPeekModule(),
             AltTabModule(),
             CleanKeyboardModule(),
+            QuitOnCloseModule(),
         ]
     }
 

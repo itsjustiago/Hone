@@ -16,6 +16,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 | **Window Peek** | DockDoor | ✅ Working (v1) | Hover a Dock icon to preview that app's open windows as live thumbnails, then click one to focus it. |
 | **Alt-Tab Visual** | [AltTab](https://github.com/lwouis/alt-tab-macos) | ✅ Working (v1) | Hold ⌥ Option and tap Tab for a full-screen grid of every open window — app icons by default, or opt into static / live window previews; cycle by keyboard or mouse, release to switch. |
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
+| **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows. Per-app lists, and the Finder is never touched. |
 
 ## Requirements
 
@@ -65,8 +66,10 @@ Sources/Hone/
     │               WindowEnumerator · WindowFocuser · WindowPeekPanel(+View) · AXHelpers
     ├── AltTab/     AltTabModule · AltTabController · AltTabHotKeyTap ·
     │               AltTabWindowLister · AltTabOverlay(+View) · AltTabSettings(+View)
-    └── CleanKeyboard/ CleanKeyboardModule · CleanKeyboardController · KeyboardBlocker ·
-                    CleanKeyboardOverlay(+View) · CleanKeyboardSettings(+View)
+    ├── CleanKeyboard/ CleanKeyboardModule · CleanKeyboardController · KeyboardBlocker ·
+    │               CleanKeyboardOverlay(+View) · CleanKeyboardSettings(+View)
+    └── QuitOnClose/ QuitOnCloseModule · QuitOnCloseController · AppWindowWatcher ·
+                    QuitOnCloseSettings(+View)
 ```
 
 Most tools are on/off **toggles**, but a module can instead be **momentary** —
@@ -138,6 +141,38 @@ Two unlock paths, both of which always work while the keys are blocked:
 The tap is created **before** the card appears (and only if Accessibility is
 granted), so it never claims the keys are locked when they aren't. The tap is
 per-process: quitting or crashing Hone restores the keyboard instantly.
+
+### How the Quit on Close tool works
+
+`QuitOnCloseController` attaches an `AppWindowWatcher` to every running app with a
+`.regular` activation policy. Each watcher is one `AXObserver` on the app's run
+loop source: `kAXWindowCreatedNotification` on the application element, plus
+`kAXUIElementDestroyedNotification` on **each window** — that notification is
+delivered per element, so every window (the ones already open, and each new one)
+is registered individually. A watcher never reports anything on attach, only
+destruction, so an app that has just launched and hasn't drawn a window yet can't
+be mistaken for one that was just closed.
+
+When a window dies, the app's remaining windows are counted through the AX API
+after a ~0.35 s debounce, dropping floating palettes by subrole. Two guards stand
+between "zero windows" and quitting:
+
+- an app that **didn't answer** the AX query (`stalled`) is not an app without
+  windows, and is left alone;
+- zero is **confirmed a second time** one debounce later, because leaving full
+  screen (and a few apps mid-transition) passes through a moment with no windows.
+
+Minimized windows still count as open — a window sitting in the Dock means the
+app was not closed. Quitting is `NSRunningApplication.terminate()`, the normal
+quit AppleEvent and never `forceTerminate`, so the app can still show its "save
+changes?" sheet or refuse outright.
+
+Two modes: **all apps except a list**, or **only the apps you pick** (two separate
+lists, so switching mode doesn't lose the other). Underneath both there is a hard
+floor in code — Hone itself, the **Finder**, apps with no bundle id, and anything
+not `.regular` are never watched and never quit; the Finder because the desktop
+and the Dock's Finder icon depend on it running with no windows. The tool does no
+screen capture at all.
 
 ## Adding a new tool
 
