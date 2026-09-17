@@ -90,6 +90,12 @@ A session-level `CGEventTap` inspects every scroll event:
 
 Synthetic events are marked continuous, so the tap ignores its own output (no loop).
 
+A notch against the current glide drops what is left of it rather than netting
+against it — reversing means "stop, go the other way". This matters most at the
+end of a page, where the pending distance was going nowhere: without it the first
+two or three notches back were eaten cancelling a glide the page could no longer
+follow. The acceleration ramp restarts on a reversal for the same reason.
+
 ### How the Window Peek tool works
 
 `DockObserver` hit-tests the cursor against the system-wide AX tree each move

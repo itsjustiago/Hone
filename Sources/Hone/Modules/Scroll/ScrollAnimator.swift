@@ -26,10 +26,22 @@ final class ScrollAnimator: NSObject {
     }
 
     /// Add pixel distance (already direction-corrected) and begin/continue gliding.
+    ///
+    /// A notch against the current glide drops what is left of it instead of
+    /// netting against it. Reversing means "stop, go the other way" — and at the
+    /// end of a page the pending distance was going nowhere anyway, so without
+    /// this the first two or three notches back would be eaten cancelling a glide
+    /// the page could no longer follow.
     func addDelta(x: Double, y: Double) {
+        if Self.reverses(remainingX, x) { remainingX = 0; residualX = 0 }
+        if Self.reverses(remainingY, y) { remainingY = 0; residualY = 0 }
         remainingX += x
         remainingY += y
         start()
+    }
+
+    private static func reverses(_ remaining: Double, _ delta: Double) -> Bool {
+        (remaining > 0 && delta < 0) || (remaining < 0 && delta > 0)
     }
 
     func reset() {
