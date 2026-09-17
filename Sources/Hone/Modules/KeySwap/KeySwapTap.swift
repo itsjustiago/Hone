@@ -113,6 +113,16 @@ final class KeySwapTap {
             return Unmanaged.passUnretained(event)
         }
 
+        // Only real key presses are swapped. An event posted by another process —
+        // a clipboard manager firing ⌘V, a launcher replaying a shortcut, a text
+        // expander — means "run this shortcut", not "the user pressed the key
+        // marked ⌘": swapping it hands the app a shortcut nobody asked for, and
+        // the paste silently does nothing. Events from the HID system carry a
+        // source pid of 0; anything else was synthesised by an app.
+        if event.getIntegerValueField(.eventSourceUnixProcessID) != 0 {
+            return Unmanaged.passUnretained(event)
+        }
+
         if let bundleID = frontmostBundleID, settings.isExcluded(bundleID) {
             return Unmanaged.passUnretained(event)
         }
