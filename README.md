@@ -17,7 +17,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 | **Alt-Tab Visual** | [AltTab](https://github.com/lwouis/alt-tab-macos) | ✅ Working (v1) | Hold ⌥ Option and tap Tab for a full-screen grid of every open window — app icons by default, or opt into static / live window previews; cycle by keyboard or mouse, release to switch. |
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
 | **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows — right away, or after a delay you pick (default 1 min), cancelled if you open a window again. Per-app lists, and the Finder is never touched. |
-| **Key Swap** | Karabiner-Elements | ✅ Working | Swaps ⌘ with ⌃ system-wide, both keys and both directions, so ⌃C / ⌃V / ⌃Z copy, paste and undo like on Windows. ⌃+click stays the macOS right-click; per-app exception list. |
+| **Key Swap** | Karabiner-Elements | ✅ Working | Swaps ⌘ with ⌃ system-wide, both keys and both directions, so ⌃C / ⌃V / ⌃Z copy, paste and undo like on Windows. Tab is never swapped — ⌘Tab stays the app switcher, ⌃Tab keeps cycling tabs. ⌃+click stays the macOS right-click; per-app exception list. |
 
 ## Requirements
 
@@ -206,6 +206,16 @@ clipboard manager firing ⌘V, a launcher replaying a shortcut, a text expander 
 means "run this shortcut", not "the user pressed the key marked ⌘"; swapping it
 would hand the app a shortcut nobody asked for. Those carry a source pid that
 isn't 0, and pass through untouched.
+
+Tab is never swapped: ⌘Tab stays the app switcher (⌘ sits where Alt does on a PC
+keyboard, so it *is* Alt-Tab) and ⌃Tab keeps cycling tabs, as on Windows. The Dock
+keeps the switcher open for as long as ⌘ is held and commits on its release, so
+the whole hold has to look like one plain ⌘ press. By the time Tab arrives the
+system has already been shown the *swapped* modifier going down, so on that Tab
+the tap posts — ahead of it, via `CGEventTapPostEvent` — a release of the
+modifier it was shown and a press of the one physically held, and from then on
+reports that key as itself (Tab, Shift-Tab, arrows, Q, the release) until it comes
+back up. Events posted from a tap skip that tap, so they are never re-swapped.
 
 An optional per-app exception list passes events through untouched for the apps on
 it. The frontmost bundle id is cached and refreshed from a

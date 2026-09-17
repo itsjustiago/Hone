@@ -52,7 +52,7 @@ struct KeySwapSettingsView: View {
                 }
             }
 
-            Label("A troca vale para as teclas **esquerda e direita**, nos dois sentidos. O rato não é tocado: **⌃+clique continua a ser o clique-direito** do macOS. Em campos de palavra-passe com *secure input* o macOS bloqueia qualquer app de ler o teclado, por isso a troca fica suspensa enquanto lá escreves.",
+            Label("A troca vale para as teclas **esquerda e direita**, nos dois sentidos. O **Tab nunca é trocado**: ⌘Tab continua a ser o alternador de apps (o Alt-Tab) e ⌃Tab continua a mudar de separador, como no Windows. O rato não é tocado: **⌃+clique continua a ser o clique-direito** do macOS. Em campos de palavra-passe com *secure input* o macOS bloqueia qualquer app de ler o teclado, por isso a troca fica suspensa enquanto lá escreves.",
                   systemImage: "info.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
