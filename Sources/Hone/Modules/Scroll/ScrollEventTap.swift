@@ -81,7 +81,7 @@ final class ScrollEventTap {
 
         if settings.smoothEnabled {
             // Swallow the original discrete step; emit a smooth pixel glide instead.
-            let accel = settings.acceleration ? accelerationFactor() : 1.0
+            let accel = settings.acceleration ? accelerationFactor(x: lineX, y: lineY) : 1.0
             animator.addDelta(x: sign * lineX * settings.step * accel,
                               y: sign * lineY * settings.step * accel)
             return nil
@@ -96,14 +96,21 @@ final class ScrollEventTap {
     }
 
     private var lastScrollTime: TimeInterval = 0
+    private var lastLineX = 0.0
+    private var lastLineY = 0.0
 
     /// Ramps the scroll distance up when notches arrive in quick succession, so a
-    /// fast flick travels much further than a slow, deliberate one.
-    private func accelerationFactor() -> Double {
+    /// fast flick travels much further than a slow, deliberate one. A notch in the
+    /// opposite direction starts over: the first notch back after a flick is a
+    /// change of mind, not part of the flick.
+    private func accelerationFactor(x: Double, y: Double) -> Double {
         let now = ProcessInfo.processInfo.systemUptime
         let gap = now - lastScrollTime
+        let reversed = x * lastLineX < 0 || y * lastLineY < 0
         lastScrollTime = now
-        guard gap < 0.09 else { return 1.0 }
+        lastLineX = x
+        lastLineY = y
+        guard !reversed, gap < 0.09 else { return 1.0 }
         // gap 90ms → ~1×, gap 20ms → ~3× (capped).
         return min(3.0, 0.09 / max(gap, 0.03) * 1.1)
     }
