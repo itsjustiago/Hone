@@ -17,6 +17,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 | **Alt-Tab Visual** | [AltTab](https://github.com/lwouis/alt-tab-macos) | ✅ Working (v1) | Hold ⌥ Option and tap Tab for a full-screen grid of every open window — app icons by default, or opt into static / live window previews; cycle by keyboard or mouse, release to switch. |
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
 | **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows — right away, or after a delay you pick (default 1 min), cancelled if you open a window again. Per-app lists, and the Finder is never touched. |
+| **Key Swap** | Karabiner-Elements | ✅ Working | Swaps ⌘ with ⌃ system-wide, both keys and both directions, so ⌃C / ⌃V / ⌃Z copy, paste and undo like on Windows. ⌃+click stays the macOS right-click; per-app exception list. |
 
 ## Requirements
 
@@ -68,8 +69,9 @@ Sources/Hone/
     │               AltTabWindowLister · AltTabOverlay(+View) · AltTabSettings(+View)
     ├── CleanKeyboard/ CleanKeyboardModule · CleanKeyboardController · KeyboardBlocker ·
     │               CleanKeyboardOverlay(+View) · CleanKeyboardSettings(+View)
-    └── QuitOnClose/ QuitOnCloseModule · QuitOnCloseController · AppWindowWatcher ·
-                    QuitOnCloseSettings(+View)
+    ├── QuitOnClose/ QuitOnCloseModule · QuitOnCloseController · AppWindowWatcher ·
+    │               QuitOnCloseSettings(+View)
+    └── KeySwap/    KeySwapModule · KeySwapTap · KeySwapSettings(+View)
 ```
 
 Most tools are on/off **toggles**, but a module can instead be **momentary** —
@@ -183,6 +185,28 @@ floor in code — Hone itself, the **Finder**, apps with no bundle id, and anyth
 not `.regular` are never watched and never quit; the Finder because the desktop
 and the Dock's Finder icon depend on it running with no windows. The tool does no
 screen capture at all.
+
+### How the Key Swap tool works
+
+`KeySwapTap` is a session-level `CGEventTap` on `keyDown`/`keyUp`/`flagsChanged`.
+For each event it crosses the ⌘ and ⌃ bits in `event.flags` — both the generic
+`maskCommand`/`maskControl` and the device-dependent left/right bits from
+`IOLLEvent.h`, which Chrome, Electron apps and games read straight off the event.
+All bits are read from the original value first, then written back crossed, so a
+pair isn't swapped twice. On `flagsChanged` the key code is swapped too
+(`kVK_Command` ⇄ `kVK_Control`, and the right-hand pair), otherwise an app that
+tracks the *physical* key sees Control go down while the flags say Command.
+
+Mouse events are deliberately **not** tapped: on macOS ⌃+click is the right-click,
+and swapping the modifier there would turn every ⌘+click into a context menu. The
+event is always passed on — the tool rewrites keys, it never swallows them.
+
+An optional per-app exception list passes events through untouched for the apps on
+it. The frontmost bundle id is cached and refreshed from a
+`didActivateApplicationNotification` observer rather than asked per keystroke —
+that IPC round-trip inside the callback is enough for the OS to kill the tap by
+timeout. In password fields with *secure input* macOS blocks every tap, so the
+swap is suspended there by the system itself.
 
 ## Adding a new tool
 
