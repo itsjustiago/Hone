@@ -201,6 +201,12 @@ Mouse events are deliberately **not** tapped: on macOS ⌃+click is the right-cl
 and swapping the modifier there would turn every ⌘+click into a context menu. The
 event is always passed on — the tool rewrites keys, it never swallows them.
 
+Only *hardware* key presses are swapped. An event posted by another process — a
+clipboard manager firing ⌘V, a launcher replaying a shortcut, a text expander —
+means "run this shortcut", not "the user pressed the key marked ⌘"; swapping it
+would hand the app a shortcut nobody asked for. Those carry a source pid that
+isn't 0, and pass through untouched.
+
 An optional per-app exception list passes events through untouched for the apps on
 it. The frontmost bundle id is cached and refreshed from a
 `didActivateApplicationNotification` observer rather than asked per keystroke —
