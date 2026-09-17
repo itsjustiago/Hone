@@ -30,6 +30,7 @@ final class ModuleManager {
             AltTabModule(),
             CleanKeyboardModule(),
             QuitOnCloseModule(),
+            KeySwapModule(),
         ]
     }
 
