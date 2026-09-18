@@ -7,7 +7,8 @@ struct MenuBarContent: View {
     @Bindable var manager: ModuleManager
     var updateChecker: UpdateChecker
     var dismiss: () -> Void = {}
-    var openSettings: () -> Void = {}
+    /// Opens Settings on the given tool's page; `nil` keeps the current page.
+    var openSettings: (String?) -> Void = { _ in }
     @State private var permissions = Permissions.shared
 
     // A single content inset used everywhere so every row, the header, the
@@ -20,6 +21,10 @@ struct MenuBarContent: View {
     private var needsPermission: Bool {
         manager.modules.contains { manager.isWaitingOnPermission($0) }
     }
+
+    // Switch tools first, momentary (one-shot) tools grouped below a divider.
+    private var switchModules: [any HoneModule] { manager.modules.filter { !$0.isMomentary } }
+    private var momentaryModules: [any HoneModule] { manager.modules.filter { $0.isMomentary } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -40,13 +45,14 @@ struct MenuBarContent: View {
                     .padding(.bottom, 8)
             }
 
-            VStack(spacing: 2) {
-                ForEach(manager.modules, id: \.id) { module in
-                    ModuleRow(module: module, manager: manager,
-                              innerPad: contentInset - edge, dismiss: dismiss)
-                }
+            moduleList(switchModules)
+
+            if !momentaryModules.isEmpty {
+                Divider()
+                    .padding(.horizontal, contentInset)
+                    .padding(.vertical, 6)
+                moduleList(momentaryModules)
             }
-            .padding(.horizontal, edge)
 
             Divider()
                 .padding(.horizontal, contentInset)
@@ -55,7 +61,7 @@ struct MenuBarContent: View {
             VStack(spacing: 1) {
                 Button {
                     dismiss()
-                    openSettings()
+                    openSettings(nil)
                 } label: {
                     MenuActionLabel(title: "Definições…", shortcut: "", systemImage: "gearshape")
                 }
@@ -73,6 +79,16 @@ struct MenuBarContent: View {
         }
         .frame(width: panelWidth)
         .background(VisualEffectBackground())
+    }
+
+    private func moduleList(_ modules: [any HoneModule]) -> some View {
+        VStack(spacing: 2) {
+            ForEach(modules, id: \.id) { module in
+                ModuleRow(module: module, manager: manager,
+                          innerPad: contentInset - edge, dismiss: dismiss, openSettings: openSettings)
+            }
+        }
+        .padding(.horizontal, edge)
     }
 
     private var header: some View {
@@ -158,7 +174,9 @@ private struct ModuleRow: View {
     @Bindable var manager: ModuleManager
     let innerPad: CGFloat
     var dismiss: () -> Void = {}
+    var openSettings: (String?) -> Void = { _ in }
     @State private var hovering = false
+    @State private var hoveringGear = false
 
     var body: some View {
         HStack(spacing: 11) {
@@ -172,6 +190,9 @@ private struct ModuleRow: View {
                     .foregroundStyle(statusColor)
             }
             Spacer(minLength: 8)
+            if module.isAvailable {
+                settingsButton
+            }
             trailingControl
         }
         .padding(.horizontal, innerPad)
@@ -184,6 +205,26 @@ private struct ModuleRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeInOut(duration: 0.16), value: module.isEnabled)
+    }
+
+    /// Quick path to this tool's Settings page. Quiet at rest, brighter with the
+    /// row, and only shows its own pill when the pointer is on the gear itself.
+    private var settingsButton: some View {
+        Button {
+            dismiss()
+            openSettings(module.id)
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                .frame(width: 22, height: 22)
+                .background(hoveringGear ? AnyShapeStyle(.primary.opacity(0.08)) : AnyShapeStyle(.clear),
+                            in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hoveringGear = $0 }
+        .help("Definições de \(module.title)")
     }
 
     @ViewBuilder

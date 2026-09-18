@@ -28,9 +28,10 @@ final class ModuleManager {
             ScrollModule(),
             WindowPeekModule(),
             AltTabModule(),
-            CleanKeyboardModule(),
             QuitOnCloseModule(),
             KeySwapModule(),
+            // Momentary tools go last so the Settings sidebar matches the popover.
+            CleanKeyboardModule(),
         ]
     }
 
