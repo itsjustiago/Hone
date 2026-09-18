@@ -15,9 +15,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var lastPopoverClose = Date.distantPast
 
     /// Opens the Settings window (AppKit-managed, so it reliably comes to front
-    /// from a menu-bar agent). Called by the popover's "Definições…" button.
-    func showSettings() {
-        settingsWindow.show()
+    /// from a menu-bar agent). Called by the popover's "Definições…" button and
+    /// by each tool row's gear, which passes its `moduleID` to land on that page.
+    func showSettings(moduleID: String? = nil) {
+        settingsWindow.show(selecting: moduleID)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -103,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             manager: manager,
             updateChecker: updateChecker,
             dismiss: { [weak self] in self?.dismissPopover() },
-            openSettings: { [weak self] in self?.showSettings() })
+            openSettings: { [weak self] moduleID in self?.showSettings(moduleID: moduleID) })
 
         let hosting = NSHostingController(rootView: panel)
         hosting.sizingOptions = .preferredContentSize

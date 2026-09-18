@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// Which page the Settings sidebar shows. Lives outside `SettingsView` so the
+/// popover can pick a tool's page even though the window is built once and
+/// reused.
+@MainActor
+@Observable
+final class SettingsNavigation {
+    var selection: String = "scroll"
+}
+
 /// Hosts the Settings UI in an AppKit-managed window.
 ///
 /// A menu-bar agent (`LSUIElement`) can't reliably open a SwiftUI `Settings`
@@ -10,6 +19,7 @@ import SwiftUI
 @MainActor
 final class SettingsWindowController {
     private var window: NSWindow?
+    private let navigation = SettingsNavigation()
     private let manager: ModuleManager
     private let updateChecker: UpdateChecker
 
@@ -18,7 +28,10 @@ final class SettingsWindowController {
         self.updateChecker = updateChecker
     }
 
-    func show() {
+    /// Shows the window; `moduleID` jumps to that tool's page, `nil` keeps the
+    /// page the user was on.
+    func show(selecting moduleID: String? = nil) {
+        if let moduleID { navigation.selection = moduleID }
         if window == nil { build() }
         // Defer to the next run-loop tick: this is called as the popover is
         // closing, and activating mid-close gets swallowed. (Same as Clippy.)
@@ -31,7 +44,7 @@ final class SettingsWindowController {
     }
 
     private func build() {
-        let root = SettingsView(manager: manager, updateChecker: updateChecker)
+        let root = SettingsView(manager: manager, updateChecker: updateChecker, navigation: navigation)
         let hosting = NSHostingController(rootView: root)
 
         let window = NSWindow(contentViewController: hosting)

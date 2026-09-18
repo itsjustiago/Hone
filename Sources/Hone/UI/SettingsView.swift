@@ -3,11 +3,11 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var manager: ModuleManager
     var updateChecker: UpdateChecker
-    @State private var selection: String = "scroll"
+    @Bindable var navigation: SettingsNavigation
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: $navigation.selection) {
                 Section("Ferramentas") {
                     ForEach(manager.modules, id: \.id) { module in
                         SidebarRow(icon: module.iconSystemName, tint: module.tint, title: module.title)
@@ -46,9 +46,9 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if selection == "general" {
+        if navigation.selection == "general" {
             GeneralSettingsView(updateChecker: updateChecker)
-        } else if let module = manager.modules.first(where: { $0.id == selection }) {
+        } else if let module = manager.modules.first(where: { $0.id == navigation.selection }) {
             ModuleDetailView(module: module, manager: manager)
         } else {
             ContentUnavailableView("Escolhe uma ferramenta", systemImage: "sidebar.left")
