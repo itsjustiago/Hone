@@ -18,6 +18,13 @@ import ApplicationServices
 /// Confirmed zero doesn't quit on the spot unless the delay is `0`: it starts a
 /// countdown, and the whole verdict is rebuilt from scratch when it fires.
 ///
+/// The destroyed-window notification is the fast path, never the only one. A
+/// window can go away with nobody listening — while Hone wasn't running, before
+/// the tool was switched on, or in an app that simply never announces it — and
+/// the app is then windowless with no one counting, which is how apps ended up
+/// sitting in the Dock for days. A periodic sweep re-asks instead of assuming a
+/// notification arrived, and feeds the answer through the very same guards.
+///
 /// Nothing here captures the screen.
 @MainActor
 final class QuitOnCloseController {
@@ -26,6 +33,20 @@ final class QuitOnCloseController {
     /// Long enough for an app to finish tearing down or rebuilding its windows,
     /// short enough that the Dock icon doesn't linger.
     private static let debounce: TimeInterval = 0.35
+
+    /// How often the sweep re-counts. Often enough that a missed notification
+    /// costs seconds rather than the rest of the session, rare enough that the
+    /// AX round-trips stay invisible.
+    private static let sweepInterval: TimeInterval = 20
+
+    /// An app this young hasn't failed to draw a window — it just hasn't got
+    /// there yet. Keeps the sweep off apps still starting up at login.
+    private static let launchGrace: TimeInterval = 60
+
+    /// How long the sweep leaves an app alone after asking it to quit. An app
+    /// that refuses — an unsaved document, a modal sheet — must not be nagged
+    /// every sweep. The notification path is unaffected.
+    private static let quitCooldown: TimeInterval = 300
 
     /// Apps that are expected to run without windows and whose death would break
     /// the desktop. Not a user preference — a hard floor under the lists.
@@ -37,6 +58,8 @@ final class QuitOnCloseController {
 
     /// Apps confirmed windowless and waiting out `delaySeconds` before quitting.
     private var pendingQuits: [pid_t: DispatchWorkItem] = [:]
+    private var lastQuitAttempt: [pid_t: Date] = [:]
+    private var sweepTimer: Timer?
     private var isRunning = false
 
     init(settings: QuitOnCloseSettings) {
@@ -73,6 +96,12 @@ final class QuitOnCloseController {
         }
 
         for app in NSWorkspace.shared.runningApplications { attach(to: app) }
+
+        // First pass one interval from now, so an app that was mid-launch when
+        // the tool started gets the same grace as one launched later.
+        sweepTimer = Timer.scheduledTimer(withTimeInterval: Self.sweepInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sweep() }
+        }
     }
 
     /// Leaves nothing behind: no AX observers, no run loop sources, no timers.
@@ -91,6 +120,10 @@ final class QuitOnCloseController {
 
         for quit in pendingQuits.values { quit.cancel() }
         pendingQuits.removeAll()
+        lastQuitAttempt.removeAll()
+
+        sweepTimer?.invalidate()
+        sweepTimer = nil
     }
 
     // MARK: - Watchers
@@ -111,6 +144,8 @@ final class QuitOnCloseController {
         watchers.removeValue(forKey: pid)?.stop()
         pendingChecks.removeValue(forKey: pid)?.cancel()
         pendingQuits.removeValue(forKey: pid)?.cancel()
+        // pids are reused, so nothing about the old process may outlive it.
+        lastQuitAttempt.removeValue(forKey: pid)
     }
 
     /// Apps we may watch *and* may quit, before the user's lists have a say.
@@ -125,6 +160,31 @@ final class QuitOnCloseController {
               !Self.neverQuit.contains(bundleID)
         else { return false }
         return true
+    }
+
+    // MARK: - Sweep
+
+    /// Re-counts the windows of every app nobody is currently deciding about.
+    /// Costs one AX query per app, and any app that answers with a window is
+    /// dropped on the spot — the expensive part only runs for the ones that are
+    /// genuinely empty.
+    private func sweep() {
+        guard isRunning else { return }
+        let now = Date()
+
+        for app in NSWorkspace.shared.runningApplications where isWatchable(app) {
+            let pid = app.processIdentifier
+
+            // Also recovers an app whose watcher never attached, e.g. because its
+            // AX server wasn't up yet when it launched.
+            attach(to: app)
+
+            guard pendingChecks[pid] == nil, pendingQuits[pid] == nil else { continue }
+            if let launch = app.launchDate, now.timeIntervalSince(launch) < Self.launchGrace { continue }
+            if let asked = lastQuitAttempt[pid], now.timeIntervalSince(asked) < Self.quitCooldown { continue }
+
+            check(pid: pid, isConfirmation: false)
+        }
     }
 
     // MARK: - Counting and quitting
@@ -198,6 +258,7 @@ final class QuitOnCloseController {
     /// The normal quit AppleEvent, never `forceTerminate`: the app still gets to
     /// put up "save changes?" and can refuse.
     private func terminate(_ app: NSRunningApplication) {
+        lastQuitAttempt[app.processIdentifier] = Date()
         app.terminate()
     }
 }
