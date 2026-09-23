@@ -84,7 +84,7 @@ struct QuitOnCloseSettingsView: View {
                 }
             }
 
-            Label("**⌘W** conta como fechar — o macOS não distingue o atalho do clique no botão vermelho. A contagem só arranca depois de a app ficar mesmo sem janelas; uma janela **minimizada** mantém-na viva, e o **Finder** nunca é fechado.",
+            Label("**⌘W** conta como fechar — o macOS não distingue o atalho do clique no botão vermelho. A contagem só arranca depois de a app ficar mesmo sem janelas; uma janela **minimizada** mantém-na viva, e o **Finder** nunca é fechado. Uma app que tenha ficado sem janelas com o Hone desligado também é apanhada: a contagem é refeita de tempos a tempos, não fica à espera do aviso do sistema.",
                   systemImage: "info.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)

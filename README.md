@@ -180,6 +180,18 @@ reused: the app is still running, still watchable, still allowed by the lists, a
 the windows are counted again (same subrole filter, same `stalled` rule) before it
 is asked to quit.
 
+That notification is the fast path, never the only one. A window can go away with
+nobody listening — while Hone wasn't running, before the tool was switched on, or
+in an app that never announces the destruction at all — leaving the app windowless
+with no one counting, which is how apps ended up sitting in the Dock for days. So
+a sweep every 20 s re-counts the windows of every app that isn't already being
+decided about, and feeds the answer through the very same guards. It costs one AX
+query per app, and any app that answers with a window is dropped on the spot. An
+app launched less than a minute ago is skipped (it hasn't failed to draw a window,
+it just hasn't got there yet), and an app that was asked to quit is left alone for
+five minutes, so one that refuses — an unsaved document, a modal sheet — is never
+nagged sweep after sweep.
+
 Minimized windows still count as open — a window sitting in the Dock means the
 app was not closed. Quitting is `NSRunningApplication.terminate()`, the normal
 quit AppleEvent and never `forceTerminate`, so the app can still show its "save
