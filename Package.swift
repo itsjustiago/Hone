@@ -14,6 +14,12 @@ let package = Package(
                 // that code readable without fighting strict-concurrency diagnostics.
                 .swiftLanguageMode(.v5)
             ]
+        ),
+        // Clippy (clipboard history) as a tool Hone can host.
+        .target(
+            name: "ClippyKit",
+            path: "Sources/ClippyKit",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )
