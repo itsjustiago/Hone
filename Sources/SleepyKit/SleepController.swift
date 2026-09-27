@@ -187,12 +187,57 @@ final class SleepController {
         onStateChange?()
     }
 
+    /// Lets go of what this process holds (power assertions, auto-off timer)
+    /// but leaves `pmset disablesleep` and the persisted state untouched, so
+    /// whoever runs Sleepy next — Hone after a relaunch, or the old app — re-arms
+    /// through `restoreOnLaunch`. Never prompts.
+    func suspend() {
+        releaseAssertion()
+        autoOffTimer?.invalidate()
+        autoOffTimer = nil
+        isActive = false
+    }
+
+    // MARK: - Hand-off from the standalone app
+
+    private static let handoffActiveSinceKey = "hone.handoff.activeSince"
+    private static let handoffAtKey = "hone.handoff.at"
+    /// A hand-off not picked up within this window is stale (the old app
+    /// refused to quit and was used for a while) and is ignored.
+    private static let handoffTTL: TimeInterval = 120
+
+    /// The standalone app is about to be asked to quit, and on quit it hands
+    /// sleep back to the system and clears its state. Remember whether it was
+    /// on (and since when, for auto-off) so `restoreHandoff` can re-arm.
+    func stashForHandoff() {
+        let d = SleepyDefaults.store
+        guard d.bool(forKey: activeKey), !autoOffExpired() else { return }
+        d.set(activeSince ?? Date(), forKey: Self.handoffActiveSinceKey)
+        d.set(Date(), forKey: Self.handoffAtKey)
+    }
+
+    /// Puts a fresh hand-off back into the persisted state `restoreOnLaunch`
+    /// reads. Always consumes it.
+    private func restoreHandoff() {
+        let d = SleepyDefaults.store
+        defer {
+            d.removeObject(forKey: Self.handoffActiveSinceKey)
+            d.removeObject(forKey: Self.handoffAtKey)
+        }
+        guard let at = d.object(forKey: Self.handoffAtKey) as? Date,
+              Date().timeIntervalSince(at) < Self.handoffTTL,
+              let since = d.object(forKey: Self.handoffActiveSinceKey) as? Date else { return }
+        d.set(true, forKey: activeKey)
+        activeSince = since
+    }
+
     // MARK: - Arranque
 
     /// Re-arma se a app foi relançada (crash, rebuild, auto-update) enquanto
     /// estava ligada; caso contrário faz o reset defensivo. Nunca mostra prompt
     /// no arranque — só usa o caminho sem password.
     func restoreOnLaunch() {
+        restoreHandoff()
         let shouldBeActive = SleepyDefaults.store.bool(forKey: activeKey) && !autoOffExpired()
 
         if shouldBeActive {

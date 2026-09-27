@@ -40,6 +40,8 @@ final class ModuleManager {
             QuitOnCloseModule(),
             KeySwapModule(),
             // Former standalone apps, embedded as tools.
+            ClippyModule.make(),
+            ScreenlyModule.make(),
             SleepyModule.make(),
             // Momentary tools go last so the Settings sidebar matches the popover.
             CleanKeyboardModule(),
@@ -103,14 +105,17 @@ final class ModuleManager {
 
     /// Quits the old app behind a paused tool; the tool starts once it's gone.
     func quitLegacyApp(for tool: any MenuBarTool) {
+        // The twin tears its state down on quit; let the tool keep what it needs first.
+        tool.legacyTwinWillQuit()
         legacyApps.quit(tool.legacyBundleID)
     }
 
     private func watchLegacyApps() {
         legacyApps.onLaunch = { [weak self] bundleID in
             guard let self else { return }
-            // Pause the tool before the twin brings up its own icon and hotkeys.
-            for tool in self.menuBarTools where tool.legacyBundleID == bundleID { tool.stop() }
+            // Pause the tool before the twin brings up its own icon and hotkeys,
+            // leaving its state for the twin to pick up.
+            for tool in self.menuBarTools where tool.legacyBundleID == bundleID { tool.stopKeepingState() }
             self.resolveLegacyConflicts()
         }
         legacyApps.onTerminate = { [weak self] bundleID in
@@ -160,7 +165,15 @@ final class ModuleManager {
         for tool in pausedTools { quitLegacyApp(for: tool) }
     }
 
-    func stopAll() {
-        for module in modules { module.stop() }
+    /// `keepingToolState` is for a relaunch (rebuild/update): embedded tools
+    /// leave their state armed for the next launch instead of tearing it down.
+    func stopAll(keepingToolState: Bool = false) {
+        for module in modules {
+            if keepingToolState, let tool = module as? any MenuBarTool {
+                tool.stopKeepingState()
+            } else {
+                module.stop()
+            }
+        }
     }
 }

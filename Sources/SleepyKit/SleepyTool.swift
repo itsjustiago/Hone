@@ -52,6 +52,25 @@ public final class SleepyTool {
         onMenuBarImageChange?()
     }
 
+    /// Like `stop()`, but leaves the sleep block armed and its state persisted
+    /// for whoever runs Sleepy next: Hone relaunching (rebuild/update) or the
+    /// old app taking over. Idempotent. Never prompts.
+    public func stopKeepingState() {
+        guard isRunning else { return }
+        SleepController.shared.onStateChange = nil
+        SleepController.shared.suspend()
+        isRunning = false
+        refreshMenuModel()
+        onMenuBarImageChange?()
+    }
+
+    /// The host is about to quit the standalone Sleepy, which turns the block
+    /// off on its way out. Remember that it was on so the next `start()`
+    /// re-arms it (silently, when passwordless access is installed).
+    public func legacyTwinWillQuit() {
+        SleepController.shared.stashForHandoff()
+    }
+
     // MARK: - Menu bar
 
     /// Sun while sleep is blocked, moon otherwise. Template, so it adapts to the

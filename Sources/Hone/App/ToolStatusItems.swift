@@ -10,11 +10,20 @@ import SwiftUI
 final class ToolStatusItems {
     private let manager: ModuleManager
     private let openSettings: (String) -> Void
+    /// Closes every Hone popover that may be showing this tool's panel.
+    private let dismissPanels: (String) -> Void
     private var items: [String: ToolStatusItem] = [:]
 
-    init(manager: ModuleManager, openSettings: @escaping (String) -> Void) {
+    init(manager: ModuleManager, openSettings: @escaping (String) -> Void,
+         dismissPanels: @escaping (String) -> Void) {
         self.manager = manager
         self.openSettings = openSettings
+        self.dismissPanels = dismissPanels
+    }
+
+    /// Closes the popover of this tool's own icon, if it is open.
+    func closePopover(for toolID: String) {
+        items[toolID]?.closePopover()
     }
 
     func activate() {
@@ -40,7 +49,8 @@ final class ToolStatusItems {
 
     private func item(for tool: any MenuBarTool) -> ToolStatusItem {
         if let existing = items[tool.id] { return existing }
-        let item = ToolStatusItem(tool: tool, manager: manager, openSettings: openSettings)
+        let item = ToolStatusItem(tool: tool, manager: manager, openSettings: openSettings,
+                                  dismissPanels: dismissPanels)
         items[tool.id] = item
         return item
     }
@@ -52,14 +62,21 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
     private let tool: any MenuBarTool
     private let manager: ModuleManager
     private let openSettings: (String) -> Void
+    private let dismissPanels: (String) -> Void
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var lastPopoverClose = Date.distantPast
 
-    init(tool: any MenuBarTool, manager: ModuleManager, openSettings: @escaping (String) -> Void) {
+    init(tool: any MenuBarTool, manager: ModuleManager, openSettings: @escaping (String) -> Void,
+         dismissPanels: @escaping (String) -> Void) {
         self.tool = tool
         self.manager = manager
         self.openSettings = openSettings
+        self.dismissPanels = dismissPanels
+    }
+
+    func closePopover() {
+        if popover?.isShown == true { popover?.performClose(nil) }
     }
 
     func show(image: NSImage) {
@@ -114,7 +131,13 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
     private func makePopover() -> NSPopover {
         let panel = tool.makeMenuPanel(
             back: nil,
-            dismiss: { [weak self] in self?.popover?.performClose(nil) },
+            // Not just this popover: a Kit may keep only the last `dismiss` it was
+            // handed (Screenly's hotkey captures call it), so every panel of the
+            // tool must close whichever Hone popover is showing it.
+            dismiss: { [weak self] in
+                guard let self else { return }
+                self.dismissPanels(self.tool.id)
+            },
             openSettings: { [weak self] in
                 guard let self else { return }
                 self.openSettings(self.tool.id)

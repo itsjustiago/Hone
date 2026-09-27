@@ -36,6 +36,9 @@ sign "$APP"
 
 # Instalar em /Applications (path estável) e reiniciar.
 DEST="/Applications/Hone.app"
+# Relançamento, não saída: as ferramentas embebidas (ex.: o Sleepy ligado)
+# mantêm o estado para o arranque seguinte. O Hone limpa a flag ao arrancar.
+defaults write com.tiagof.hone relaunchingForUpdate -bool true
 osascript -e 'quit app "Hone"' >/dev/null 2>&1 || true
 pkill -f "Hone.app/Contents/MacOS/Hone" 2>/dev/null || true
 sleep 1

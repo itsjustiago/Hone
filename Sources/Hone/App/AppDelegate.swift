@@ -11,7 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let onboarding = OnboardingController()
     private lazy var settingsWindow = SettingsWindowController(manager: manager, updateChecker: updateChecker)
     private lazy var toolStatusItems = ToolStatusItems(
-        manager: manager, openSettings: { [weak self] id in self?.showSettings(moduleID: id) })
+        manager: manager,
+        openSettings: { [weak self] id in self?.showSettings(moduleID: id) },
+        dismissPanels: { [weak self] id in self?.dismissToolPanels(id) })
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var lastPopoverClose = Date.distantPast
@@ -26,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A leftover from the quit that led here (or from a build.sh run while
+        // Hone wasn't open) must not turn the next ordinary quit into a relaunch.
+        _ = RelaunchFlag.consume()
         // Run loop is live now — safe to install event taps for enabled modules.
         manager.activate()
         setupStatusItem()
@@ -47,7 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        manager.stopAll()
+        // Relaunching (update / build.sh): tools leave their state armed for the
+        // next launch. Any other quit (menu, logout, shutdown) tears it all down.
+        manager.stopAll(keepingToolState: RelaunchFlag.consume())
     }
 
     // MARK: - Menu bar popover
@@ -110,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             updateChecker: updateChecker,
             navigation: popoverNavigation,
             dismiss: { [weak self] in self?.dismissPopover() },
+            dismissToolPanels: { [weak self] id in self?.dismissToolPanels(id) },
             openSettings: { [weak self] moduleID in self?.showSettings(moduleID: moduleID) })
 
         let hosting = NSHostingController(rootView: panel)
@@ -142,4 +150,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func dismissPopover() { popover?.performClose(nil) }
+
+    /// Closes every popover that can show a tool's panel: Hone's own and the
+    /// tool's separate icon. Handed to the Kits as their `dismiss`.
+    private func dismissToolPanels(_ toolID: String) {
+        dismissPopover()
+        toolStatusItems.closePopover(for: toolID)
+    }
 }

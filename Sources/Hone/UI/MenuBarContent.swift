@@ -16,6 +16,8 @@ struct MenuBarContent: View {
     var updateChecker: UpdateChecker
     @Bindable var navigation: PopoverNavigation
     var dismiss: () -> Void = {}
+    /// Closes every popover showing the given tool's panel (see `AppDelegate`).
+    var dismissToolPanels: (String) -> Void = { _ in }
     /// Opens Settings on the given tool's page; `nil` keeps the current page.
     var openSettings: (String?) -> Void = { _ in }
     @State private var permissions = Permissions.shared
@@ -41,7 +43,7 @@ struct MenuBarContent: View {
             // The popover follows the new preferred size on its own.
             tool.makeMenuPanel(
                 back: { navigation.toolID = nil },
-                dismiss: dismiss,
+                dismiss: { dismissToolPanels(tool.id) },
                 openSettings: { openSettings(tool.id) },
                 toggleOwnIcon: { manager.setShowsOwnMenuBarIcon(!tool.showsOwnMenuBarIcon, for: tool) })
         } else {

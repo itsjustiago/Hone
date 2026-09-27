@@ -23,6 +23,13 @@ protocol MenuBarTool: HoneModule {
     /// Call right before the panel appears.
     func panelWillShow()
 
+    /// Stops, but keeps persisted state (e.g. an armed sleep block) for whoever
+    /// runs the tool next — Hone after a relaunch, or the legacy twin.
+    func stopKeepingState()
+
+    /// Called right before Hone asks the legacy twin to quit.
+    func legacyTwinWillQuit()
+
     /// The tool's dropdown. `back` is non-nil when shown inside Hone's popover.
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
@@ -35,6 +42,8 @@ protocol MenuBarTool: HoneModule {
 protocol ToolKit: AnyObject {
     func start()
     func stop()
+    func stopKeepingState()
+    func legacyTwinWillQuit()
     var isRunning: Bool { get }
     var menuBarImage: NSImage { get }
     var onMenuBarImageChange: (() -> Void)? { get set }
@@ -43,6 +52,12 @@ protocol ToolKit: AnyObject {
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
     func makeSettingsView() -> AnyView
+}
+
+/// Kits with nothing to hand over just stop, and ignore the twin quitting.
+extension ToolKit {
+    func stopKeepingState() { stop() }
+    func legacyTwinWillQuit() {}
 }
 
 /// Generic `MenuBarTool` wrapping a Kit. An adapter only supplies metadata —
@@ -103,6 +118,10 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
     }
 
     func stop() { kit.stop() }
+
+    func stopKeepingState() { kit.stopKeepingState() }
+
+    func legacyTwinWillQuit() { kit.legacyTwinWillQuit() }
 
     func panelWillShow() { kit.panelWillShow() }
 
