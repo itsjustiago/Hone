@@ -50,6 +50,10 @@ if rm -rf "$DEST" 2>/dev/null && cp -R "$APP" "$DEST" 2>/dev/null; then
   open "$DEST"
   echo "✓ Instalado, assinado e reiniciado: $DEST"
 else
+  # O Hone já foi fechado: volta a abri-lo a partir do staging, senão um Sleepy
+  # ligado ficava com o pmset armado e nenhum Hone a correr.
+  open "$APP"
+  echo "⚠ Não deu para instalar em /Applications — o Hone ficou a correr a partir de $PWD/$APP."
   echo "✓ Pronto: $APP  (copia para /Applications manualmente)"
   DEST="$APP"
 fi

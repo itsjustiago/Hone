@@ -77,11 +77,28 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
 
     private(set) var menuBarImageRevision = 0
 
+    /// Set while `isEnabled` is put back after a refused stop.
+    @ObservationIgnored private var revertingEnabled = false
+
     var isEnabled: Bool {
         didSet {
-            guard oldValue != isEnabled else { return }
-            ModuleDefaults.setEnabled(id, isEnabled)
-            isEnabled ? start() : stop()
+            guard oldValue != isEnabled, !revertingEnabled else { return }
+            guard !isEnabled else {
+                ModuleDefaults.setEnabled(id, true)
+                start()
+                return
+            }
+            stop()
+            // The Kit couldn't let go (e.g. Sleepy failed to hand sleep back):
+            // it's still doing its thing, so the switch must say so. Nothing
+            // else runs again and "off" is not persisted.
+            if kit.isRunning {
+                revertingEnabled = true
+                isEnabled = true
+                revertingEnabled = false
+                return
+            }
+            ModuleDefaults.setEnabled(id, false)
         }
     }
 

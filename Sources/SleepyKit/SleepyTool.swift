@@ -43,9 +43,18 @@ public final class SleepyTool {
 
     /// What `applicationWillTerminate` used to do: hand sleep back to the
     /// system so the Mac is never left stuck awake. Idempotent.
+    ///
+    /// If turning the block off fails (no passwordless access and the admin
+    /// prompt was cancelled), the Mac is still kept awake — so the tool stays
+    /// running and visible instead of pretending it stopped.
     public func stop() {
         guard isRunning else { return }
         SleepController.shared.disable()
+        guard !SleepController.shared.isActive else {
+            refreshMenuModel()
+            onMenuBarImageChange?()
+            return
+        }
         SleepController.shared.onStateChange = nil
         isRunning = false
         refreshMenuModel()

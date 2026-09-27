@@ -34,7 +34,9 @@ public final class ClippyTool {
     /// Starts the background work: clipboard monitor and global shortcut. Idempotent.
     public func start() {
         guard !isRunning else { return }
-        loadIfNeeded()
+        // Always re-read from disk: the old app may have run meanwhile (it
+        // shares these files), and saving a stale copy would erase its entries.
+        reload()
         clipboard.start()
         registerHotKey()
         isRunning = true
@@ -55,6 +57,10 @@ public final class ClippyTool {
     /// The stores are read lazily so building the tool costs nothing.
     private func loadIfNeeded() {
         guard !loaded else { return }
+        reload()
+    }
+
+    private func reload() {
         loaded = true
         store.load()
         collections.load()

@@ -44,6 +44,10 @@ public final class ScreenlyTool {
     /// Starts the background work (global hotkeys). Idempotent. Never asks for permissions.
     public func start() {
         guard !isRunning else { return }
+        // Re-read from disk: the old app may have run meanwhile (it shares
+        // shots.json), and saving a stale copy would erase its captures.
+        store.load()
+        refreshMenuModel()
         isRunning = true
         registerHotKeys()
     }
@@ -59,6 +63,16 @@ public final class ScreenlyTool {
         gallery.close()
         colorPicker.dismissResult()
         engine.dismissPreview()
+    }
+
+    /// Pause (the old app just opened): drop the global hotkeys so they don't
+    /// fire twice, but leave an open annotation editor or selection alone —
+    /// tearing it down would throw the user's shapes away without warning.
+    public func stopKeepingState() {
+        guard isRunning else { return }
+        isRunning = false
+        settings.stopRecording()
+        suspendHotKeys()
     }
 
     /// Template image for the tool's own menu-bar item (the old app's icon).
@@ -163,7 +177,8 @@ public final class ScreenlyTool {
         case .window, .screen:
             // Capture, then open the annotation editor window.
             engine.captureImage(mode) { [weak self] image in
-                guard let self, let image else { return }
+                // A capture in flight must not open the editor once the tool stopped.
+                guard let self, self.isRunning, let image else { return }
                 self.editor.open(image: image, mode: mode)
             }
         }

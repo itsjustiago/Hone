@@ -38,7 +38,9 @@ struct MenuBarContent: View {
     private var momentaryModules: [any HoneModule] { manager.modules.filter { $0.isMomentary } }
 
     var body: some View {
-        if let id = navigation.toolID, let tool = manager.menuBarTools.first(where: { $0.id == id }) {
+        if let id = navigation.toolID,
+           let tool = manager.menuBarTools.first(where: { $0.id == id }),
+           tool.isEnabled, !manager.isPaused(tool) {
             // Drilled into a tool: its own panel, with a back chevron to the list.
             // The popover follows the new preferred size on its own.
             tool.makeMenuPanel(
