@@ -82,7 +82,8 @@ struct MenuPanel: View {
     private var header: some View {
         HStack(spacing: 11) {
             if let onBack {
-                HeaderIconButton(systemImage: "chevron.left", help: "Voltar", action: onBack)
+                HeaderIconButton(systemName: "chevron.left", help: "Voltar ao Hone", action: onBack)
+                    .padding(.leading, -6)
                     .padding(.trailing, -4)
             }
             AppIcon(systemName: "doc.on.clipboard.fill", size: 27)
@@ -94,8 +95,10 @@ struct MenuPanel: View {
             }
             Spacer(minLength: 0)
             HeaderIconButton(
-                systemImage: model.showsOwnIcon ? "menubar.arrow.down.rectangle" : "menubar.arrow.up.rectangle",
-                help: model.showsOwnIcon ? "Juntar ao Hone" : "Separar para a barra de menus",
+                systemName: model.showsOwnIcon ? "menubar.arrow.down.rectangle" : "menubar.arrow.up.rectangle",
+                help: model.showsOwnIcon
+                    ? "Tirar o ícone próprio (continua no menu do Hone)"
+                    : "Separar num ícone próprio na barra de menus",
                 action: onToggleOwnIcon)
         }
     }
@@ -128,7 +131,7 @@ struct MenuPanel: View {
 
     private var permissionBanner: some View {
         HStack(alignment: .top, spacing: 9) {
-            Image(systemName: "hand.raised.fill")
+            Image(systemName: "lock.shield.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Ativar colar automático")
@@ -199,7 +202,7 @@ struct MenuActionLabel: View {
         HStack(spacing: 11) {
             Image(systemName: systemImage)
                 .font(.system(size: 14))
-                .frame(width: 22)
+                .frame(width: 27)
                 .foregroundStyle(.secondary)
             Text(title).font(.system(size: 13))
             Spacer(minLength: 8)
@@ -213,23 +216,24 @@ struct MenuActionLabel: View {
     }
 }
 
-/// Small square icon button for the header (back, split/merge), with the same
-/// hover highlight as the menu rows.
+/// Small circular glyph button for the panel header (back, separate/join).
+/// Same spec as the gear on Hone's tool rows: 24 pt circle, quiet at rest, a
+/// soft `.primary` pill only under the pointer.
 struct HeaderIconButton: View {
-    let systemImage: String
+    let systemName: String
     let help: String
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 26, height: 26)
-                .background(hovering ? AnyShapeStyle(Brand.tint.opacity(0.16)) : AnyShapeStyle(.clear),
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .contentShape(Rectangle())
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(hovering ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .frame(width: 24, height: 24)
+                .background(hovering ? AnyShapeStyle(.primary.opacity(0.08)) : AnyShapeStyle(.clear),
+                            in: Circle())
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }

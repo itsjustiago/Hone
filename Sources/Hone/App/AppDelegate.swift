@@ -139,6 +139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // Clicking the icon while open dismisses via the transient behaviour
             // first; don't let the same click reopen it.
             if Date().timeIntervalSince(lastPopoverClose) < 0.2 { return }
+            // Screen Recording isn't polled; rows showing "Falta …" need it fresh.
+            Permissions.shared.refresh()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }

@@ -17,6 +17,10 @@ protocol MenuBarTool: HoneModule {
     /// Template image for the tool's own status item.
     var menuBarImage: NSImage { get }
 
+    /// The system permission the tool depends on, if any. Shown in its row and
+    /// on its Settings page; Hone never asks for it on its own.
+    var permission: ToolPermission? { get }
+
     /// Bumped whenever `menuBarImage` changes, so observers can re-read it.
     var menuBarImageRevision: Int { get }
 
@@ -33,6 +37,42 @@ protocol MenuBarTool: HoneModule {
     /// The tool's dropdown. `back` is non-nil when shown inside Hone's popover.
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
+}
+
+/// A system permission an embedded tool needs, granted to Hone (the process).
+struct ToolPermission {
+    enum Kind {
+        case accessibility
+        case screenRecording
+
+        var title: String {
+            switch self {
+            case .accessibility: return "Acessibilidade"
+            case .screenRecording: return "Gravação de Ecrã"
+            }
+        }
+    }
+
+    let kind: Kind
+    /// What the tool uses it for (Settings subtitle).
+    let purpose: String
+    /// Without it the tool can't do its main job (vs. one optional feature).
+    let essential: Bool
+
+    @MainActor var isGranted: Bool {
+        switch kind {
+        case .accessibility: return Permissions.shared.isAccessibilityTrusted
+        case .screenRecording: return Permissions.shared.isScreenRecordingTrusted
+        }
+    }
+
+    /// User-initiated only (a "Conceder…" button).
+    @MainActor func request() {
+        switch kind {
+        case .accessibility: Permissions.shared.openAccessibilitySettings()
+        case .screenRecording: Permissions.shared.requestScreenRecording()
+        }
+    }
 }
 
 /// The public facade every embedded Kit exposes (`SleepyTool`, `ClippyTool`,
@@ -71,6 +111,7 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
     let iconSystemName: String
     let tint: Color
     let legacyBundleID: String
+    let permission: ToolPermission?
     let isAvailable = true
 
     @ObservationIgnored private let kit: Kit
@@ -112,13 +153,14 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
     }
 
     init(id: String, title: String, summary: String, iconSystemName: String, tint: Color,
-         enabledByDefault: Bool, legacyBundleID: String, kit: Kit) {
+         enabledByDefault: Bool, legacyBundleID: String, permission: ToolPermission? = nil, kit: Kit) {
         self.id = id
         self.title = title
         self.summary = summary
         self.iconSystemName = iconSystemName
         self.tint = tint
         self.legacyBundleID = legacyBundleID
+        self.permission = permission
         self.kit = kit
         self.isEnabled = ModuleDefaults.isEnabled(id, default: enabledByDefault)
         self.showsOwnMenuBarIcon = kit.showsOwnMenuBarIcon

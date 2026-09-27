@@ -92,7 +92,23 @@ private struct ModuleDetailView: View {
 
                 let dimmed = module.isAvailable && !module.isMomentary && !module.isEnabled
                 Group {
+                    module.makeSettingsView()
                     if let tool = module as? any MenuBarTool {
+                        if let permission = tool.permission {
+                            SettingsSection(title: "Permissões") {
+                                SettingsRow(title: permission.kind.title, subtitle: permission.purpose) {
+                                    if permission.isGranted {
+                                        Label("Concedida", systemImage: "checkmark.circle.fill")
+                                            .font(.callout)
+                                            .foregroundStyle(.green)
+                                            .labelStyle(.titleAndIcon)
+                                    } else {
+                                        Button("Conceder…") { permission.request() }
+                                            .controlSize(.small)
+                                    }
+                                }
+                            }
+                        }
                         SettingsSection(title: "Barra de menus") {
                             ToggleRow(title: "Ícone próprio na barra de menus",
                                       subtitle: "Mostra o \(tool.title) num ícone separado. Continua também no menu do Hone.",
@@ -101,7 +117,6 @@ private struct ModuleDetailView: View {
                                                     set: { manager.setShowsOwnMenuBarIcon($0, for: tool) }))
                         }
                     }
-                    module.makeSettingsView()
                 }
                 .disabled(dimmed)
                 .opacity(dimmed ? 0.45 : 1)
@@ -110,6 +125,8 @@ private struct ModuleDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(.background)
+        // Screen Recording isn't polled; refresh so "Concedida" is current.
+        .onAppear { permissions.refresh() }
     }
 
     private var header: some View {
@@ -179,10 +196,14 @@ private struct PausedBanner: View {
             Image(systemName: "pause.circle.fill")
                 .font(.title3)
                 .foregroundStyle(.orange)
-            Text("Em pausa — o \(title) antigo está aberto")
-                .font(.callout.weight(.medium))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Em pausa — o \(title) antigo está aberto").font(.callout.weight(.medium))
+                Text("Não podem correr as duas ao mesmo tempo. Quando a antiga sair, o Hone assume.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Spacer(minLength: 8)
-            Button("Fechar \(title)", action: quit)
+            Button("Sair da app \(title)", action: quit)
                 .controlSize(.small)
         }
         .padding(12)

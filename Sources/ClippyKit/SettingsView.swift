@@ -82,8 +82,6 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header
-
             SettingsSection(title: "Atalho global") {
                 SettingsRow(
                     title: "Abrir o histórico",
@@ -115,20 +113,7 @@ struct SettingsView: View {
                         set: { model.preserveFocus = $0; setPreserveFocus($0) }))
             }
         }
-        .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onDisappear(perform: onDisappear)
-    }
-
-    private var header: some View {
-        HStack(spacing: 14) {
-            AppIcon(systemName: "doc.on.clipboard.fill", size: 52)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Clippy").font(.title2.weight(.bold))
-                Text("O teu histórico de clipboard, sempre à mão.")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-        }
     }
 }

@@ -86,7 +86,9 @@ struct MenuPanel: View {
             Spacer(minLength: 0)
             HeaderIconButton(
                 systemName: model.showsOwnIcon ? "menubar.arrow.down.rectangle" : "menubar.arrow.up.rectangle",
-                help: model.showsOwnIcon ? "Juntar ao Hone" : "Separar para a barra de menus",
+                help: model.showsOwnIcon
+                    ? "Tirar o ícone próprio (continua no menu do Hone)"
+                    : "Separar num ícone próprio na barra de menus",
                 action: onToggleOwnIcon)
         }
     }
@@ -136,7 +138,7 @@ struct MenuPanel: View {
         HStack(spacing: 11) {
             Image(systemName: "timer")
                 .font(.system(size: 14))
-                .frame(width: 22)
+                .frame(width: 27)
                 .foregroundStyle(.secondary)
             Text("Desligar sozinho").font(.system(size: 13))
             Spacer(minLength: 8)
@@ -179,8 +181,9 @@ struct MenuPanel: View {
 
 // MARK: - Menu action label + button style
 
-/// Small circular glyph button for the panel header (back, detach/attach).
-/// Quiet at rest; a soft pill appears only under the pointer.
+/// Small circular glyph button for the panel header (back, separate/join).
+/// Same spec as the gear on Hone's tool rows: 24 pt circle, quiet at rest, a
+/// soft `.primary` pill only under the pointer.
 struct HeaderIconButton: View {
     let systemName: String
     let help: String
@@ -213,7 +216,7 @@ struct MenuActionLabel: View {
         HStack(spacing: 11) {
             Image(systemName: systemImage)
                 .font(.system(size: 14))
-                .frame(width: 22)
+                .frame(width: 27)
                 .foregroundStyle(.secondary)
             Text(title).font(.system(size: 13))
             Spacer(minLength: 8)

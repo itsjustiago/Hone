@@ -48,9 +48,19 @@ struct MenuBarContent: View {
                 dismiss: { dismissToolPanels(tool.id) },
                 openSettings: { openSettings(tool.id) },
                 toggleOwnIcon: { manager.setShowsOwnMenuBarIcon(!tool.showsOwnMenuBarIcon, for: tool) })
+                .background(backShortcut)
         } else {
             toolList
         }
+    }
+
+    /// ⌘[ goes back to the list, like "Back" elsewhere on the Mac.
+    private var backShortcut: some View {
+        Button("Voltar ao Hone") { navigation.toolID = nil }
+            .keyboardShortcut("[", modifiers: .command)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
     }
 
     private var toolList: some View {
@@ -222,14 +232,25 @@ private struct ModuleRow: View {
                 .opacity(module.isAvailable ? 1 : 0.5)
             VStack(alignment: .leading, spacing: 1) {
                 Text(module.title).font(.system(size: 13, weight: .medium))
-                Text(statusText)
+                if let notice = toolNotice {
+                    Label {
+                        Text(notice.text).foregroundStyle(.secondary)
+                    } icon: {
+                        Image(systemName: notice.icon).foregroundStyle(.orange)
+                    }
+                    .labelStyle(StatusLabelStyle())
                     .font(.caption2)
-                    .foregroundStyle(statusColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let tool, isPaused {
-                    Button("Fechar \(tool.title)") { manager.quitLegacyApp(for: tool) }
-                        .buttonStyle(.link)
+                    .help(notice.help)
+                    if let tool, isPaused {
+                        Button("Sair da app antiga") { manager.quitLegacyApp(for: tool) }
+                            .buttonStyle(.link)
+                            .font(.caption2)
+                            .help("O \(tool.title) antigo está aberto. Enquanto estiver, o \(tool.title) do Hone fica em pausa para não haver ícones e atalhos em duplicado.")
+                    }
+                } else {
+                    Text(statusText)
                         .font(.caption2)
+                        .foregroundStyle(statusColor)
                 }
             }
             Spacer(minLength: 8)
@@ -271,27 +292,34 @@ private struct ModuleRow: View {
         .buttonStyle(.plain)
         .onHover { hoveringGear = $0 }
         .help("Definições de \(module.title)")
+        .accessibilityLabel("Definições de \(module.title)")
     }
 
     /// Drill-in to the tool's own panel. Only while it's actually running —
     /// an off or paused tool has nothing live to show.
     private func panelButton(_ tool: any MenuBarTool) -> some View {
         let canOpen = tool.isEnabled && !isPaused
+        let style: AnyShapeStyle = !canOpen ? AnyShapeStyle(.quaternary)
+            : hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
+        let help = canOpen ? "Abrir \(tool.title)"
+            : isPaused ? "O \(tool.title) está em pausa" : "Liga o \(tool.title) para abrir"
         return Button {
             openPanel(tool)
         } label: {
+            // Same spec as the gear.
             Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(hovering && canOpen ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-                .frame(width: 18, height: 22)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(style)
+                .frame(width: 22, height: 22)
                 .background(hoveringChevron && canOpen ? AnyShapeStyle(.primary.opacity(0.08)) : AnyShapeStyle(.clear),
-                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                .contentShape(Rectangle())
+                            in: Circle())
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .disabled(!canOpen)
         .onHover { hoveringChevron = $0 }
-        .help("Abrir \(tool.title)")
+        .help(help)
+        .accessibilityLabel("Abrir \(tool.title)")
         .padding(.trailing, -4)
     }
 
@@ -315,9 +343,25 @@ private struct ModuleRow: View {
             ))
             .labelsHidden()
             .toggleStyle(.switch)
-            .tint(module.tint)
+            // On but paused: the switch stays on, visibly held back.
+            .tint(isPaused ? module.tint.opacity(0.45) : module.tint)
             .controlSize(.small)
         }
+    }
+
+    /// A short warning replacing "Ativo" on an embedded tool: paused behind its
+    /// old app, or missing the permission it can't work without.
+    private var toolNotice: (icon: String, text: String, help: String)? {
+        guard let tool, tool.isEnabled else { return nil }
+        if isPaused {
+            return ("pause.circle.fill", "Em pausa",
+                    "O \(tool.title) antigo está aberto. Enquanto estiver, o \(tool.title) do Hone fica em pausa.")
+        }
+        if let permission = tool.permission, permission.essential, !permission.isGranted {
+            return ("lock.shield.fill", "Falta \(permission.kind.title)",
+                    "O \(tool.title) precisa de \(permission.kind.title). Concede-a nas Definições do \(tool.title).")
+        }
+        return nil
     }
 
     /// A tool that is switched on "lights up" with its tint — the highlight ported
@@ -333,13 +377,21 @@ private struct ModuleRow: View {
     private var statusText: String {
         if !module.isAvailable { return "Em breve" }
         if module.isMomentary { return "Bloqueia as teclas para limpar" }
-        if isPaused { return "Em pausa — o \(module.title) antigo está aberto" }
         return module.isEnabled ? "Ativo" : "Desligado"
     }
     private var statusColor: AnyShapeStyle {
-        if isPaused { return AnyShapeStyle(.orange) }
         if module.isAvailable && module.isEnabled && !module.isMomentary { return AnyShapeStyle(module.tint) }
         return AnyShapeStyle(.secondary)
+    }
+}
+
+/// Icon + text for the row's status line, tighter than the default label.
+private struct StatusLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon
+            configuration.title
+        }
     }
 }
 

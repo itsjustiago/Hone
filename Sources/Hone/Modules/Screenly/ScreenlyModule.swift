@@ -16,6 +16,9 @@ enum ScreenlyModule {
             tint: Color(red: 0.039, green: 0.518, blue: 1.0),
             enabledByDefault: true,
             legacyBundleID: "com.tiagof.screenly",
+            permission: ToolPermission(kind: .screenRecording,
+                                       purpose: "Capturar o ecrã. Sem ela, o Screenly não consegue fazer capturas.",
+                                       essential: true),
             kit: ScreenlyTool())
     }
 }
