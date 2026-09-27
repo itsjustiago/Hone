@@ -14,6 +14,17 @@ let package = Package(
                 // that code readable without fighting strict-concurrency diagnostics.
                 .swiftLanguageMode(.v5)
             ]
+        ),
+        .target(
+            name: "ScreenlyKit",
+            path: "Sources/ScreenlyKit",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "ScreenlyKitTests",
+            dependencies: ["ScreenlyKit"],
+            path: "Tests/ScreenlyKitTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )
