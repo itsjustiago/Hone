@@ -86,15 +86,47 @@ private struct ModuleDetailView: View {
                     PermissionBanner(tint: module.tint) { permissions.openAccessibilitySettings() }
                 }
 
+                if let tool = module as? any MenuBarTool, manager.isPaused(tool) {
+                    PausedBanner(title: tool.title) { manager.quitLegacyApp(for: tool) }
+                }
+
                 let dimmed = module.isAvailable && !module.isMomentary && !module.isEnabled
-                module.makeSettingsView()
-                    .disabled(dimmed)
-                    .opacity(dimmed ? 0.45 : 1)
+                Group {
+                    module.makeSettingsView()
+                    if let tool = module as? any MenuBarTool {
+                        if let permission = tool.permission {
+                            SettingsSection(title: "Permissões") {
+                                SettingsRow(title: permission.kind.title, subtitle: permission.purpose) {
+                                    if permission.isGranted {
+                                        Label("Concedida", systemImage: "checkmark.circle.fill")
+                                            .font(.callout)
+                                            .foregroundStyle(.green)
+                                            .labelStyle(.titleAndIcon)
+                                    } else {
+                                        Button("Conceder…") { permission.request() }
+                                            .controlSize(.small)
+                                    }
+                                }
+                            }
+                        }
+                        SettingsSection(title: "Barra de menus") {
+                            ToggleRow(title: "Ícone próprio na barra de menus",
+                                      subtitle: "Mostra o \(tool.title) num ícone separado. Continua também no menu do Hone.",
+                                      tint: tool.tint,
+                                      isOn: Binding(get: { tool.showsOwnMenuBarIcon },
+                                                    set: { manager.setShowsOwnMenuBarIcon($0, for: tool) }))
+                        }
+                    }
+                }
+                .disabled(dimmed)
+                .opacity(dimmed ? 0.45 : 1)
             }
             .padding(22)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(.background)
+        // Screen Recording isn't polled; refresh so "Concedida" is current.
+        .onAppear { permissions.refresh() }
     }
 
     private var header: some View {
@@ -143,6 +175,35 @@ private struct PermissionBanner: View {
             }
             Spacer(minLength: 8)
             Button("Abrir Definições…", action: action)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(.orange.opacity(0.25))
+        )
+    }
+}
+
+/// An embedded tool held back because its old standalone app is still open.
+private struct PausedBanner: View {
+    let title: String
+    let quit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "pause.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Em pausa — o \(title) antigo está aberto").font(.callout.weight(.medium))
+                Text("Não podem correr as duas ao mesmo tempo. Quando a antiga sair, o Hone assume.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Sair da app \(title)", action: quit)
                 .controlSize(.small)
         }
         .padding(12)

@@ -10,9 +10,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let updateChecker = UpdateChecker()
     private let onboarding = OnboardingController()
     private lazy var settingsWindow = SettingsWindowController(manager: manager, updateChecker: updateChecker)
+    private lazy var toolStatusItems = ToolStatusItems(
+        manager: manager,
+        openSettings: { [weak self] id in self?.showSettings(moduleID: id) },
+        dismissPanels: { [weak self] id in self?.dismissToolPanels(id) })
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var lastPopoverClose = Date.distantPast
+    /// Which embedded tool's panel the popover is showing (nil = the tool list).
+    private let popoverNavigation = PopoverNavigation()
 
     /// Opens the Settings window (AppKit-managed, so it reliably comes to front
     /// from a menu-bar agent). Called by the popover's "Definições…" button and
@@ -22,9 +28,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A leftover from the quit that led here (or from a build.sh run while
+        // Hone wasn't open) must not turn the next ordinary quit into a relaunch.
+        _ = RelaunchFlag.consume()
         // Run loop is live now — safe to install event taps for enabled modules.
         manager.activate()
         setupStatusItem()
+        toolStatusItems.activate()
         NotificationCenter.default.addObserver(
             forName: MenuBarIcon.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -42,7 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        manager.stopAll()
+        // Relaunching (update / build.sh): tools leave their state armed for the
+        // next launch. Any other quit (menu, logout, shutdown) tears it all down.
+        manager.stopAll(keepingToolState: RelaunchFlag.consume())
     }
 
     // MARK: - Menu bar popover
@@ -103,7 +115,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let panel = MenuBarContent(
             manager: manager,
             updateChecker: updateChecker,
+            navigation: popoverNavigation,
             dismiss: { [weak self] in self?.dismissPopover() },
+            dismissToolPanels: { [weak self] id in self?.dismissToolPanels(id) },
             openSettings: { [weak self] moduleID in self?.showSettings(moduleID: moduleID) })
 
         let hosting = NSHostingController(rootView: panel)
@@ -125,13 +139,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // Clicking the icon while open dismisses via the transient behaviour
             // first; don't let the same click reopen it.
             if Date().timeIntervalSince(lastPopoverClose) < 0.2 { return }
+            // Screen Recording isn't polled; rows showing "Falta …" need it fresh.
+            Permissions.shared.refresh()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
 
     func popoverDidClose(_ notification: Notification) {
         lastPopoverClose = Date()
+        // Reopen on the tool list, not inside whichever tool was last shown.
+        popoverNavigation.toolID = nil
     }
 
     private func dismissPopover() { popover?.performClose(nil) }
+
+    /// Closes every popover that can show a tool's panel: Hone's own and the
+    /// tool's separate icon. Handed to the Kits as their `dismiss`.
+    private func dismissToolPanels(_ toolID: String) {
+        dismissPopover()
+        toolStatusItems.closePopover(for: toolID)
+    }
 }

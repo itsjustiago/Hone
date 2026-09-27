@@ -19,6 +19,48 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 | **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows — right away, or after a delay you pick (default 1 min), cancelled if you open a window again. Per-app lists, and the Finder is never touched. |
 | **Key Swap** | Karabiner-Elements | ✅ Working | Swaps ⌘ with ⌃ system-wide, both keys and both directions, so ⌃C / ⌃V / ⌃Z copy, paste and undo like on Windows. Tab is never swapped — ⌘Tab stays the app switcher, ⌃Tab keeps cycling tabs. ⌃+click stays the macOS right-click; per-app exception list. |
 
+## Clippy, Screenly e Sleepy — agora dentro do Hone
+
+As três apps de barra de menus que eram separadas vivem agora no Hone como
+ferramentas. Ligam-se e desligam-se como as outras, cada uma com a sua página nas
+Definições.
+
+| Ferramenta | O que faz |
+|------------|-----------|
+| **Clippy** | Histórico do clipboard (o Win + V do Windows): um atalho (`⌥V` por omissão) abre um painel junto ao ponteiro com o que copiaste, texto e imagens, para voltares a colar. |
+| **Screenly** | Capturas de ecrã com atalhos globais — região, janela ou ecrã inteiro — com editor de anotação, galeria das capturas recentes e conta-gotas para tirar a cor de qualquer pixel. |
+| **Sleepy** | Impede o Mac de dormir, mesmo de tampa fechada (`pmset disablesleep` + power assertions), com desligar sozinho ao fim de um tempo. |
+
+**No menu ou com ícone próprio.** No menu do Hone, cada uma destas linhas tem uma
+seta `›` que abre o painel da ferramenta ali mesmo (a `‹` volta à lista). Se
+preferires, a ferramenta pode ter o seu próprio ícone na barra de menus, como
+antigamente: o botão no cabeçalho do painel separa-a para a barra (ou junta-a de
+volta ao Hone), e o mesmo existe nas Definições em **Ícone próprio na barra de
+menus**. Com ícone próprio continua também no menu do Hone. O ícone aparece onde
+estava o da app antiga.
+
+**Dados e definições ficam onde estavam.** Cada ferramenta lê e grava no domínio de
+preferências da app antiga (`com.tiagof.clippy`, `com.tiagof.screenly`,
+`com.tiagof.sleepy`) e usa as mesmas pastas em `~/Library/Application Support`
+(histórico do Clippy, capturas do Screenly). Não há migração: atalhos, histórico,
+capturas e a regra sem password do Sleepy (`/etc/sudoers.d/sleepy`) continuam a
+funcionar. Um Sleepy ligado continua ligado ao passar da app antiga para o Hone e
+quando o Hone se relança (update ou `build.sh`); sair do Hone pelo menu desliga-o,
+como a app antiga fazia.
+
+**As apps antigas.** Uma ferramenta nunca corre ao mesmo tempo que a sua app
+antiga (usam os mesmos dados, atalhos e ícones). Enquanto a app antiga estiver
+aberta, a ferramenta fica **em pausa** no Hone, com um botão para a fechar. No
+arranque o Hone pergunta se as fecha — se disseres que sim, passa a
+fechá-las sempre que abrirem (por exemplo, no arranque do Mac). Depois podes
+apagá-las de `/Applications` e tirá-las de **Definições do Sistema ▸ Geral ▸
+Itens de início de sessão**.
+
+**Permissões.** O Screenly precisa de **Gravação de Ecrã** dada ao **Hone** (a
+autorização da app antiga não passa). As miniaturas do Window Peek passaram a
+opt-in (desligadas por omissão), para que o indicador de gravação não acenda a
+cada hover no Dock.
+
 ## Requirements
 
 - macOS 14+
@@ -36,8 +78,9 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 menus** hides the icon while the enabled tools keep running; reopening Hone from Launchpad
 brings Settings back. Both tools need **Accessibility**
 access — toggle one on and macOS will prompt; grant it in System Settings ▸
-Privacy & Security ▸ Accessibility. **Window Peek** additionally uses **Screen
-Recording** for live window thumbnails (it still works without it, showing titles only).
+Privacy & Security ▸ Accessibility. **Window Peek** can additionally use **Screen
+Recording** for live window thumbnails — opt-in, off by default (without it, it shows
+titles only). **Screenly** needs **Screen Recording** to capture.
 
 ### Why the stable signature matters
 

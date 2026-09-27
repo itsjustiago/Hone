@@ -16,7 +16,8 @@ final class WindowPeekModule: HoneModule {
     private let controller = WindowPeekController()
 
     /// Persisted: capture live thumbnails (needs Screen Recording) vs. a
-    /// lightweight titles-only panel.
+    /// lightweight titles-only panel. Off by default: every capture lights the
+    /// screen-recording indicator, so it's opt-in.
     var showThumbnails: Bool {
         didSet {
             UserDefaults.standard.set(showThumbnails, forKey: "windowPeek.showThumbnails")
@@ -33,7 +34,7 @@ final class WindowPeekModule: HoneModule {
     }
 
     init() {
-        showThumbnails = (UserDefaults.standard.object(forKey: "windowPeek.showThumbnails") as? Bool) ?? true
+        showThumbnails = (UserDefaults.standard.object(forKey: "windowPeek.showThumbnails") as? Bool) ?? false
         isEnabled = ModuleDefaults.isEnabled("windowPeek", default: false)
         controller.captureThumbnails = showThumbnails
     }

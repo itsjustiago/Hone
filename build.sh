@@ -36,6 +36,9 @@ sign "$APP"
 
 # Instalar em /Applications (path estável) e reiniciar.
 DEST="/Applications/Hone.app"
+# Relançamento, não saída: as ferramentas embebidas (ex.: o Sleepy ligado)
+# mantêm o estado para o arranque seguinte. O Hone limpa a flag ao arrancar.
+defaults write com.tiagof.hone relaunchingForUpdate -bool true
 osascript -e 'quit app "Hone"' >/dev/null 2>&1 || true
 pkill -f "Hone.app/Contents/MacOS/Hone" 2>/dev/null || true
 sleep 1
@@ -47,6 +50,10 @@ if rm -rf "$DEST" 2>/dev/null && cp -R "$APP" "$DEST" 2>/dev/null; then
   open "$DEST"
   echo "✓ Instalado, assinado e reiniciado: $DEST"
 else
+  # O Hone já foi fechado: volta a abri-lo a partir do staging, senão um Sleepy
+  # ligado ficava com o pmset armado e nenhum Hone a correr.
+  open "$APP"
+  echo "⚠ Não deu para instalar em /Applications — o Hone ficou a correr a partir de $PWD/$APP."
   echo "✓ Pronto: $APP  (copia para /Applications manualmente)"
   DEST="$APP"
 fi

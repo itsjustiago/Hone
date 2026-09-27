@@ -39,6 +39,22 @@ final class UpdateChecker {
     }
 }
 
+/// Set right before Hone quits only to come straight back (one-click update,
+/// or `build.sh` reinstalling). On that quit, embedded tools keep their state
+/// armed (e.g. Sleepy's sleep block) instead of tearing it down. Cleared on launch.
+enum RelaunchFlag {
+    static let key = "relaunchingForUpdate"
+
+    static func set() { UserDefaults.standard.set(true, forKey: key) }
+
+    /// Reads and clears the flag.
+    static func consume() -> Bool {
+        let value = UserDefaults.standard.bool(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        return value
+    }
+}
+
 /// One-click updater: downloads the release .zip, swaps the app bundle and relaunches.
 final class UpdateController: NSObject {
     private var window: NSWindow?
@@ -155,6 +171,7 @@ final class UpdateController: NSObject {
         do { try bash.run() } catch { fail("Falha ao instalar a atualização."); return }
 
         DispatchQueue.main.async { self.model.status = "A reiniciar…" }
+        RelaunchFlag.set()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
     }
 
