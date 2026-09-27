@@ -10,9 +10,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let updateChecker = UpdateChecker()
     private let onboarding = OnboardingController()
     private lazy var settingsWindow = SettingsWindowController(manager: manager, updateChecker: updateChecker)
+    private lazy var toolStatusItems = ToolStatusItems(
+        manager: manager, openSettings: { [weak self] id in self?.showSettings(moduleID: id) })
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var lastPopoverClose = Date.distantPast
+    /// Which embedded tool's panel the popover is showing (nil = the tool list).
+    private let popoverNavigation = PopoverNavigation()
 
     /// Opens the Settings window (AppKit-managed, so it reliably comes to front
     /// from a menu-bar agent). Called by the popover's "Definições…" button and
@@ -25,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Run loop is live now — safe to install event taps for enabled modules.
         manager.activate()
         setupStatusItem()
+        toolStatusItems.activate()
         NotificationCenter.default.addObserver(
             forName: MenuBarIcon.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -103,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let panel = MenuBarContent(
             manager: manager,
             updateChecker: updateChecker,
+            navigation: popoverNavigation,
             dismiss: { [weak self] in self?.dismissPopover() },
             openSettings: { [weak self] moduleID in self?.showSettings(moduleID: moduleID) })
 
@@ -131,6 +137,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         lastPopoverClose = Date()
+        // Reopen on the tool list, not inside whichever tool was last shown.
+        popoverNavigation.toolID = nil
     }
 
     private func dismissPopover() { popover?.performClose(nil) }

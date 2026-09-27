@@ -86,10 +86,25 @@ private struct ModuleDetailView: View {
                     PermissionBanner(tint: module.tint) { permissions.openAccessibilitySettings() }
                 }
 
+                if let tool = module as? any MenuBarTool, manager.isPaused(tool) {
+                    PausedBanner(title: tool.title) { manager.quitLegacyApp(for: tool) }
+                }
+
                 let dimmed = module.isAvailable && !module.isMomentary && !module.isEnabled
-                module.makeSettingsView()
-                    .disabled(dimmed)
-                    .opacity(dimmed ? 0.45 : 1)
+                Group {
+                    if let tool = module as? any MenuBarTool {
+                        SettingsSection(title: "Barra de menus") {
+                            ToggleRow(title: "Ícone próprio na barra de menus",
+                                      subtitle: "Mostra o \(tool.title) num ícone separado. Continua também no menu do Hone.",
+                                      tint: tool.tint,
+                                      isOn: Binding(get: { tool.showsOwnMenuBarIcon },
+                                                    set: { manager.setShowsOwnMenuBarIcon($0, for: tool) }))
+                        }
+                    }
+                    module.makeSettingsView()
+                }
+                .disabled(dimmed)
+                .opacity(dimmed ? 0.45 : 1)
             }
             .padding(22)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -143,6 +158,31 @@ private struct PermissionBanner: View {
             }
             Spacer(minLength: 8)
             Button("Abrir Definições…", action: action)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(.orange.opacity(0.25))
+        )
+    }
+}
+
+/// An embedded tool held back because its old standalone app is still open.
+private struct PausedBanner: View {
+    let title: String
+    let quit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "pause.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.orange)
+            Text("Em pausa — o \(title) antigo está aberto")
+                .font(.callout.weight(.medium))
+            Spacer(minLength: 8)
+            Button("Fechar \(title)", action: quit)
                 .controlSize(.small)
         }
         .padding(12)

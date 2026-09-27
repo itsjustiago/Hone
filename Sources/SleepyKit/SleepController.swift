@@ -1,0 +1,309 @@
+import Foundation
+import IOKit.pwr_mgt
+
+/// Núcleo do Sleepy: impede o Mac de dormir, incluindo com a tampa fechada.
+///
+/// São precisos **três** mecanismos, e cobrem coisas diferentes:
+///
+/// 1. `pmset -a disablesleep` — sobrevive ao lid-close sem precisar de ecrã
+///    externo nem corrente, mas exige admin (prompt, ou a regra sudoers de
+///    [[PrivilegedAccess]]).
+/// 2. IOKit `PreventUserIdleSystemSleep` (= `caffeinate -i`) — trava o sleep
+///    por inatividade. Funciona em bateria. Não trava os ciclos de manutenção.
+/// 3. IOKit `PreventSystemSleep` (= `caffeinate -s`) — trava o sistema de
+///    dormir de forma mais forte, incluindo os `Maintenance Sleep` /
+///    `Sleep Service Back to Sleep`. Só é respeitado na corrente (num portátil,
+///    em bateria é ignorado — daí precisarmos também do nº 2). É a assertion
+///    que o NoSleep usa.
+///
+/// Segurar (2) + (3) é o equivalente a `caffeinate -s -i`: cobre bateria e
+/// corrente. O estado é persistido: um crash, um rebuild ou o auto-updater
+/// relançam a app, e sem isso a proteção caía em silêncio a meio de uma tarefa
+/// longa. Para não deixar o Mac acordado por esquecimento, há auto-desligar ao
+/// fim de `autoOffMinutes` (default 8h) — e, se a tampa estiver fechada nessa
+/// altura, mandamos o Mac dormir logo, que é o que a tampa fechada quer dizer.
+final class SleepController {
+    static let shared = SleepController()
+
+    private(set) var isActive = false
+
+    /// Chamado quando o estado muda sem ser por clique (restore, auto-off).
+    var onStateChange: (() -> Void)?
+
+    /// As duas assertions IOKit que seguramos em conjunto (bateria + corrente).
+    private static let assertionTypes = [
+        kIOPMAssertionTypePreventUserIdleSystemSleep,
+        kIOPMAssertionTypePreventSystemSleep,
+    ]
+    private var assertionIDs: [IOPMAssertionID] = []
+    private var autoOffTimer: Timer?
+
+    private let activeKey = "sleepActive"
+    private let activeSinceKey = "activeSince"
+    private static let autoOffKey = "autoOffMinutes"
+    private static let legacyAutoOffKey = "autoOffHours"
+
+    /// Minutos até desligar sozinho. 0 = nunca. Antes disto a preferência era em
+    /// horas — migra-se na primeira leitura para não perder a escolha do utilizador.
+    static var autoOffMinutes: Int {
+        get {
+            let d = SleepyDefaults.store
+            if let minutes = d.object(forKey: autoOffKey) as? Int { return minutes }
+            if let hours = d.object(forKey: legacyAutoOffKey) as? Int {
+                d.set(hours * 60, forKey: autoOffKey)
+                return hours * 60
+            }
+            return 8 * 60
+        }
+        set {
+            SleepyDefaults.store.set(newValue, forKey: autoOffKey)
+            shared.scheduleAutoOff()
+        }
+    }
+
+    /// As escolhas de auto-desligar, partilhadas pelo menu e pelas definições.
+    /// `short` é a versão compacta, para a linha estreita do menu.
+    struct AutoOffOption: Identifiable, Hashable {
+        let minutes: Int
+        let title: String
+        let short: String
+        var id: Int { minutes }
+    }
+
+    static let autoOffOptions: [AutoOffOption] = [
+        .init(minutes: 10, title: "10 minutos", short: "10 min"),
+        .init(minutes: 20, title: "20 minutos", short: "20 min"),
+        .init(minutes: 30, title: "30 minutos", short: "30 min"),
+        .init(minutes: 60, title: "1 hora", short: "1 h"),
+        .init(minutes: 120, title: "2 horas", short: "2 h"),
+        .init(minutes: 240, title: "4 horas", short: "4 h"),
+        .init(minutes: 480, title: "8 horas", short: "8 h"),
+        .init(minutes: 720, title: "12 horas", short: "12 h"),
+        .init(minutes: 0, title: "Nunca", short: "Nunca"),
+    ]
+
+    private init() {}
+
+    // MARK: - Estado real do sistema
+
+    /// Lê o `SleepDisabled` do `pmset -g`. Não precisa de privilégios, e é a
+    /// única fonte de verdade — o que julgamos ter feito pode não ter pegado.
+    static func systemSleepDisabled() -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        p.arguments = ["-g"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return false }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard let out = String(data: data, encoding: .utf8) else { return false }
+        for line in out.split(separator: "\n") where line.contains("SleepDisabled") {
+            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            return fields.last == "1"
+        }
+        return false
+    }
+
+    // MARK: - IOKit power assertions (idle + system sleep)
+
+    /// Segura as duas assertions (idle + system). Sem privilégios. O display
+    /// continua livre para adormecer (queremos isso de tampa fechada).
+    @discardableResult
+    private func createAssertion() -> Bool {
+        guard assertionIDs.isEmpty else { return true }
+        var all = true
+        for type in Self.assertionTypes {
+            var id: IOPMAssertionID = 0
+            let result = IOPMAssertionCreateWithName(
+                type as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "Sleepy: impedir sleep" as CFString,
+                &id)
+            if result == kIOReturnSuccess {
+                assertionIDs.append(id)
+            } else {
+                all = false
+            }
+        }
+        return all
+    }
+
+    private func releaseAssertion() {
+        for id in assertionIDs { IOPMAssertionRelease(id) }
+        assertionIDs.removeAll()
+    }
+
+    // MARK: - pmset disablesleep (lid-close)
+
+    /// Elevado via prompt AppleScript (Touch ID/password). Usado como fallback
+    /// quando o acesso sem password ([[PrivilegedAccess]]) não está instalado.
+    @discardableResult
+    private func setDisableSleepPrompting(_ on: Bool) -> Bool {
+        let value = on ? "1" : "0"
+        let script = "do shell script \"pmset -a disablesleep \(value)\" with administrator privileges"
+        var error: NSDictionary?
+        NSAppleScript(source: script)?.executeAndReturnError(&error)
+        if let error {
+            NSLog("Sleepy: pmset disablesleep=\(value) falhou: \(error)")
+        }
+        return error == nil
+    }
+
+    /// Sem password primeiro (sem prompt); só cai no prompt de admin se a regra
+    /// sudoers não estiver instalada.
+    private func setDisableSleep(_ on: Bool, allowPrompt: Bool = true) -> Bool {
+        if PrivilegedAccess.setDisableSleep(on) { return true }
+        guard allowPrompt else { return false }
+        return setDisableSleepPrompting(on)
+    }
+
+    // MARK: - Toggle
+
+    func enable() {
+        guard !isActive else { return }
+        // Sem o disablesleep não há proteção de lid-close — se o utilizador
+        // cancelar o prompt de admin, não fingimos que ficou ligado.
+        guard setDisableSleep(true) else { return }
+        if !createAssertion() {
+            NSLog("Sleepy: falha a criar a power assertion — o idle sleep pode ocorrer")
+        }
+        isActive = true
+        activeSince = Date()
+        SleepyDefaults.store.set(true, forKey: activeKey)
+        scheduleAutoOff()
+        onStateChange?()
+    }
+
+    func disable(allowPrompt: Bool = true) {
+        guard isActive else { return }
+        guard setDisableSleep(false, allowPrompt: allowPrompt) else { return }
+        releaseAssertion()
+        isActive = false
+        clearPersisted()
+        autoOffTimer?.invalidate()
+        autoOffTimer = nil
+        onStateChange?()
+    }
+
+    // MARK: - Arranque
+
+    /// Re-arma se a app foi relançada (crash, rebuild, auto-update) enquanto
+    /// estava ligada; caso contrário faz o reset defensivo. Nunca mostra prompt
+    /// no arranque — só usa o caminho sem password.
+    func restoreOnLaunch() {
+        let shouldBeActive = SleepyDefaults.store.bool(forKey: activeKey) && !autoOffExpired()
+
+        if shouldBeActive {
+            _ = PrivilegedAccess.setDisableSleep(true)
+        } else {
+            _ = PrivilegedAccess.setDisableSleep(false)
+            clearPersisted()
+        }
+
+        // O ícone segue o que o sistema diz, não o que julgamos ter feito. Sem
+        // acesso sem password não conseguimos mexer no disablesleep em silêncio,
+        // e mentir sobre o estado seria pior do que mostrá-lo.
+        isActive = Self.systemSleepDisabled()
+        if isActive {
+            createAssertion()
+            SleepyDefaults.store.set(true, forKey: activeKey)
+            if activeSince == nil { activeSince = Date() }
+            scheduleAutoOff()
+        } else {
+            releaseAssertion()
+        }
+        onStateChange?()
+    }
+
+    // MARK: - Auto-desligar
+
+    private var activeSince: Date? {
+        get { SleepyDefaults.store.object(forKey: activeSinceKey) as? Date }
+        set { SleepyDefaults.store.set(newValue, forKey: activeSinceKey) }
+    }
+
+    /// Momento em que o auto-off vai disparar, para mostrar no menu.
+    var autoOffDate: Date? {
+        guard isActive, Self.autoOffMinutes > 0, let since = activeSince else { return nil }
+        return since.addingTimeInterval(TimeInterval(Self.autoOffMinutes) * 60)
+    }
+
+    private func autoOffExpired() -> Bool {
+        guard Self.autoOffMinutes > 0, let since = activeSince else { return false }
+        return Date().timeIntervalSince(since) >= TimeInterval(Self.autoOffMinutes) * 60
+    }
+
+    private func clearPersisted() {
+        SleepyDefaults.store.set(false, forKey: activeKey)
+        SleepyDefaults.store.removeObject(forKey: activeSinceKey)
+    }
+
+    /// Verificação periódica em vez de um único timer para o prazo todo: um
+    /// timer longo escorrega se a máquina chegar a dormir ou a entrar em dark
+    /// wake, e o prazo passaria despercebido. Comparar contra o relógio de
+    /// parede a cada 15s custa nada e não pode escorregar.
+    private func scheduleAutoOff() {
+        autoOffTimer?.invalidate()
+        autoOffTimer = nil
+        guard isActive, autoOffDate != nil else { return }
+        if autoOffExpired() { autoOff(); return }
+        let timer = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
+            guard let self, self.autoOffExpired() else { return }
+            self.autoOff()
+        }
+        timer.tolerance = 5
+        // .common para continuar a correr enquanto um menu/popover está aberto.
+        RunLoop.main.add(timer, forMode: .common)
+        autoOffTimer = timer
+    }
+
+    private func autoOff() {
+        guard isActive else { return }
+        let closed = Self.lidClosed()
+        NSLog("Sleepy: auto-desligar ao fim de \(Self.autoOffMinutes) min (tampa \(closed ? "fechada" : "aberta"))")
+        // De tampa fechada não pode haver prompt de admin: era invisível e ficava
+        // a bloquear a app. Só o caminho sem password.
+        disable(allowPrompt: !closed)
+        guard !isActive else {
+            NSLog("Sleepy: auto-desligar falhou — sem acesso sem password instalado")
+            return
+        }
+        // Repor o disablesleep não faz o Mac adormecer sozinho: o evento de
+        // lid-close já foi consumido e ele fica acordado até ao idle. De tampa
+        // fechada é o comportamento que o utilizador espera, por isso pedimos
+        // o sleep explicitamente (o pmset sleepnow não precisa de privilégios).
+        guard closed else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Self.sleepNow() }
+    }
+
+    // MARK: - Tampa e sleep imediato
+
+    /// `AppleClamshellState = Yes` no IORegistry ⇒ tampa fechada.
+    static func lidClosed() -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
+        p.arguments = ["-r", "-k", "AppleClamshellState", "-d", "4"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return false }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard let out = String(data: data, encoding: .utf8) else { return false }
+        for line in out.split(separator: "\n") where line.contains("AppleClamshellState") {
+            return line.contains("Yes")
+        }
+        return false
+    }
+
+    private static func sleepNow() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        p.arguments = ["sleepnow"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { NSLog("Sleepy: pmset sleepnow falhou") }
+    }
+}

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Owns the set of tools, applies their persisted state on launch, and keeps
@@ -9,7 +10,13 @@ import SwiftUI
 final class ModuleManager {
     private(set) var modules: [any HoneModule] = []
 
+    /// The embedded former apps (Sleepy, …), in menu order.
+    var menuBarTools: [any MenuBarTool] { modules.compactMap { $0 as? any MenuBarTool } }
+
     private let permissions = Permissions.shared
+    private let legacyApps = LegacyApps.shared
+    /// The "old apps are still open" alert shows at most once per launch.
+    private var didShowLegacyAlert = false
 
     init() {
         registerModules()
@@ -19,7 +26,9 @@ final class ModuleManager {
     /// Called once the app has finished launching and the run loop is live, so
     /// event taps can be installed safely.
     func activate() {
+        watchLegacyApps()
         applyEnabledStates()
+        resolveLegacyConflicts()
     }
 
     /// The single place where tools are wired into the app.
@@ -30,6 +39,8 @@ final class ModuleManager {
             AltTabModule(),
             QuitOnCloseModule(),
             KeySwapModule(),
+            // Former standalone apps, embedded as tools.
+            SleepyModule.make(),
             // Momentary tools go last so the Settings sidebar matches the popover.
             CleanKeyboardModule(),
         ]
@@ -70,11 +81,83 @@ final class ModuleManager {
             permissions.requestAccessibility()
         }
         module.isEnabled = enabled
+        if enabled { resolveLegacyConflicts() }
     }
 
     /// Whether a module is enabled but blocked waiting on permission.
     func isWaitingOnPermission(_ module: any HoneModule) -> Bool {
         module.isEnabled && module.requiresAccessibility && !permissions.isAccessibilityTrusted
+    }
+
+    // MARK: - Embedded tools
+
+    func setShowsOwnMenuBarIcon(_ shows: Bool, for tool: any MenuBarTool) {
+        tool.showsOwnMenuBarIcon = shows
+    }
+
+    /// Enabled, but held back because the old standalone app is running.
+    func isPaused(_ module: any HoneModule) -> Bool {
+        guard let tool = module as? any MenuBarTool else { return false }
+        return tool.isEnabled && legacyApps.isRunning(tool.legacyBundleID)
+    }
+
+    /// Quits the old app behind a paused tool; the tool starts once it's gone.
+    func quitLegacyApp(for tool: any MenuBarTool) {
+        legacyApps.quit(tool.legacyBundleID)
+    }
+
+    private func watchLegacyApps() {
+        legacyApps.onLaunch = { [weak self] bundleID in
+            guard let self else { return }
+            // Pause the tool before the twin brings up its own icon and hotkeys.
+            for tool in self.menuBarTools where tool.legacyBundleID == bundleID { tool.stop() }
+            self.resolveLegacyConflicts()
+        }
+        legacyApps.onTerminate = { [weak self] bundleID in
+            guard let self else { return }
+            for tool in self.menuBarTools where tool.legacyBundleID == bundleID && tool.isEnabled {
+                tool.start()
+            }
+        }
+        legacyApps.watch(Set(menuBarTools.map(\.legacyBundleID)))
+    }
+
+    /// Enabled tools whose twin is running are paused. Quit the twins right
+    /// away if the user already agreed to; otherwise ask once per launch.
+    private func resolveLegacyConflicts() {
+        guard !pausedTools.isEmpty else { return }
+        if LegacyApps.autoQuit {
+            for tool in pausedTools { quitLegacyApp(for: tool) }
+            return
+        }
+        guard !didShowLegacyAlert else { return }
+        didShowLegacyAlert = true
+        // Deferred: this can run mid-launch or from inside a SwiftUI action.
+        DispatchQueue.main.async { [weak self] in self?.askToQuitLegacyApps() }
+    }
+
+    private var pausedTools: [any MenuBarTool] { menuBarTools.filter { isPaused($0) } }
+
+    private func askToQuitLegacyApps() {
+        let tools = pausedTools.sorted { $0.title < $1.title }
+        guard !tools.isEmpty else { return }
+        let names = tools.map { "o \($0.title)" }
+        let list = names.count == 1
+            ? names[0]
+            : names.dropLast().joined(separator: ", ") + " e " + names[names.count - 1]
+
+        let alert = NSAlert()
+        alert.messageText = list.prefix(1).uppercased() + list.dropFirst()
+            + (tools.count == 1 ? " agora vive dentro do Hone" : " agora vivem dentro do Hone")
+        alert.informativeText = "As apps antigas ainda estão abertas. Fecho-as agora e sempre que "
+            + "voltarem a abrir (por exemplo, no arranque do Mac)? Enquanto estiverem abertas, estas "
+            + "ferramentas ficam em pausa no Hone para não haver ícones e atalhos em duplicado."
+        alert.addButton(withTitle: "Fechar as apps antigas")
+        alert.addButton(withTitle: "Agora não")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        LegacyApps.autoQuit = true
+        for tool in pausedTools { quitLegacyApp(for: tool) }
     }
 
     func stopAll() {

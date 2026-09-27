@@ -1,11 +1,20 @@
 import SwiftUI
 import AppKit
 
+/// Which embedded tool's panel the Hone popover shows in place of the tool
+/// list. Owned by `AppDelegate` so closing the popover can reset it.
+@MainActor
+@Observable
+final class PopoverNavigation {
+    var toolID: String?
+}
+
 /// The panel shown from the menu-bar icon. Hosted in an `NSPopover` (arrow +
 /// smooth grow animation), matching Clippy & Sleepy.
 struct MenuBarContent: View {
     @Bindable var manager: ModuleManager
     var updateChecker: UpdateChecker
+    @Bindable var navigation: PopoverNavigation
     var dismiss: () -> Void = {}
     /// Opens Settings on the given tool's page; `nil` keeps the current page.
     var openSettings: (String?) -> Void = { _ in }
@@ -27,6 +36,20 @@ struct MenuBarContent: View {
     private var momentaryModules: [any HoneModule] { manager.modules.filter { $0.isMomentary } }
 
     var body: some View {
+        if let id = navigation.toolID, let tool = manager.menuBarTools.first(where: { $0.id == id }) {
+            // Drilled into a tool: its own panel, with a back chevron to the list.
+            // The popover follows the new preferred size on its own.
+            tool.makeMenuPanel(
+                back: { navigation.toolID = nil },
+                dismiss: dismiss,
+                openSettings: { openSettings(tool.id) },
+                toggleOwnIcon: { manager.setShowsOwnMenuBarIcon(!tool.showsOwnMenuBarIcon, for: tool) })
+        } else {
+            toolList
+        }
+    }
+
+    private var toolList: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.horizontal, contentInset)
@@ -85,7 +108,11 @@ struct MenuBarContent: View {
         VStack(spacing: 2) {
             ForEach(modules, id: \.id) { module in
                 ModuleRow(module: module, manager: manager,
-                          innerPad: contentInset - edge, dismiss: dismiss, openSettings: openSettings)
+                          innerPad: contentInset - edge, dismiss: dismiss, openSettings: openSettings,
+                          openPanel: { tool in
+                              tool.panelWillShow()
+                              navigation.toolID = tool.id
+                          })
             }
         }
         .padding(.horizontal, edge)
@@ -175,8 +202,14 @@ private struct ModuleRow: View {
     let innerPad: CGFloat
     var dismiss: () -> Void = {}
     var openSettings: (String?) -> Void = { _ in }
+    /// Shows an embedded tool's panel inside the popover.
+    var openPanel: (any MenuBarTool) -> Void = { _ in }
     @State private var hovering = false
     @State private var hoveringGear = false
+    @State private var hoveringChevron = false
+
+    private var tool: (any MenuBarTool)? { module as? any MenuBarTool }
+    private var isPaused: Bool { manager.isPaused(module) }
 
     var body: some View {
         HStack(spacing: 11) {
@@ -188,12 +221,21 @@ private struct ModuleRow: View {
                 Text(statusText)
                     .font(.caption2)
                     .foregroundStyle(statusColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let tool, isPaused {
+                    Button("Fechar \(tool.title)") { manager.quitLegacyApp(for: tool) }
+                        .buttonStyle(.link)
+                        .font(.caption2)
+                }
             }
             Spacer(minLength: 8)
             if module.isAvailable {
                 settingsButton
             }
             trailingControl
+            if let tool {
+                panelButton(tool)
+            }
         }
         .padding(.horizontal, innerPad)
         .padding(.vertical, 7)
@@ -227,6 +269,28 @@ private struct ModuleRow: View {
         .help("Definições de \(module.title)")
     }
 
+    /// Drill-in to the tool's own panel. Only while it's actually running —
+    /// an off or paused tool has nothing live to show.
+    private func panelButton(_ tool: any MenuBarTool) -> some View {
+        let canOpen = tool.isEnabled && !isPaused
+        return Button {
+            openPanel(tool)
+        } label: {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(hovering && canOpen ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                .frame(width: 18, height: 22)
+                .background(hoveringChevron && canOpen ? AnyShapeStyle(.primary.opacity(0.08)) : AnyShapeStyle(.clear),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canOpen)
+        .onHover { hoveringChevron = $0 }
+        .help("Abrir \(tool.title)")
+        .padding(.trailing, -4)
+    }
+
     @ViewBuilder
     private var trailingControl: some View {
         if !module.isAvailable {
@@ -254,7 +318,7 @@ private struct ModuleRow: View {
 
     /// A tool that is switched on "lights up" with its tint — the highlight ported
     /// from Sleepy's hero card so active tools read at a glance.
-    private var isActive: Bool { module.isAvailable && module.isEnabled && !module.isMomentary }
+    private var isActive: Bool { module.isAvailable && module.isEnabled && !module.isMomentary && !isPaused }
 
     private var rowBackground: AnyShapeStyle {
         if isActive { return AnyShapeStyle(module.tint.opacity(hovering ? 0.16 : 0.10)) }
@@ -265,9 +329,11 @@ private struct ModuleRow: View {
     private var statusText: String {
         if !module.isAvailable { return "Em breve" }
         if module.isMomentary { return "Bloqueia as teclas para limpar" }
+        if isPaused { return "Em pausa — o \(module.title) antigo está aberto" }
         return module.isEnabled ? "Ativo" : "Desligado"
     }
     private var statusColor: AnyShapeStyle {
+        if isPaused { return AnyShapeStyle(.orange) }
         if module.isAvailable && module.isEnabled && !module.isMomentary { return AnyShapeStyle(module.tint) }
         return AnyShapeStyle(.secondary)
     }

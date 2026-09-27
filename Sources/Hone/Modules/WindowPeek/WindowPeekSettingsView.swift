@@ -11,7 +11,7 @@ struct WindowPeekSettingsView: View {
             SettingsSection(title: "Pré-visualizações") {
                 ToggleRow(
                     title: "Miniaturas das janelas ao vivo",
-                    subtitle: "Captura uma imagem de cada janela. Precisa de Gravação de Ecrã — sem ela, mostra só os títulos.",
+                    subtitle: "Captura uma imagem de cada janela. Precisa de Gravação de Ecrã e acende o indicador de gravação na barra sempre que as miniaturas aparecem. Desligado, mostra só os títulos e nunca grava o ecrã.",
                     tint: tint,
                     isOn: $module.showThumbnails
                 )
