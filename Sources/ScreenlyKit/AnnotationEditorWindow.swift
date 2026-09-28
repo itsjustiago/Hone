@@ -52,17 +52,32 @@ final class AnnotationEditorController: NSObject, NSWindowDelegate {
         let ext = CaptureSettings.format
         guard let data = imageData(cg, ext: ext) else { close(); return }
 
-        var savedURL: URL?
-        if toClipboard {
-            if let img = NSImage(data: data) { CaptureOutput.copyToClipboard(img) }
-        } else {
-            savedURL = CaptureOutput.saveToFolder(data, ext: ext)
-        }
-        let internalURL = store.add(data: data, ext: ext, mode: .screen, savedPath: savedURL?.path)
-        if CaptureSettings.showPreview, let url = savedURL ?? internalURL, let img = NSImage(contentsOf: url) {
-            preview.show(image: img, reveal: savedURL ?? internalURL)
+        guard toClipboard else { saveWithDialog(data, ext: ext); return }
+        if let img = NSImage(data: data) { CaptureOutput.copyToClipboard(img) }
+        let internalURL = store.add(data: data, ext: ext, mode: .screen, savedPath: nil)
+        if CaptureSettings.showPreview, let url = internalURL, let img = NSImage(contentsOf: url) {
+            preview.show(image: img, reveal: url)
         }
         close()
+    }
+
+    /// "Guardar": NSSavePanel as a sheet on the editor. Cancel (or a failed
+    /// write) leaves the editor open with its annotations intact.
+    private func saveWithDialog(_ data: Data, ext: String) {
+        guard let window, !CaptureSaveDialog.isOpen, window.attachedSheet == nil else { return }
+        CaptureSaveDialog.beginSheet(for: window, ext: ext) { [weak self] url in
+            // Closed meanwhile (tool stopped) → the capture is gone with it.
+            guard let self, let url, self.window === window else { return }
+            if let error = CaptureSaveDialog.write(data, to: url) {
+                CaptureSaveDialog.makeErrorAlert(error).beginSheetModal(for: window)
+                return
+            }
+            self.store.add(data: data, ext: ext, mode: .screen, savedPath: url.path)
+            if CaptureSettings.showPreview, let img = NSImage(contentsOf: url) {
+                self.preview.show(image: img, reveal: url)
+            }
+            self.close()
+        }
     }
 
     private func render(image: NSImage, shapes: [AnnotationShape]) -> CGImage? {
@@ -88,6 +103,8 @@ final class AnnotationEditorController: NSObject, NSWindowDelegate {
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
+            // The save dialog (or its error alert) is up: these keys belong to it.
+            if CaptureSaveDialog.isOpen || self.window?.attachedSheet != nil { return event }
             if self.model.editingTextID != nil {
                 if event.keyCode == 53 { self.model.endTextEditing(); return nil }
                 return event
@@ -114,6 +131,8 @@ final class AnnotationEditorController: NSObject, NSWindowDelegate {
         ColorPanelController.shared.dismiss()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        // A save sheet still attached (tool stopped mid-dialog) ends as cancelled.
+        if let window, let sheet = window.attachedSheet { window.endSheet(sheet) }
         window?.orderOut(nil)
         window?.delegate = nil
         window = nil

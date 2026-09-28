@@ -168,6 +168,8 @@ final class SelectionOverlayController: NSObject {
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
+            // The save dialog is up: these keys are the file name, not shortcuts.
+            if CaptureSaveDialog.isOpen { return event }
             let cmd = event.modifierFlags.contains(.command)
             // While editing a text box, let all keys reach the field (except Esc).
             if self.model.editingTextID != nil {
@@ -200,15 +202,45 @@ final class SelectionOverlayController: NSObject {
         let ext = CaptureSettings.format
         guard let data = imageData(cg, ext: ext) else { close(); return }
 
-        var savedURL: URL?
-        if toClipboard {
-            if let img = NSImage(data: data) { CaptureOutput.copyToClipboard(img) }
-        } else {
-            savedURL = CaptureOutput.saveToFolder(data, ext: ext)
+        guard toClipboard else { saveWithDialog(data, ext: ext); return }
+        if let img = NSImage(data: data) { CaptureOutput.copyToClipboard(img) }
+        let internalURL = store.add(data: data, ext: ext, mode: .region, savedPath: nil)
+        if CaptureSettings.showPreview, let url = internalURL, let img = NSImage(contentsOf: url) {
+            preview.show(image: img, reveal: url)
         }
-        let internalURL = store.add(data: data, ext: ext, mode: .region, savedPath: savedURL?.path)
-        if CaptureSettings.showPreview, let url = savedURL ?? internalURL, let img = NSImage(contentsOf: url) {
-            preview.show(image: img, reveal: savedURL ?? internalURL)
+        close()
+    }
+
+    /// "Guardar": the image is already rendered (from `frozen`, not the screen),
+    /// so the shield-level overlay — and the elevated colour panel — can step
+    /// aside; otherwise the NSSavePanel would open hidden underneath them.
+    /// Cancel (or a failed write) puts everything back exactly as it was.
+    private func saveWithDialog(_ data: Data, ext: String) {
+        guard let panel, !CaptureSaveDialog.isOpen else { return }
+        let colorPanel = NSColorPanel.shared
+        let colorPanelWasVisible = NSColorPanel.sharedColorPanelExists && colorPanel.isVisible
+        panel.orderOut(nil)
+        if colorPanelWasVisible { colorPanel.orderOut(nil) }
+
+        let restore = { [weak self] in
+            // Torn down meanwhile (tool stopped) → nothing to bring back.
+            guard let self, let current = self.panel, current === panel else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            current.makeKeyAndOrderFront(nil)
+            current.orderFrontRegardless()
+            if colorPanelWasVisible { colorPanel.orderFront(nil) }
+        }
+
+        guard let url = CaptureSaveDialog.runModal(ext: ext) else { restore(); return }
+        guard self.panel === panel else { return }
+        if let error = CaptureSaveDialog.write(data, to: url) {
+            CaptureSaveDialog.makeErrorAlert(error).runModal()
+            restore()
+            return
+        }
+        store.add(data: data, ext: ext, mode: .region, savedPath: url.path)
+        if CaptureSettings.showPreview, let img = NSImage(contentsOf: url) {
+            preview.show(image: img, reveal: url)
         }
         close()
     }
