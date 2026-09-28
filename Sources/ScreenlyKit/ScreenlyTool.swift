@@ -168,6 +168,8 @@ public final class ScreenlyTool {
     // MARK: - Capture
 
     private func capture(_ mode: CaptureMode) {
+        // A save dialog is up: a new (shield-level) capture would land on top of it.
+        guard !CaptureSaveDialog.isOpen else { return }
         dismissPanel?()
         guard CaptureSettings.annotate else { engine.capture(mode); return }
         switch mode {
@@ -187,6 +189,8 @@ public final class ScreenlyTool {
     // MARK: - Colour picker
 
     private func pickColor() {
+        // The eyedropper is shield-level too: never over an open save dialog.
+        guard !CaptureSaveDialog.isOpen else { return }
         dismissPanel?()
         colorPicker.pick()
     }
