@@ -3,21 +3,26 @@ import IOKit.pwr_mgt
 
 /// Núcleo do Sleepy: impede o Mac de dormir, incluindo com a tampa fechada.
 ///
-/// São precisos **três** mecanismos, e cobrem coisas diferentes:
+/// São precisos **quatro** mecanismos, e cobrem coisas diferentes:
 ///
 /// 1. `pmset -a disablesleep` — sobrevive ao lid-close sem precisar de ecrã
 ///    externo nem corrente, mas exige admin (prompt, ou a regra sudoers de
 ///    [[PrivilegedAccess]]).
-/// 2. IOKit `PreventUserIdleSystemSleep` (= `caffeinate -i`) — trava o sleep
+/// 2. IOKit `PreventUserIdleDisplaySleep` (= `caffeinate -d`) — mantém o ecrã
+///    aceso de tampa aberta, na corrente e em bateria. Evita também o bloqueio
+///    automático (o macOS bloqueia quando o ecrã se apaga). De tampa fechada o
+///    painel interno pode apagar-se na mesma, por hardware/firmware (IOPMLib:
+///    "a user closing a portable's lid"); aí quem segura o Mac é o nº 1.
+/// 3. IOKit `PreventUserIdleSystemSleep` (= `caffeinate -i`) — trava o sleep
 ///    por inatividade. Funciona em bateria. Não trava os ciclos de manutenção.
-/// 3. IOKit `PreventSystemSleep` (= `caffeinate -s`) — trava o sistema de
+/// 4. IOKit `PreventSystemSleep` (= `caffeinate -s`) — trava o sistema de
 ///    dormir de forma mais forte, incluindo os `Maintenance Sleep` /
 ///    `Sleep Service Back to Sleep`. Só é respeitado na corrente (num portátil,
-///    em bateria é ignorado — daí precisarmos também do nº 2). É a assertion
+///    em bateria é ignorado — daí precisarmos também do nº 3). É a assertion
 ///    que o NoSleep usa.
 ///
-/// Segurar (2) + (3) é o equivalente a `caffeinate -s -i`: cobre bateria e
-/// corrente. O estado é persistido: um crash, um rebuild ou o auto-updater
+/// Segurar (2) + (3) + (4) é o equivalente a `caffeinate -d -i -s`: cobre
+/// bateria e corrente. O estado é persistido: um crash, um rebuild ou o auto-updater
 /// relançam a app, e sem isso a proteção caía em silêncio a meio de uma tarefa
 /// longa. Para não deixar o Mac acordado por esquecimento, há auto-desligar ao
 /// fim de `autoOffMinutes` (default 8h) — e, se a tampa estiver fechada nessa
@@ -30,13 +35,18 @@ final class SleepController {
     /// Chamado quando o estado muda sem ser por clique (restore, auto-off).
     var onStateChange: (() -> Void)?
 
-    /// As duas assertions IOKit que seguramos em conjunto (bateria + corrente).
-    private static let assertionTypes = [
+    /// As três assertions IOKit que seguramos em conjunto (ecrã, bateria, corrente).
+    static let assertionTypes = [
+        kIOPMAssertionTypePreventUserIdleDisplaySleep,
         kIOPMAssertionTypePreventUserIdleSystemSleep,
         kIOPMAssertionTypePreventSystemSleep,
     ]
-    private var assertionIDs: [IOPMAssertionID] = []
+    /// Por tipo, para recriar só a que faltar.
+    private var assertionIDs: [String: IOPMAssertionID] = [:]
     private var autoOffTimer: Timer?
+    /// O prompt de admin do auto-desligar foi recusado: as tentativas seguintes
+    /// são só em silêncio, para não o repetir a cada 15s.
+    private var autoOffPromptDeclined = false
 
     private let activeKey = "sleepActive"
     private let activeSinceKey = "activeSince"
@@ -106,15 +116,15 @@ final class SleepController {
         return false
     }
 
-    // MARK: - IOKit power assertions (idle + system sleep)
+    // MARK: - IOKit power assertions (ecrã + idle + system sleep)
 
-    /// Segura as duas assertions (idle + system). Sem privilégios. O display
-    /// continua livre para adormecer (queremos isso de tampa fechada).
+    /// Segura as três assertions (ecrã, idle, system). Sem privilégios.
+    /// Idempotente: cria só as que faltam, por isso uma falha parcial não fica
+    /// para sempre — a próxima chamada tenta de novo. De tampa fechada o painel
+    /// pode apagar-se na mesma; o que importa aí é o Mac não dormir.
     @discardableResult
-    private func createAssertion() -> Bool {
-        guard assertionIDs.isEmpty else { return true }
-        var all = true
-        for type in Self.assertionTypes {
+    func ensureAssertions() -> Bool {
+        for type in Self.assertionTypes where assertionIDs[type] == nil {
             var id: IOPMAssertionID = 0
             let result = IOPMAssertionCreateWithName(
                 type as CFString,
@@ -122,16 +132,16 @@ final class SleepController {
                 "Sleepy: impedir sleep" as CFString,
                 &id)
             if result == kIOReturnSuccess {
-                assertionIDs.append(id)
+                assertionIDs[type] = id
             } else {
-                all = false
+                NSLog("Sleepy: falha a criar a assertion \(type) (\(result))")
             }
         }
-        return all
+        return assertionIDs.count == Self.assertionTypes.count
     }
 
-    private func releaseAssertion() {
-        for id in assertionIDs { IOPMAssertionRelease(id) }
+    func releaseAssertion() {
+        for id in assertionIDs.values { IOPMAssertionRelease(id) }
         assertionIDs.removeAll()
     }
 
@@ -166,8 +176,8 @@ final class SleepController {
         // Sem o disablesleep não há proteção de lid-close — se o utilizador
         // cancelar o prompt de admin, não fingimos que ficou ligado.
         guard setDisableSleep(true) else { return }
-        if !createAssertion() {
-            NSLog("Sleepy: falha a criar a power assertion — o idle sleep pode ocorrer")
+        if !ensureAssertions() {
+            NSLog("Sleepy: falha a criar as power assertions — o ecrã ou o Mac podem adormecer")
         }
         isActive = true
         activeSince = Date()
@@ -196,6 +206,30 @@ final class SleepController {
         autoOffTimer?.invalidate()
         autoOffTimer = nil
         isActive = false
+    }
+
+    /// Confere o estado real antes de mostrar o painel. Se o `disablesleep` caiu
+    /// (alguém correu `pmset`, reset do sistema), tenta repô-lo em silêncio;
+    /// se não der, a proteção caiu mesmo e o estado passa a dizê-lo. Caso
+    /// contrário, recria as assertions que faltem. Nunca mostra prompt.
+    func reassert() {
+        guard isActive else { return }
+        if !Self.systemSleepDisabled() {
+            _ = PrivilegedAccess.setDisableSleep(true)
+            guard Self.systemSleepDisabled() else {
+                NSLog("Sleepy: disablesleep caiu por fora e não deu para repor — desligado")
+                releaseAssertion()
+                isActive = false
+                clearPersisted()
+                autoOffTimer?.invalidate()
+                autoOffTimer = nil
+                onStateChange?()
+                return
+            }
+        }
+        if !ensureAssertions() {
+            NSLog("Sleepy: falha a repor as power assertions — o ecrã ou o Mac podem adormecer")
+        }
     }
 
     // MARK: - Hand-off from the standalone app
@@ -252,7 +286,9 @@ final class SleepController {
         // e mentir sobre o estado seria pior do que mostrá-lo.
         isActive = Self.systemSleepDisabled()
         if isActive {
-            createAssertion()
+            if !ensureAssertions() {
+                NSLog("Sleepy: falha a criar as power assertions no arranque — o ecrã ou o Mac podem adormecer")
+            }
             SleepyDefaults.store.set(true, forKey: activeKey)
             if activeSince == nil { activeSince = Date() }
             scheduleAutoOff()
@@ -292,6 +328,7 @@ final class SleepController {
     private func scheduleAutoOff() {
         autoOffTimer?.invalidate()
         autoOffTimer = nil
+        autoOffPromptDeclined = false
         guard isActive, autoOffDate != nil else { return }
         if autoOffExpired() { autoOff(); return }
         let timer = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
@@ -310,9 +347,12 @@ final class SleepController {
         NSLog("Sleepy: auto-desligar ao fim de \(Self.autoOffMinutes) min (tampa \(closed ? "fechada" : "aberta"))")
         // De tampa fechada não pode haver prompt de admin: era invisível e ficava
         // a bloquear a app. Só o caminho sem password.
-        disable(allowPrompt: !closed)
+        disable(allowPrompt: !closed && !autoOffPromptDeclined)
         guard !isActive else {
             NSLog("Sleepy: auto-desligar falhou — sem acesso sem password instalado")
+            // O timer continua: tenta de novo em silêncio a cada 15s e, ao abrir
+            // a tampa, pede admin uma vez. Recusado, não volta a pedir.
+            if !closed { autoOffPromptDeclined = true }
             return
         }
         // Repor o disablesleep não faz o Mac adormecer sozinho: o evento de
