@@ -87,7 +87,7 @@ public final class SleepyTool {
     public var menuBarImage: NSImage {
         let active = SleepController.shared.isActive
         let symbol = active ? "sun.max.fill" : "moon.zzz"
-        let description = active ? "Sleepy — sleep impedido" : "Sleepy — sleep normal"
+        let description = active ? "Sleepy — Mac e ecrã acordados" : "Sleepy — sleep normal"
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description) ?? NSImage()
         image.isTemplate = true
         return image
@@ -106,7 +106,10 @@ public final class SleepyTool {
     // MARK: - Panel
 
     /// Mirror the live system state into the panel's model before it shows.
+    /// `reassert()` first: if the block dropped behind our back it fires
+    /// `onStateChange` (wired in `start()`), which also updates the icon.
     public func panelWillShow() {
+        SleepController.shared.reassert()
         refreshMenuModel()
     }
 
@@ -151,6 +154,8 @@ public final class SleepyTool {
         guard let off = SleepController.shared.autoOffDate else { return nil }
         let fmt = DateFormatter()
         fmt.dateFormat = "HH:mm"
+        // Prazo passado com o Sleepy ainda ligado = o auto-desligar falhou.
+        if off <= Date() { return "Não desligou às \(fmt.string(from: off)) — desliga à mão" }
         return "Desliga sozinho às \(fmt.string(from: off))"
     }
 

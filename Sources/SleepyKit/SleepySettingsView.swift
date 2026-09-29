@@ -32,7 +32,7 @@ struct SleepySettingsView: View {
                 RowDivider()
                 SettingsRow(
                     title: "Desligar sozinho",
-                    subtitle: "Volta ao sleep normal ao fim deste tempo. De tampa fechada, adormece logo."
+                    subtitle: "O ecrã e o Mac voltam ao normal ao fim deste tempo. De tampa fechada, adormece logo."
                 ) {
                     Picker("", selection: Binding(
                         get: { model.autoOffMinutes },

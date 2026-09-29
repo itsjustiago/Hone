@@ -39,6 +39,12 @@ let package = Package(
             dependencies: ["ScreenlyKit"],
             path: "Tests/ScreenlyKitTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "SleepyKitTests",
+            dependencies: ["SleepyKit"],
+            path: "Tests/SleepyKitTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )

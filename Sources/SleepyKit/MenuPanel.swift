@@ -79,7 +79,7 @@ struct MenuPanel: View {
             AppIcon(systemName: model.isActive ? "sun.max.fill" : "moon.zzz.fill", size: 27)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Sleepy").font(.system(size: 15, weight: .bold))
-                Text(model.isActive ? "Sleep impedido" : "Sleep normal")
+                Text(model.isActive ? "Mac e ecrã acordados" : "Sleep normal")
                     .font(.caption2)
                     .foregroundStyle(model.isActive ? AnyShapeStyle(Brand.tint) : AnyShapeStyle(.secondary))
             }
@@ -107,7 +107,7 @@ struct MenuPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Toggle("", isOn: Binding(get: { model.isActive }, set: { _ in onToggleSleep() }))
+            Toggle("", isOn: Binding(get: { model.isActive }, set: { on in if on != model.isActive { onToggleSleep() } }))
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .tint(Brand.tint)
@@ -127,7 +127,7 @@ struct MenuPanel: View {
     private var statusLine: String {
         if !model.isActive { return "O Mac dorme normalmente." }
         if let t = model.autoOffText { return t }
-        return "O Mac fica acordado, mesmo de tampa fechada."
+        return "O ecrã não se apaga. De tampa fechada, o Mac continua acordado."
     }
 
     // MARK: - Auto-off row
