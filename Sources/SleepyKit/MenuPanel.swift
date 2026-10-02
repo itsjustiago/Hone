@@ -177,4 +177,10 @@ public enum SleepyPreview {
             showsOwnIcon: true,
             onBack: back))
     }
+
+    /// The tool's page in Settings, with the stored values.
+    @MainActor
+    public static func settings() -> AnyView {
+        AnyView(SleepySettingsView(model: SettingsModel()))
+    }
 }

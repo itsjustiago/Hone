@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Carbon.HIToolbox
+import HoneDesign
 
 /// The capture modes plus the colour picker, in the order they appear in Settings.
 let shortcutSlots: [ShortcutSlot] = CaptureMode.allCases.map { $0 as ShortcutSlot } + [PickerAction.eyedropper]
@@ -144,7 +145,8 @@ struct SettingsView: View {
                     Toggle("", isOn: Binding(
                         get: { model.saveToFolder },
                         set: { model.saveToFolder = $0; CaptureSettings.saveToFolder = $0 }))
-                        .labelsHidden().toggleStyle(.switch).tint(Brand.tint)
+                        .labelsHidden().toggleStyle(VibeToggleStyle(tint: Brand.toolColor))
+                        .accessibilityLabel("Guardar numa pasta")
                 }
                 if model.saveToFolder {
                     RowDivider()
@@ -223,10 +225,10 @@ struct SettingsView: View {
                         .font(.system(size: 13, weight: .medium, design: .rounded))
                         .frame(minWidth: 84)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(VibeButtonStyle())
                 .disabled(model.recordingKey != nil && !recording)
                 Button("Repor") { resetShortcut(slot) }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(VibeLinkButtonStyle(.secondary))
                     .disabled(model.recordingKey != nil)
             }
         }

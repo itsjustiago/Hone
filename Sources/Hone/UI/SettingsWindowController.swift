@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import HoneDesign
 
 /// Which page the Settings sidebar shows. Lives outside `SettingsView` so the
 /// popover can pick a tool's page even though the window is built once and
@@ -48,11 +49,14 @@ final class SettingsWindowController {
         let hosting = NSHostingController(rootView: root)
 
         let window = NSWindow(contentViewController: hosting)
-        window.setContentSize(NSSize(width: 620, height: 460))
+        window.setContentSize(NSSize(width: SettingsLayout.size.width, height: SettingsLayout.size.height))
         window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
         window.title = "Definições do Hone"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        // Black like the popover, whatever the system appearance is.
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(VibeColor.canvas)
         window.isReleasedWhenClosed = false
         window.center()
         self.window = window

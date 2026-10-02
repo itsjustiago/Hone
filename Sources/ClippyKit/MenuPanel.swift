@@ -176,4 +176,10 @@ public enum ClippyPreview {
         content.onBack = back
         return AnyView(content)
     }
+
+    /// The tool's page in Settings, with the stored values.
+    @MainActor
+    public static func settings() -> AnyView {
+        AnyView(SettingsController().makeView())
+    }
 }

@@ -336,4 +336,16 @@ public enum StatsPreview {
         return AnyView(StatsPanel(monitor: monitor, state: state, processes: processes,
                                   onSettings: {}, onBack: back, onToggleOwnIcon: {}))
     }
+
+    /// The tool's page in Settings, with throwaway values.
+    @MainActor
+    public static func settings() -> AnyView {
+        let suite = "pt.hone.stats-preview"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        let settings = StatsSettings(store: defaults)
+        let monitor = SystemMonitor(settings: settings)
+        monitor.unavailable = [:]
+        return AnyView(StatsSettingsView(settings: settings, monitor: monitor))
+    }
 }

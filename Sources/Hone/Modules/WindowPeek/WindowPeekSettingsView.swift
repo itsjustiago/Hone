@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 struct WindowPeekSettingsView: View {
     @Bindable var module: WindowPeekModule
@@ -53,7 +54,7 @@ private struct PermissionStatusRow: View {
             if granted {
                 Label("Concedida", systemImage: "checkmark.circle.fill")
                     .font(.callout)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(VibeColor.success)
                     .labelStyle(.titleAndIcon)
             } else {
                 Button("Conceder…", action: action)

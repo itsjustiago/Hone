@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 struct AltTabSettingsView: View {
     @Bindable var module: AltTabModule
@@ -86,7 +87,7 @@ struct AltTabSettingsView: View {
         if granted {
             Label("Concedida", systemImage: "checkmark.circle.fill")
                 .font(.callout)
-                .foregroundStyle(.green)
+                .foregroundStyle(VibeColor.success)
                 .labelStyle(.titleAndIcon)
         } else {
             Button("Conceder…", action: action)

@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Carbon.HIToolbox
+import HoneDesign
 
 final class SettingsModel: ObservableObject {
     @Published var shortcutDisplay = Shortcut.display
@@ -95,10 +96,10 @@ struct SettingsView: View {
                                 .font(.system(size: 13, weight: .medium, design: .rounded))
                                 .frame(minWidth: 92)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(VibeButtonStyle())
                         .disabled(model.recording)
                         Button("Repor", action: resetShortcut)
-                            .buttonStyle(.borderless)
+                            .buttonStyle(VibeLinkButtonStyle(.secondary))
                             .disabled(model.recording)
                     }
                 }

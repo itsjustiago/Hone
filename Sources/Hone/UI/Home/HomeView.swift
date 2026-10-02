@@ -287,7 +287,7 @@ private struct ToolPill: View {
     private var border: Color {
         let lit = tool.isLive || tool.isPaused || (tool.alert != nil && tool.isEnabled)
         if isSelected {
-            return lit ? tool.tint.vibeMix(over: VibeColor.card, amount: 0.42) : Color(vibeHex: 0x2E3035)
+            return lit ? tool.tint.vibeMix(over: VibeColor.card, amount: 0.42) : VibeColor.selectedBorder
         }
         if lit && !tool.isMomentary { return tool.tint.vibeMix(over: VibeColor.card, amount: 0.17) }
         return VibeColor.cardBorder

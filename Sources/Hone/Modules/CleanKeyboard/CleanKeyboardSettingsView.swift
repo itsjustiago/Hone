@@ -7,8 +7,7 @@ struct CleanKeyboardSettingsView: View {
 
     var body: some View {
         @Bindable var settings = module.settings
-        // White tool colour: native switches need a visible tint.
-        let tint = module.tint.vibeControlTint
+        let tint = module.tint
 
         VStack(alignment: .leading, spacing: 18) {
             SettingsSection(title: "Teclas") {
@@ -26,7 +25,7 @@ struct CleanKeyboardSettingsView: View {
                     if permissions.isAccessibilityTrusted {
                         Label("Concedida", systemImage: "checkmark.circle.fill")
                             .font(.callout)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(VibeColor.success)
                             .labelStyle(.titleAndIcon)
                     } else {
                         Button("Conceder…") { permissions.openAccessibilitySettings() }
