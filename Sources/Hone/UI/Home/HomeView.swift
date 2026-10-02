@@ -16,7 +16,6 @@ struct PopoverShell<Content: View>: View {
             topBar
             content
         }
-        // Paint under the popover's arrow too; the content keeps to the safe area.
         .background(VibeColor.canvas.ignoresSafeArea())
         .environment(\.colorScheme, .dark)
     }
@@ -48,8 +47,9 @@ struct PopoverShell<Content: View>: View {
     }
 }
 
-/// Hone's home: attention strips, a hero card for the selected tool and a grid
-/// of pills, one per tool. Pure values in, closures out (see `HomeModels`).
+/// Hone's home: attention strips, a hero card for the selected tool and the
+/// tool pills in two groups: the tweaks that are simply on or off, then the
+/// dedicated apps. Pure values in, closures out (see `HomeModels`).
 struct HomeView: View {
     let tools: [HomeTool]
     let notices: [HomeNotice]
@@ -71,7 +71,12 @@ struct HomeView: View {
             if let selected {
                 HeroCard(tool: selected, actions: actions)
             }
-            pillsCard
+            ForEach(groups, id: \.title) { group in
+                VStack(alignment: .leading, spacing: 0) {
+                    VibeSectionLabel(group.title)
+                    pillsCard(group.tools)
+                }
+            }
         }
         .padding(.horizontal, VibeSpacing.outer)
         .padding(.bottom, VibeSpacing.outer)
@@ -90,8 +95,15 @@ struct HomeView: View {
         }
     }
 
-    /// Two columns, in the manager's order (momentary tools last).
-    private var pillsCard: some View {
+    /// Tweaks first, then apps; each keeps the manager's order. A group with
+    /// nothing in it is left out.
+    private var groups: [(title: String, tools: [HomeTool])] {
+        [("Ajustes", tools.filter { !$0.isApp }), ("Apps", tools.filter(\.isApp))]
+            .filter { !$0.tools.isEmpty }
+    }
+
+    /// Two columns; a lone last pill takes the full row.
+    private func pillsCard(_ tools: [HomeTool]) -> some View {
         let rows = stride(from: 0, to: tools.count, by: 2).map { Array(tools[$0..<min($0 + 2, tools.count)]) }
         return Grid(horizontalSpacing: 6, verticalSpacing: 6) {
             ForEach(rows, id: \.first?.id) { row in
@@ -99,8 +111,8 @@ struct HomeView: View {
                     ForEach(row) { tool in
                         ToolPill(tool: tool, isSelected: tool.id == selected?.id,
                                  onSelect: { select(tool.id) }, actions: actions)
+                            .gridCellColumns(row.count == 1 ? 2 : 1)
                     }
-                    if row.count == 1 { Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
                 }
             }
         }
