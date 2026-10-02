@@ -128,10 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         pop.animates = true
         pop.delegate = self
         pop.contentViewController = hosting
-        // Hone's panels are dark by design, and the black canvas runs under the
-        // arrow (the SwiftUI content itself stays inside the safe area).
+        // Hone's panels are dark by design. Not `hasFullSizeContent`: the binary is
+        // stamped with the macOS 14 SDK, so AppKit lays that content out at its own
+        // size in the popover's corner and leaves a band of grey material on two sides.
         pop.appearance = NSAppearance(named: .darkAqua)
-        pop.hasFullSizeContent = true
         popover = pop
     }
 

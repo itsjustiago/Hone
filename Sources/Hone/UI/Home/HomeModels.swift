@@ -36,6 +36,10 @@ struct HomeTool: Identifiable {
     let hasPanel: Bool
     let alert: Alert?
 
+    /// A dedicated app (an embedded Kit, or a one-shot like Limpar Teclado)
+    /// rather than a background tweak that is simply on or off.
+    var isApp: Bool { hasPanel || isMomentary }
+
     var isPaused: Bool {
         if case .paused = alert { return true }
         return false
