@@ -1,0 +1,207 @@
+import AppKit
+
+/// How alarming a value looks when "colour by load" is on.
+enum LoadTone: Hashable {
+    case normal, warning, critical
+
+    /// CPU, GPU and fans: orange from 60 %, red from 85 %.
+    static func forLoad(_ fraction: Double) -> LoadTone {
+        fraction >= 0.85 ? .critical : fraction >= 0.60 ? .warning : .normal
+    }
+
+    /// Memory follows the system's own pressure level instead of the used share.
+    static func forPressure(_ pressure: MemoryPressure) -> LoadTone {
+        switch pressure {
+        case .normal: return .normal
+        case .warning: return .warning
+        case .critical: return .critical
+        }
+    }
+}
+
+/// Everything that determines what the menu bar image looks like. Two equal
+/// specs draw the same pixels, so it doubles as the cache key and as the test
+/// for "did anything visible change".
+struct MenuBarSpec: Hashable {
+    struct Item: Hashable {
+        var metric: Metric
+        var text: String
+        var tone: LoadTone
+    }
+
+    var items: [Item]
+    var showLabels: Bool
+    var colorize: Bool
+
+    /// Monochrome (system-tinted) unless "colour by load" is on *and* something
+    /// is actually in alert.
+    var isTemplate: Bool { !(colorize && items.contains { $0.tone != .normal }) }
+
+    var accessibilityText: String {
+        guard !items.isEmpty else { return "Stats" }
+        return items.map { item in
+            item.metric == .fan ? "\(item.metric.spokenName) \(item.text) rpm" : "\(item.metric.spokenName) \(item.text)"
+        }.joined(separator: ", ")
+    }
+}
+
+/// Draws the menu bar item: small mini widgets side by side, label above value
+/// (or, without labels, a small glyph before the value). Template
+/// (system-tinted) unless something is in alert with "colour by load" on.
+enum MenuBarRenderer {
+    static let spacing: CGFloat = 6
+    private static let glyphGap: CGFloat = 2
+    private static let labelAlpha: CGFloat = 0.70
+
+    /// Metric labels and the "rpm" unit share one font.
+    private static let labelFont = NSFont.systemFont(ofSize: 8, weight: .semibold)
+    private static func valueFont(showLabels: Bool, weight: NSFont.Weight = .medium) -> NSFont {
+        NSFont.monospacedDigitSystemFont(ofSize: showLabels ? 12 : 13, weight: weight)
+    }
+
+    private static func labelAttributes(color: NSColor) -> [NSAttributedString.Key: Any] {
+        [.font: labelFont, .kern: 0.5, .foregroundColor: color]
+    }
+
+    private static func width(of string: String, attributes: [NSAttributedString.Key: Any]) -> CGFloat {
+        NSAttributedString(string: string, attributes: attributes).size().width
+    }
+
+    /// 9 pt template glyph per metric (nil when no candidate symbol exists).
+    private static let glyphs: [Metric: NSImage] = {
+        var result: [Metric: NSImage] = [:]
+        for metric in Metric.allCases {
+            guard let name = metric.glyphSymbol,
+                  let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                    .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold)) else { continue }
+            result[metric] = symbol
+        }
+        return result
+    }()
+
+    /// Width of what precedes the value in the label-less layout.
+    private static func prefixWidth(_ metric: Metric) -> CGFloat {
+        if let glyph = glyphs[metric] { return ceil(glyph.size.width) + glyphGap }
+        return ceil(width(of: metric.shortLabel, attributes: labelAttributes(color: .black))) + glyphGap
+    }
+
+    /// Widest value box: measured with the heaviest weight (alerts are semibold).
+    private static func valueBoxWidth(_ metric: Metric, showLabels: Bool) -> CGFloat {
+        ceil(width(of: metric.widthSample, attributes: [.font: valueFont(showLabels: showLabels, weight: .semibold)]))
+    }
+
+    private static func unitWidth(_ metric: Metric) -> CGFloat {
+        metric.unit.map { glyphGap + ceil(width(of: $0, attributes: [.font: labelFont])) } ?? 0
+    }
+
+    /// Fixed per metric and label setting, measured with the widest text it can
+    /// show, so the item never changes width from one tick to the next.
+    static func widgetWidth(metric: Metric, showLabels: Bool) -> CGFloat {
+        let value = valueBoxWidth(metric, showLabels: showLabels)
+        if showLabels {
+            return max(value, ceil(width(of: metric.shortLabel, attributes: labelAttributes(color: .black))))
+        }
+        return prefixWidth(metric) + value + unitWidth(metric)
+    }
+
+    static func imageSize(for spec: MenuBarSpec, height: CGFloat) -> NSSize {
+        let widths = spec.items.map { widgetWidth(metric: $0.metric, showLabels: spec.showLabels) }
+        let total = widths.reduce(0, +) + spacing * CGFloat(max(0, widths.count - 1))
+        return NSSize(width: total, height: height)
+    }
+
+    static func image(for spec: MenuBarSpec, height: CGFloat = NSStatusBar.system.thickness) -> NSImage {
+        guard !spec.items.isEmpty else {
+            let fallback = NSImage(systemSymbolName: "cpu", accessibilityDescription: spec.accessibilityText) ?? NSImage()
+            fallback.isTemplate = true
+            return fallback
+        }
+        let template = spec.isTemplate
+        let image = NSImage(size: imageSize(for: spec, height: height), flipped: false) { _ in
+            var x: CGFloat = 0
+            for item in spec.items {
+                let w = widgetWidth(metric: item.metric, showLabels: spec.showLabels)
+                draw(item, in: NSRect(x: x, y: 0, width: w, height: height), spec: spec, template: template)
+                x += w + spacing
+            }
+            return true
+        }
+        image.isTemplate = template
+        image.accessibilityDescription = spec.accessibilityText
+        return image
+    }
+
+    /// Alert colours, darker in light mode for contrast on the bar.
+    private static func color(for tone: LoadTone, dark: Bool) -> NSColor {
+        switch tone {
+        case .normal: return .labelColor
+        case .warning: return dark ? .systemOrange : NSColor(srgbRed: 0.60, green: 0.27, blue: 0, alpha: 1)
+        case .critical: return dark ? .systemRed : NSColor(srgbRed: 0.72, green: 0.06, blue: 0.08, alpha: 1)
+        }
+    }
+
+    private static func tinted(_ image: NSImage, _ color: NSColor) -> NSImage {
+        NSImage(size: image.size, flipped: false) { rect in
+            image.draw(in: rect)
+            color.setFill()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+    }
+
+    // Colours are resolved inside the drawing handler, so they follow the
+    // appearance of whatever the image is drawn onto.
+    private static func draw(_ item: MenuBarSpec.Item, in rect: NSRect, spec: MenuBarSpec, template: Bool) {
+        let dark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let valueColor: NSColor
+        let labelColor: NSColor
+        if template {
+            // Template: only the alpha counts; the system supplies the colour.
+            valueColor = NSColor.black
+            labelColor = NSColor.black.withAlphaComponent(labelAlpha)
+        } else {
+            valueColor = color(for: item.tone, dark: dark)
+            labelColor = NSColor.labelColor.withAlphaComponent(labelAlpha)
+        }
+
+        let font = valueFont(showLabels: spec.showLabels, weight: item.tone == .critical && !template ? .semibold : .medium)
+        let value = NSAttributedString(string: item.text, attributes: [.font: font, .foregroundColor: valueColor])
+        let valueWidth = value.size().width
+        let box = valueBoxWidth(item.metric, showLabels: spec.showLabels)
+
+        // Baselines from cap heights, so the pair is centred on the digits
+        // rather than on the font's (taller) line boxes.
+        if spec.showLabels {
+            let gap: CGFloat = 2
+            let block = labelFont.capHeight + gap + font.capHeight
+            let baseline = ((rect.height - block) / 2).rounded(.down)
+            let label = NSAttributedString(string: item.metric.shortLabel, attributes: labelAttributes(color: labelColor))
+            // The trailing kern adds space after the last glyph; centre without it.
+            let labelWidth = label.size().width - 0.5
+            label.draw(at: NSPoint(x: rect.minX + (rect.width - labelWidth) / 2,
+                                   y: baseline + font.capHeight + gap + labelFont.descender))
+            value.draw(at: NSPoint(x: rect.minX + (rect.width - valueWidth) / 2, y: baseline + font.descender))
+            return
+        }
+
+        let baseline = ((rect.height - font.capHeight) / 2).rounded(.down)
+        var x = rect.minX
+        if let glyph = glyphs[item.metric] {
+            let tintedGlyph = tinted(glyph, labelColor)
+            let size = tintedGlyph.size
+            tintedGlyph.draw(in: NSRect(x: x, y: baseline + (font.capHeight - size.height) / 2,
+                                        width: size.width, height: size.height))
+        } else {
+            let label = NSAttributedString(string: item.metric.shortLabel, attributes: labelAttributes(color: labelColor))
+            label.draw(at: NSPoint(x: x, y: baseline + labelFont.descender))
+        }
+        x += prefixWidth(item.metric)
+        // With a unit the value hugs it (right-aligned in its fixed box).
+        let valueX = item.metric.unit == nil ? x + (box - valueWidth) / 2 : x + box - valueWidth
+        value.draw(at: NSPoint(x: valueX, y: baseline + font.descender))
+        if let unit = item.metric.unit {
+            let text = NSAttributedString(string: unit, attributes: [.font: labelFont, .foregroundColor: labelColor])
+            text.draw(at: NSPoint(x: x + box + glyphGap, y: baseline + labelFont.descender))
+        }
+    }
+}
