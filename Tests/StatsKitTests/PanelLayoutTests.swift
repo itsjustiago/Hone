@@ -57,15 +57,16 @@ final class PanelLayoutTests: XCTestCase {
 
     func testIdealHeightPerTab() {
         XCTAssertEqual(idealHeight(.cpu), idealHeight(.memory), "CPU and Memory share a height")
-        XCTAssertLessThan(idealHeight(.gpu), idealHeight(.cpu))
+        XCTAssertEqual(idealHeight(.gpu), idealHeight(.cpu), "GPU has a list too and shares the height")
+        XCTAssertLessThan(idealHeight(.fan), idealHeight(.cpu), "fans keep their natural height")
     }
 
     func testPanelStaysPinnedToTheTop() throws {
-        let tall = idealHeight(.cpu), short = idealHeight(.gpu)
-        let reference = try iconTop(.gpu, frameHeight: short)
+        let tall = idealHeight(.cpu), short = idealHeight(.fan)
+        let reference = try iconTop(.fan, frameHeight: short)
         XCTAssertGreaterThan(reference, 0)
         // Host taller than the content (popover growing)…
-        XCTAssertEqual(try iconTop(.gpu, frameHeight: tall), reference)
+        XCTAssertEqual(try iconTop(.fan, frameHeight: tall), reference)
         // …and shorter than the content (popover shrinking): clipped at the bottom, not the top.
         XCTAssertEqual(try iconTop(.cpu, frameHeight: short), reference)
     }

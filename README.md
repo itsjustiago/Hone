@@ -67,8 +67,10 @@ O Stats mostra **CPU, memória, GPU e ventoinhas (rpm)** em direto na barra de m
 como widgets pequenos lado a lado (etiqueta por cima do valor, ou um símbolo antes
 do valor) num único ícone. Clicar abre um painel com o detalhe de cada um —
 histórico, utilizador/sistema/inativo e núcleos, pressão e swap da memória, GPU por
-componente, rpm de cada ventoinha — e os 5 processos que mais gastam (CPU e
-memória).
+componente, rpm de cada ventoinha — e os 5 que mais gastam: "Processos
+principais" nos separadores CPU e Memória, e "Apps a usar a GPU" no separador GPU,
+com a percentagem de tempo de GPU de cada app (várias janelas e processos auxiliares
+da mesma app, como os "Helper" do Chrome, contam numa só linha).
 
 Substitui a app [Stats](https://github.com/exelban/Stats) e vem **desligado por
 omissão**. Ao ligá-lo, o Hone fecha a app Stats antiga (`eu.exelban.Stats`); se
@@ -83,7 +85,9 @@ próprio visível ou com o painel aberto.
 
 Está escrito de raiz com APIs do sistema — `host_statistics` e `sysctl` para CPU e
 memória, IOKit para a GPU, o SMC (não documentado, **só leitura**) para as
-ventoinhas e `/usr/bin/top` para os processos. Não pede permissões nem captura o
+ventoinhas e `/usr/bin/top` para os processos de CPU e memória. O tempo de GPU por
+app vem dos clientes do acelerador no IOKit (`AppUsage.accumulatedGPUTime`, o mesmo
+valor da coluna "Tempo de GPU" do Monitor de Atividade), sem root. Não pede permissões nem captura o
 ecrã. As ventoinhas nunca são controladas, e a métrica aparece desligada em Macs
 sem ventoinhas.
 
