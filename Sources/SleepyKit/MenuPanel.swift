@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import HoneDesign
 
 /// Live state the menu-bar panel reflects. Populated by `SleepyTool` right
 /// before the panel shows so the toggle, auto-off and permissions stay fresh.
@@ -14,7 +15,8 @@ final class SleepMenuModel: ObservableObject {
 }
 
 /// The Sleepy panel, shown either from its own menu-bar icon or inside Hone's
-/// popover. App-level rows (quit, updates, version) belong to Hone now.
+/// popover. App-level rows (quit, updates, version) belong to Hone now. Reads
+/// the live model and hands plain values to `MenuPanelContent`.
 struct MenuPanel: View {
     @ObservedObject var model: SleepMenuModel
 
@@ -26,107 +28,110 @@ struct MenuPanel: View {
     var onBack: (() -> Void)?
     var onToggleOwnIcon: () -> Void
 
-    private let panelWidth: CGFloat = 300
-    private let edge: CGFloat = 8
-    private var contentInset: CGFloat { 14 }
+    var body: some View {
+        MenuPanelContent(
+            isActive: model.isActive,
+            autoOffText: model.autoOffText,
+            autoOffMinutes: model.autoOffMinutes,
+            passwordlessInstalled: model.passwordlessInstalled,
+            showsOwnIcon: model.showsOwnIcon,
+            onBack: onBack,
+            onToggleSleep: onToggleSleep,
+            onEnablePasswordless: onEnablePasswordless,
+            onChangeAutoOff: onChangeAutoOff,
+            onSettings: onSettings,
+            onToggleOwnIcon: onToggleOwnIcon)
+    }
+}
+
+/// Values in, closures out, so it renders offscreen from fake data.
+struct MenuPanelContent: View {
+    let isActive: Bool
+    let autoOffText: String?
+    let autoOffMinutes: Int
+    let passwordlessInstalled: Bool
+    let showsOwnIcon: Bool
+    var onBack: (() -> Void)?
+    var onToggleSleep: () -> Void = {}
+    var onEnablePasswordless: () -> Void = {}
+    var onChangeAutoOff: (Int) -> Void = { _ in }
+    var onSettings: () -> Void = {}
+    var onToggleOwnIcon: () -> Void = {}
+
+    private var tint: Color { VibeToolColor.sleepy }
+    private let blobHeight: CGFloat = 50
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, contentInset)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
-
+        VStack(spacing: VibeSpacing.cardGap) {
             heroCard
-                .padding(.horizontal, edge)
 
-            if !model.passwordlessInstalled {
-                permissionBanner
-                    .padding(.horizontal, edge)
-                    .padding(.top, 8)
+            if !passwordlessInstalled {
+                VibeNoticeStrip("Ligar sem password", color: VibeColor.warning,
+                                actionTitle: "Ativar…", action: onEnablePasswordless)
+                    .help("Instala uma regra restrita para não pedir password a cada toggle.")
             }
 
-            Divider()
-                .padding(.horizontal, contentInset)
-                .padding(.vertical, 8)
-
-            VStack(spacing: 1) {
+            VStack(alignment: .leading, spacing: 0) {
                 autoOffRow
-                MenuButton(action: onSettings) {
-                    MenuActionLabel(title: "Definições…", shortcut: "",
-                                    systemImage: "gearshape")
-                }
+                VibeMenuRow("Definições…", systemImage: "gearshape", action: onSettings)
             }
-            .padding(.horizontal, edge)
-            .padding(.bottom, 8)
+            .vibeMenuCard()
         }
-        .frame(width: panelWidth)
-        .background(VisualEffectBackground())
-        // Keep controls (switch tint) fully coloured even when the popover
-        // window isn't key — otherwise the .switch style desaturates to grey.
+        .vibePanelLayout()
+        .vibePanelBackground()
+        // Keep controls (the picker) fully coloured even when the popover
+        // window isn't key.
         .environment(\.controlActiveState, .active)
     }
 
-    // MARK: - Header
+    // MARK: - Hero
 
-    private var header: some View {
-        HStack(spacing: 11) {
-            if let onBack {
-                HeaderIconButton(systemName: "chevron.left", help: "Voltar ao Hone", action: onBack)
-                    .padding(.leading, -6)
-                    .padding(.trailing, -4)
-            }
-            AppIcon(systemName: model.isActive ? "sun.max.fill" : "moon.zzz.fill", size: 27)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Sleepy").font(.system(size: 15, weight: .bold))
-                Text(model.isActive ? "Mac e ecrã acordados" : "Sleep normal")
-                    .font(.caption2)
-                    .foregroundStyle(model.isActive ? AnyShapeStyle(Brand.tint) : AnyShapeStyle(.secondary))
-            }
-            Spacer(minLength: 0)
-            HeaderIconButton(
-                systemName: model.showsOwnIcon ? "menubar.arrow.down.rectangle" : "menubar.arrow.up.rectangle",
-                help: model.showsOwnIcon
-                    ? "Tirar o ícone próprio (continua no menu do Hone)"
-                    : "Separar num ícone próprio na barra de menus",
-                action: onToggleOwnIcon)
-        }
-    }
-
-    // MARK: - Hero toggle
-
+    /// Same card as Hone's home hero: the mascot is the state, the switch sits
+    /// in the corner next to the own-icon button.
     private var heroCard: some View {
-        HStack(spacing: 12) {
-            AppIcon(systemName: "bolt.fill", size: 36)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Impedir sleep")
-                    .font(.system(size: 14, weight: .semibold))
+        HStack(alignment: .center, spacing: 18) {
+            Blob(color: tint, mood: isActive ? .awake : .asleep, height: blobHeight, glow: isActive)
+                .frame(width: blobHeight * 1.3, height: blobHeight)
+                .padding(.leading, 6)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 7) {
+                    if let onBack { VibeBackButton(action: onBack).padding(.leading, -4) }
+                    Text("Sleepy")
+                        .font(VibeFont.title)
+                        .foregroundStyle(VibeColor.text1)
+                }
+                .padding(.trailing, 70)
+                VibeStatusLine(isActive ? "Mac e ecrã acordados" : "Sleep normal",
+                               color: isActive ? tint : VibeColor.dotOff)
                 Text(statusLine)
-                    .font(.caption)
-                    .foregroundStyle(model.isActive ? AnyShapeStyle(Brand.tint) : AnyShapeStyle(.secondary))
+                    .font(VibeFont.body)
+                    .foregroundStyle(VibeColor.text3)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 8)
-            Toggle("", isOn: Binding(get: { model.isActive }, set: { on in if on != model.isActive { onToggleSleep() } }))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(Brand.tint)
-                .controlSize(.large)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
-        .background(
-            model.isActive ? AnyShapeStyle(Brand.tint.opacity(0.10)) : AnyShapeStyle(.primary.opacity(0.04)),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(model.isActive ? Brand.tint.opacity(0.28) : .primary.opacity(0.07))
-        )
-        .animation(.easeInOut(duration: 0.18), value: model.isActive)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 72)
+        .vibeCard(padding: VibeSpacing.cardPadding)
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 8) {
+                VibeOwnIconButton(showsOwnIcon: showsOwnIcon, action: onToggleOwnIcon)
+                Toggle("Impedir sleep", isOn: Binding(
+                    get: { isActive },
+                    set: { on in if on != isActive { onToggleSleep() } }))
+                    .toggleStyle(VibeToggleStyle(tint: tint))
+                    .accessibilityLabel("Impedir sleep")
+            }
+            .padding(VibeSpacing.cardPadding)
+        }
+        .animation(VibeMotion.standard, value: isActive)
     }
 
     private var statusLine: String {
-        if !model.isActive { return "O Mac dorme normalmente." }
-        if let t = model.autoOffText { return t }
+        if !isActive { return "O Mac dorme normalmente." }
+        if let autoOffText { return autoOffText }
         return "O ecrã não se apaga. De tampa fechada, o Mac continua acordado."
     }
 
@@ -135,139 +140,41 @@ struct MenuPanel: View {
     /// A duração é a definição que se mexe com frequência, por isso vive aqui e
     /// não dentro das Definições — o "Iniciar no login" ficou lá, é de uma vez só.
     private var autoOffRow: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 10) {
             Image(systemName: "timer")
-                .font(.system(size: 14))
-                .frame(width: 27)
-                .foregroundStyle(.secondary)
-            Text("Desligar sozinho").font(.system(size: 13))
+                .font(.system(size: 13))
+                .frame(width: 18)
+                .foregroundStyle(VibeColor.text3)
+            Text("Desligar sozinho")
+                .font(VibeFont.body)
+                .foregroundStyle(VibeColor.text2)
             Spacer(minLength: 8)
-            Picker("", selection: Binding(get: { model.autoOffMinutes },
-                                          set: { onChangeAutoOff($0) })) {
+            Picker("Desligar sozinho", selection: Binding(get: { autoOffMinutes },
+                                                          set: { onChangeAutoOff($0) })) {
                 ForEach(SleepController.autoOffOptions) { Text($0.short).tag($0.minutes) }
             }
             .labelsHidden()
             .controlSize(.small)
             .fixedSize()
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
-    }
-
-    // MARK: - Banners
-
-    private var permissionBanner: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Image(systemName: "lock.shield.fill")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Ligar sem password")
-                    .font(.subheadline.weight(.medium))
-                Text("Instala uma regra restrita para não pedir password a cada toggle.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Ativar…", action: onEnablePasswordless)
-                    .buttonStyle(.link)
-                    .font(.caption)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(.horizontal, 8)
+        .frame(minHeight: 30)
     }
 }
 
-// MARK: - Menu action label + button style
+// MARK: - Preview fixtures
 
-/// Small circular glyph button for the panel header (back, separate/join).
-/// Same spec as the gear on Hone's tool rows: 24 pt circle, quiet at rest, a
-/// soft `.primary` pill only under the pointer.
-struct HeaderIconButton: View {
-    let systemName: String
-    let help: String
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(hovering ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                .frame(width: 24, height: 24)
-                .background(hovering ? AnyShapeStyle(.primary.opacity(0.08)) : AnyShapeStyle(.clear),
-                            in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(help)
-        .accessibilityLabel(help)
-    }
-}
-
-struct MenuActionLabel: View {
-    let title: String
-    let shortcut: String
-    let systemImage: String
-
-    var body: some View {
-        HStack(spacing: 11) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14))
-                .frame(width: 27)
-                .foregroundStyle(.secondary)
-            Text(title).font(.system(size: 13))
-            Spacer(minLength: 8)
-            if !shortcut.isEmpty {
-                Text(shortcut)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .contentShape(Rectangle())
-    }
-}
-
-/// Row button with native-menu hover highlight, matching Facet.
-struct MenuButton<Label: View>: View {
-    let action: () -> Void
-    @ViewBuilder var label: Label
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            label
-                .padding(.horizontal, 6)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(hovering && isEnabled ? AnyShapeStyle(Brand.tint.opacity(0.16)) : AnyShapeStyle(.clear),
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-    }
-}
-
-/// The system menu material (translucent vibrancy), matching Facet's
-/// `MenuBarExtra(.window)` background so all three menus share one look.
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .menu
-    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material
-        view.blendingMode = blendingMode
+/// Entry point for Hone's offscreen preview renders (fake values, no pmset).
+public enum SleepyPreview {
+    @MainActor
+    public static func panel(isActive: Bool, passwordlessInstalled: Bool = true,
+                             back: (() -> Void)? = nil) -> AnyView {
+        AnyView(MenuPanelContent(
+            isActive: isActive,
+            autoOffText: isActive ? "Desliga sozinho às 23:40" : nil,
+            autoOffMinutes: 60,
+            passwordlessInstalled: passwordlessInstalled,
+            showsOwnIcon: true,
+            onBack: back))
     }
 }

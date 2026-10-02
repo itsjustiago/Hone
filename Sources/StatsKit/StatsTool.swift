@@ -137,7 +137,6 @@ public final class StatsTool {
 }
 
 /// The panel plus what must not be part of it when rendered off-screen: the
-/// vibrancy (an `NSViewRepresentable`, which `ImageRenderer` can't draw), the
 /// live process loop and the active control state.
 private struct PanelHost: View {
     let monitor: SystemMonitor
@@ -175,7 +174,6 @@ private struct PanelHost: View {
     var body: some View {
         StatsPanel(monitor: monitor, state: state, processes: processes,
                    onSettings: onSettings, onBack: onBack, onToggleOwnIcon: onToggleOwnIcon)
-            .background(VisualEffectBackground())
             // Keep controls fully coloured even when the popover window isn't key.
             .environment(\.controlActiveState, .active)
             .onAppear { monitor.panelAppeared() }

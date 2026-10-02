@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// The floating card shown while the keyboard is locked: a keyboard badge and the
 /// status text on the left, a square unlock button on the right. It floats in the
@@ -63,7 +64,8 @@ struct CleanKeyboardOverlayView: View {
             .overlay(alignment: .bottomTrailing) {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(tint)
+                    // On the white badge a light tint would vanish.
+                    .foregroundStyle(tint.vibeIsLight ? VibeColor.inkOnLight : tint)
                     .padding(4)
                     .background(.white, in: Circle())
                     .overlay(Circle().strokeBorder(.black.opacity(0.06)))
@@ -89,7 +91,7 @@ private struct UnlockButton: View {
                 Text("Desbloquear")
                     .font(.system(size: 11.5, weight: .semibold))
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(tint.vibeInk)
             .frame(width: 90, height: 90)
             .background(
                 RoundedRectangle(cornerRadius: 17, style: .continuous)

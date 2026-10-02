@@ -1,16 +1,17 @@
 import SwiftUI
 import AppKit
+import HoneDesign
 
-/// Which embedded tool's panel the Hone popover shows in place of the tool
-/// list. Owned by `AppDelegate` so closing the popover can reset it.
+/// Which embedded tool's panel the Hone popover shows in place of the home.
+/// Owned by `AppDelegate` so closing the popover can reset it.
 @MainActor
 @Observable
 final class PopoverNavigation {
     var toolID: String?
 }
 
-/// The panel shown from the menu-bar icon. Hosted in an `NSPopover` (arrow +
-/// smooth grow animation), matching Clippy & Sleepy.
+/// The panel shown from the menu-bar icon, hosted in an `NSPopover`. Bridges
+/// the live `ModuleManager` to the value-driven `PopoverShell` + `HomeView`.
 struct MenuBarContent: View {
     @Bindable var manager: ModuleManager
     var updateChecker: UpdateChecker
@@ -21,40 +22,50 @@ struct MenuBarContent: View {
     /// Opens Settings on the given tool's page; `nil` keeps the current page.
     var openSettings: (String?) -> Void = { _ in }
     @State private var permissions = Permissions.shared
+    /// The tool on the hero card, remembered across launches.
+    @AppStorage("home.selectedTool") private var selectedToolID = ""
 
-    // A single content inset used everywhere so every row, the header, the
-    // dividers and the footer share the same left/right margin. Hover highlights
-    // sit `highlightInset` from the edge and pad back to the same content line.
-    private let panelWidth: CGFloat = 300
-    private let edge: CGFloat = 8
-    private var contentInset: CGFloat { 14 } // edge (8) + inner pad (6)
-
-    private var needsPermission: Bool {
-        manager.modules.contains { manager.isWaitingOnPermission($0) }
+    /// Embedded tools whose panel can be shown right now (on, not paused).
+    private var openableTools: [any MenuBarTool] {
+        manager.menuBarTools.filter { $0.isEnabled && !manager.isPaused($0) }
     }
 
-    // Switch tools first, momentary (one-shot) tools grouped below a divider.
-    private var switchModules: [any HoneModule] { manager.modules.filter { !$0.isMomentary } }
-    private var momentaryModules: [any HoneModule] { manager.modules.filter { $0.isMomentary } }
+    /// The tool whose panel is on screen; falls back to the home when it was
+    /// switched off or paused meanwhile.
+    private var shownTool: (any MenuBarTool)? {
+        guard let id = navigation.toolID else { return nil }
+        return openableTools.first { $0.id == id }
+    }
 
     var body: some View {
-        if let id = navigation.toolID,
-           let tool = manager.menuBarTools.first(where: { $0.id == id }),
-           tool.isEnabled, !manager.isPaused(tool) {
-            // Drilled into a tool: its own panel, with a back chevron to the list.
-            // The popover follows the new preferred size on its own.
-            tool.makeMenuPanel(
-                back: { navigation.toolID = nil },
-                dismiss: { dismissToolPanels(tool.id) },
-                openSettings: { openSettings(tool.id) },
-                toggleOwnIcon: { manager.setShowsOwnMenuBarIcon(!tool.showsOwnMenuBarIcon, for: tool) })
-                .background(backShortcut)
-        } else {
-            toolList
+        let shown = shownTool
+        PopoverShell(
+            tabs: [.home] + openableTools.map { HomeTab(id: $0.id, systemImage: $0.iconSystemName, title: $0.title) },
+            selectedTab: shown?.id,
+            onSelectTab: { id in
+                if let id { openPanel(id) } else { navigation.toolID = nil }
+            },
+            openSettings: {
+                dismiss()
+                openSettings(nil)
+            },
+            quit: { NSApplication.shared.terminate(nil) }
+        ) {
+            if let tool = shown {
+                tool.makeMenuPanel(
+                    back: nil,
+                    dismiss: { dismissToolPanels(tool.id) },
+                    openSettings: { openSettings(tool.id) },
+                    toggleOwnIcon: { manager.setShowsOwnMenuBarIcon(!tool.showsOwnMenuBarIcon, for: tool) })
+                    .background(backShortcut)
+            } else {
+                HomeView(tools: homeTools, notices: notices, selectedToolID: resolvedSelection,
+                         onSelect: { selectedToolID = $0 }, actions: actions)
+            }
         }
     }
 
-    /// ⌘[ goes back to the list, like "Back" elsewhere on the Mac.
+    /// ⌘[ goes back to the home, like "Back" elsewhere on the Mac.
     private var backShortcut: some View {
         Button("Voltar ao Hone") { navigation.toolID = nil }
             .keyboardShortcut("[", modifiers: .command)
@@ -63,391 +74,79 @@ struct MenuBarContent: View {
             .accessibilityHidden(true)
     }
 
-    private var toolList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, contentInset)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
-
-            if updateChecker.availableUpdate != nil {
-                updateBanner
-                    .padding(.horizontal, edge)
-                    .padding(.bottom, 8)
-            }
-
-            if needsPermission {
-                permissionBanner
-                    .padding(.horizontal, edge)
-                    .padding(.bottom, 8)
-            }
-
-            moduleList(switchModules)
-
-            if !momentaryModules.isEmpty {
-                Divider()
-                    .padding(.horizontal, contentInset)
-                    .padding(.vertical, 6)
-                moduleList(momentaryModules)
-            }
-
-            Divider()
-                .padding(.horizontal, contentInset)
-                .padding(.vertical, 8)
-
-            VStack(spacing: 1) {
-                Button {
-                    dismiss()
-                    openSettings(nil)
-                } label: {
-                    MenuActionLabel(title: "Definições…", shortcut: "", systemImage: "gearshape")
-                }
-                .buttonStyle(MenuButtonStyle(innerPad: contentInset - edge))
-
-                Button {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    MenuActionLabel(title: "Sair do Hone", shortcut: "", systemImage: "power")
-                }
-                .buttonStyle(MenuButtonStyle(innerPad: contentInset - edge))
-            }
-            .padding(.horizontal, edge)
-            .padding(.bottom, 8)
-        }
-        .frame(width: panelWidth)
-        .background(VisualEffectBackground())
+    private func openPanel(_ id: String) {
+        guard let tool = openableTools.first(where: { $0.id == id }) else { return }
+        tool.panelWillShow()
+        navigation.toolID = tool.id
     }
 
-    private func moduleList(_ modules: [any HoneModule]) -> some View {
-        VStack(spacing: 2) {
-            ForEach(modules, id: \.id) { module in
-                ModuleRow(module: module, manager: manager,
-                          innerPad: contentInset - edge, dismiss: dismiss, openSettings: openSettings,
-                          openPanel: { tool in
-                              tool.panelWillShow()
-                              navigation.toolID = tool.id
-                          })
-            }
-        }
-        .padding(.horizontal, edge)
+    // MARK: - Manager → values
+
+    private var resolvedSelection: String {
+        manager.modules.contains { $0.id == selectedToolID && $0.isAvailable }
+            ? selectedToolID
+            : manager.modules.first(where: \.isAvailable)?.id ?? ""
     }
 
-    private var header: some View {
-        HStack(spacing: 11) {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 27, height: 27)
-                .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Hone")
-                    .font(.system(size: 15, weight: .bold))
-                Text(activeSummary)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
+    /// Manager order, momentary tools last.
+    private var homeTools: [HomeTool] {
+        let ordered = manager.modules.filter { !$0.isMomentary } + manager.modules.filter(\.isMomentary)
+        return ordered.map { module in
+            let tool = module as? any MenuBarTool
+            return HomeTool(
+                id: module.id, title: module.title, shortTitle: module.shortTitle,
+                category: module.category, tagline: module.tagline,
+                iconSystemName: module.iconSystemName, tint: module.tint,
+                isAvailable: module.isAvailable, isMomentary: module.isMomentary,
+                actionLabel: module.actionLabel, isEnabled: module.isEnabled,
+                hasPanel: tool != nil, alert: alert(for: module, tool: tool))
         }
     }
 
-    private var activeSummary: String {
-        let active = manager.modules.filter { $0.isAvailable && $0.isEnabled && !$0.isMomentary }.count
-        switch active {
-        case 0: return "Nenhuma ferramenta ativa"
-        case 1: return "1 ferramenta ativa"
-        default: return "\(active) ferramentas ativas"
+    private func alert(for module: any HoneModule, tool: (any MenuBarTool)?) -> HomeTool.Alert? {
+        guard module.isAvailable, module.isEnabled, !module.isMomentary else { return nil }
+        if manager.isPaused(module) { return .paused }
+        if let permission = tool?.permission, permission.essential, !permission.isGranted {
+            return .missingPermission(permission.kind.title)
         }
-    }
-
-    private var permissionBanner: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Image(systemName: "lock.shield.fill")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Falta acesso de Acessibilidade")
-                    .font(.subheadline.weight(.medium))
-                Text("O Hone precisa dele para controlar o scroll.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Conceder acesso…") { permissions.requestAccessibility() }
-                    .buttonStyle(.link)
-                    .font(.caption)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-    }
-
-    private var updateBanner: some View {
-        Button {
-            dismiss()
-            updateChecker.install()
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Atualização disponível")
-                        .font(.subheadline.weight(.medium))
-                    if let v = updateChecker.availableUpdate?.version {
-                        Text("Versão \(v) — clica para instalar.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// One toggleable tool line inside the menu.
-private struct ModuleRow: View {
-    let module: any HoneModule
-    @Bindable var manager: ModuleManager
-    let innerPad: CGFloat
-    var dismiss: () -> Void = {}
-    var openSettings: (String?) -> Void = { _ in }
-    /// Shows an embedded tool's panel inside the popover.
-    var openPanel: (any MenuBarTool) -> Void = { _ in }
-    @State private var hovering = false
-    @State private var hoveringGear = false
-    @State private var hoveringChevron = false
-
-    private var tool: (any MenuBarTool)? { module as? any MenuBarTool }
-    private var isPaused: Bool { manager.isPaused(module) }
-
-    var body: some View {
-        HStack(spacing: 11) {
-            ModuleIcon(systemName: module.iconSystemName, tint: module.tint, size: 27)
-                .saturation(module.isAvailable ? 1 : 0)
-                .opacity(module.isAvailable ? 1 : 0.5)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(module.title).font(.system(size: 13, weight: .medium))
-                if let notice = toolNotice {
-                    Label {
-                        Text(notice.text).foregroundStyle(.secondary)
-                    } icon: {
-                        Image(systemName: notice.icon).foregroundStyle(.orange)
-                    }
-                    .labelStyle(StatusLabelStyle())
-                    .font(.caption2)
-                    .help(notice.help)
-                    if let tool, isPaused {
-                        Button("Sair da app antiga") { manager.quitLegacyApp(for: tool) }
-                            .buttonStyle(.link)
-                            .font(.caption2)
-                            .help("O \(tool.title) antigo está aberto. Enquanto estiver, o \(tool.title) do Hone fica em pausa para não haver ícones e atalhos em duplicado.")
-                    }
-                } else {
-                    Text(statusText)
-                        .font(.caption2)
-                        .foregroundStyle(statusColor)
-                }
-            }
-            Spacer(minLength: 8)
-            if module.isAvailable {
-                settingsButton
-            }
-            trailingControl
-            if let tool {
-                panelButton(tool)
-            }
-        }
-        .padding(.horizontal, innerPad)
-        .padding(.vertical, 7)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(isActive ? AnyShapeStyle(module.tint.opacity(0.25)) : AnyShapeStyle(.clear))
-        )
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .animation(.easeInOut(duration: 0.16), value: module.isEnabled)
-    }
-
-    /// Quick path to this tool's Settings page. Quiet at rest, brighter with the
-    /// row, and only shows its own pill when the pointer is on the gear itself.
-    private var settingsButton: some View {
-        Button {
-            dismiss()
-            openSettings(module.id)
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-                .frame(width: 22, height: 22)
-                .background(hoveringGear ? AnyShapeStyle(.primary.opacity(0.08)) : AnyShapeStyle(.clear),
-                            in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hoveringGear = $0 }
-        .help("Definições de \(module.title)")
-        .accessibilityLabel("Definições de \(module.title)")
-    }
-
-    /// Drill-in to the tool's own panel. Only while it's actually running —
-    /// an off or paused tool has nothing live to show.
-    private func panelButton(_ tool: any MenuBarTool) -> some View {
-        let canOpen = tool.isEnabled && !isPaused
-        let style: AnyShapeStyle = !canOpen ? AnyShapeStyle(.quaternary)
-            : hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
-        let help = canOpen ? "Abrir \(tool.title)"
-            : isPaused ? "O \(tool.title) está em pausa" : "Liga o \(tool.title) para abrir"
-        return Button {
-            openPanel(tool)
-        } label: {
-            // Same spec as the gear.
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(style)
-                .frame(width: 22, height: 22)
-                .background(hoveringChevron && canOpen ? AnyShapeStyle(.primary.opacity(0.08)) : AnyShapeStyle(.clear),
-                            in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!canOpen)
-        .onHover { hoveringChevron = $0 }
-        .help(help)
-        .accessibilityLabel("Abrir \(tool.title)")
-        .padding(.trailing, -4)
-    }
-
-    @ViewBuilder
-    private var trailingControl: some View {
-        if !module.isAvailable {
-            EmptyView()
-        } else if module.isMomentary {
-            // Momentary tools run once — a button, not a persistent switch.
-            Button(module.actionLabel) {
-                dismiss()
-                module.performAction()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(module.tint)
-            .controlSize(.small)
-        } else {
-            Toggle("", isOn: Binding(
-                get: { module.isEnabled },
-                set: { manager.setEnabled($0, for: module) }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            // On but paused: the switch stays on, visibly held back.
-            .tint(isPaused ? module.tint.opacity(0.45) : module.tint)
-            .controlSize(.small)
-        }
-    }
-
-    /// A short warning replacing "Ativo" on an embedded tool: paused behind its
-    /// old app, or missing the permission it can't work without.
-    private var toolNotice: (icon: String, text: String, help: String)? {
-        guard let tool, tool.isEnabled else { return nil }
-        if isPaused {
-            return ("pause.circle.fill", "Em pausa",
-                    "O \(tool.title) antigo está aberto. Enquanto estiver, o \(tool.title) do Hone fica em pausa.")
-        }
-        if let permission = tool.permission, permission.essential, !permission.isGranted {
-            return ("lock.shield.fill", "Falta \(permission.kind.title)",
-                    "O \(tool.title) precisa de \(permission.kind.title). Concede-a nas Definições do \(tool.title).")
-        }
+        if manager.isWaitingOnPermission(module) { return .missingPermission(ToolPermission.Kind.accessibility.title) }
         return nil
     }
 
-    /// A tool that is switched on "lights up" with its tint — the highlight ported
-    /// from Sleepy's hero card so active tools read at a glance.
-    private var isActive: Bool { module.isAvailable && module.isEnabled && !module.isMomentary && !isPaused }
-
-    private var rowBackground: AnyShapeStyle {
-        if isActive { return AnyShapeStyle(module.tint.opacity(hovering ? 0.16 : 0.10)) }
-        if hovering { return AnyShapeStyle(.primary.opacity(0.06)) }
-        return AnyShapeStyle(.clear)
+    private var notices: [HomeNotice] {
+        var list: [HomeNotice] = []
+        if let version = updateChecker.availableUpdate?.version { list.append(.update(version: version)) }
+        if manager.modules.contains(where: { manager.isWaitingOnPermission($0) }) { list.append(.accessibility) }
+        return list
     }
 
-    private var statusText: String {
-        if !module.isAvailable { return "Em breve" }
-        if module.isMomentary { return "Bloqueia as teclas para limpar" }
-        return module.isEnabled ? "Ativo" : "Desligado"
-    }
-    private var statusColor: AnyShapeStyle {
-        if module.isAvailable && module.isEnabled && !module.isMomentary { return AnyShapeStyle(module.tint) }
-        return AnyShapeStyle(.secondary)
-    }
-}
-
-/// Icon + text for the row's status line, tighter than the default label.
-private struct StatusLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) {
-            configuration.icon
-            configuration.title
-        }
-    }
-}
-
-private struct MenuActionLabel: View {
-    let title: String
-    let shortcut: String
-    let systemImage: String
-
-    var body: some View {
-        HStack(spacing: 11) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14))
-                .frame(width: 27)
-                .foregroundStyle(.secondary)
-            Text(title).font(.system(size: 13))
-            Spacer()
-            Text(shortcut)
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
-        }
-        .contentShape(Rectangle())
-    }
-}
-
-/// Row-highlight button style matching native menu hover behaviour.
-private struct MenuButtonStyle: ButtonStyle {
-    let innerPad: CGFloat
-    @State private var hovering = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, innerPad)
-            .padding(.vertical, 7)
-            .background(hovering ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear),
-                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-    }
-}
-
-/// The system menu material (translucent vibrancy) — keeps Hone's original
-/// `MenuBarExtra(.window)` look now that the panel lives in an `NSPopover`.
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .menu
-    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
+    private var actions: HomeActions {
+        HomeActions(
+            setEnabled: { id, on in
+                guard let module = module(id) else { return }
+                manager.setEnabled(on, for: module)
+            },
+            openPanel: { openPanel($0) },
+            openSettings: { id in
+                dismiss()
+                openSettings(id)
+            },
+            perform: { id in
+                dismiss()
+                module(id)?.performAction()
+            },
+            quitLegacyApp: { id in
+                if let tool = manager.menuBarTools.first(where: { $0.id == id }) { manager.quitLegacyApp(for: tool) }
+            },
+            installUpdate: {
+                dismiss()
+                updateChecker.install()
+            },
+            requestAccessibility: { permissions.requestAccessibility() },
+            quit: { NSApplication.shared.terminate(nil) })
     }
 
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material
-        view.blendingMode = blendingMode
+    private func module(_ id: String) -> (any HoneModule)? {
+        manager.modules.first { $0.id == id }
     }
 }

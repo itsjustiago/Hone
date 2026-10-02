@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 struct SettingsView: View {
     @Bindable var manager: ModuleManager
@@ -143,7 +144,7 @@ private struct ModuleDetailView: View {
             if module.isMomentary {
                 Button(module.actionLabel, action: module.performAction)
                     .buttonStyle(.borderedProminent)
-                    .tint(module.tint)
+                    .tint(module.tint.vibeControlTint)
                     .controlSize(.large)
             } else {
                 Toggle("", isOn: Binding(
@@ -152,7 +153,7 @@ private struct ModuleDetailView: View {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .tint(module.tint)
+                .tint(module.tint.vibeControlTint)
                 .controlSize(.large)
             }
         }

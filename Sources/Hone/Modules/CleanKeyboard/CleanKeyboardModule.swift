@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// Locks the keyboard temporarily so you can wipe it clean without typing,
 /// switching apps, or firing shortcuts. A momentary tool: it runs an action
@@ -10,7 +11,9 @@ final class CleanKeyboardModule: HoneModule {
     let title = "Limpar Teclado"
     let summary = "Bloqueia o teclado durante uns segundos para o limpares sem carregar em teclas."
     let iconSystemName = "keyboard.fill"
-    let tint = Color.blue
+    let tint = VibeToolColor.cleanKeyboard
+    let category = "Teclado"
+    let tagline = "Bloqueia o teclado uns segundos para o limpares à vontade."
     let isAvailable = true
     let requiresAccessibility = true
     let isMomentary = true

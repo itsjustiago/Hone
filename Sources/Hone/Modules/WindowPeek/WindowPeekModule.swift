@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// Hone's replacement for DockDoor: hover a Dock icon to preview that app's
 /// open windows and click one to focus it.
@@ -9,7 +10,9 @@ final class WindowPeekModule: HoneModule {
     let title = "Window Peek"
     let summary = "Passa o rato num ícone do Dock para pré-visualizar e trocar entre as janelas dessa app."
     let iconSystemName = "macwindow.on.rectangle"
-    let tint = Color.indigo
+    let tint = VibeToolColor.windowPeek
+    let category = "Dock"
+    let tagline = "Passa o rato num ícone do Dock para ver e trocar de janela."
     let isAvailable = true
     let requiresAccessibility = true
 

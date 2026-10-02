@@ -108,6 +108,8 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
     let id: String
     let title: String
     let summary: String
+    let category: String
+    let tagline: String
     let iconSystemName: String
     let tint: Color
     let legacyBundleID: String
@@ -152,11 +154,14 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
         }
     }
 
-    init(id: String, title: String, summary: String, iconSystemName: String, tint: Color,
+    init(id: String, title: String, summary: String, category: String, tagline: String? = nil,
+         iconSystemName: String, tint: Color,
          enabledByDefault: Bool, legacyBundleID: String, permission: ToolPermission? = nil, kit: Kit) {
         self.id = id
         self.title = title
         self.summary = summary
+        self.category = category
+        self.tagline = tagline ?? summary
         self.iconSystemName = iconSystemName
         self.tint = tint
         self.legacyBundleID = legacyBundleID

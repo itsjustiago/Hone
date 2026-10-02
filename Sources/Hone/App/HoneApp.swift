@@ -1,6 +1,5 @@
 import SwiftUI
 
-@main
 struct HoneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var navigation = SettingsNavigation()

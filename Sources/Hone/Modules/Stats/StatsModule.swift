@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 import StatsKit
 
 extension StatsTool: ToolKit {}
@@ -11,9 +12,9 @@ enum StatsModule {
             id: "stats",
             title: "Stats",
             summary: "CPU, memória, GPU e ventoinhas em direto na barra de menus.",
+            category: "Sistema",
             iconSystemName: "cpu",
-            // Stats' teal (`Brand.tint` in StatsKit's DesignKit).
-            tint: Color(red: 0.13, green: 0.66, blue: 0.67),
+            tint: VibeToolColor.stats,
             // Off until the user turns it on: enabling it quits the old Stats app.
             enabledByDefault: false,
             legacyBundleID: "eu.exelban.Stats",

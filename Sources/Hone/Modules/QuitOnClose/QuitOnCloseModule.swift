@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// Hone's replacement for RedQuits / Quitter: close an app's last window and the
 /// app quits, instead of staying alive with nothing but a Dock icon.
@@ -9,7 +10,9 @@ final class QuitOnCloseModule: HoneModule {
     let title = "Fechar = Sair"
     let summary = "Fecha a última janela de uma app e ela sai sozinha — logo, ou passado o tempo que escolheres."
     let iconSystemName = "xmark.app.fill"
-    let tint = Color.red
+    let tint = VibeToolColor.quitOnClose
+    let category = "Apps"
+    let tagline = "Fecha a última janela de uma app e ela sai sozinha."
     let isAvailable = true
     let requiresAccessibility = true
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 // MARK: - Module icon (app-icon style squircle)
 
@@ -14,7 +15,13 @@ struct ModuleIcon: View {
             .overlay(
                 Image(systemName: systemName)
                     .font(.system(size: size * 0.5, weight: .semibold))
-                    .foregroundStyle(.white)
+                    // Dark glyph on light tool colours (white, yellow).
+                    .foregroundStyle(tint.vibeInk)
+            )
+            .overlay(
+                // A light tile needs an edge to stand off a light background.
+                RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+                    .strokeBorder(.black.opacity(tint.vibeIsLight ? 0.12 : 0), lineWidth: 0.5)
             )
             .shadow(color: tint.opacity(0.3), radius: size * 0.12, y: size * 0.05)
     }
