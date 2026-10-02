@@ -235,7 +235,7 @@ struct PressurePill: View {
     }
 }
 
-/// "Processos principais": always `rowCount` rows, so the panel (and its
+/// "Processos principais" (CPU, memory) or "Apps a usar a GPU": always `rowCount` rows, so the panel (and its
 /// popover) never changes height. Rows from an earlier reading show dimmed
 /// until a fresh one arrives; with none yet, "A medir…".
 struct ProcessList: View {
@@ -245,11 +245,11 @@ struct ProcessList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionCaption(title: "Processos principais").padding(.bottom, 3)
+            SectionCaption(title: metric == .gpu ? "Apps a usar a GPU" : "Processos principais").padding(.bottom, 3)
             ForEach(0..<TopProcessesModel.rowCount, id: \.self) { index in
                 let row = index < rows.count ? rows[index] : nil
                 HStack(spacing: 8) {
-                    Text(row?.name ?? "A medir…")
+                    Text(row?.name ?? placeholder(at: index))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .foregroundStyle(nameStyle(row))
@@ -266,6 +266,12 @@ struct ProcessList: View {
         }
     }
 
+    /// "A medir…" until a first reading arrives; a GPU reading with nothing busy says so.
+    private func placeholder(at index: Int) -> String {
+        guard isFresh else { return "A medir…" }
+        return index == 0 ? "Nenhuma app a usar a GPU" : ""
+    }
+
     private func nameStyle(_ row: ProcessRow?) -> AnyShapeStyle {
         if row == nil { return AnyShapeStyle(.tertiary) }
         return isFresh ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
@@ -273,6 +279,10 @@ struct ProcessList: View {
 
     private func value(for row: ProcessRow?) -> String {
         guard let row else { return "" }
-        return metric == .cpu ? Format.percentValue(row.cpu) : Format.bytes(row.memoryBytes)
+        switch metric {
+        case .cpu: return Format.percentValue(row.cpu)
+        case .gpu: return Format.percentValue(row.gpu)
+        default: return Format.bytes(row.memoryBytes)
+        }
     }
 }

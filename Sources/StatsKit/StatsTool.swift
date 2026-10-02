@@ -165,12 +165,12 @@ private struct PanelHost: View {
     }
 
     private struct TaskKey: Equatable {
-        var metric: Metric
+        var metric: Metric?
         var generation: Int
     }
 
     /// The tab on screen (falls back when the chosen metric was switched off).
-    private var shown: Metric { panelState.selection(among: observedMonitor.activeMetrics) ?? .gpu }
+    private var shown: Metric? { panelState.selection(among: observedMonitor.activeMetrics) }
 
     var body: some View {
         StatsPanel(monitor: monitor, state: state, processes: processes,
@@ -182,7 +182,7 @@ private struct PanelHost: View {
             .onDisappear { monitor.panelDisappeared() }
             // SwiftUI cancels this when the panel goes away, which is what stops `top`.
             .task(id: TaskKey(metric: shown, generation: processModel.generation)) {
-                await processModel.watch(metric: shown)
+                if let shown { await processModel.watch(metric: shown) }
             }
     }
 }

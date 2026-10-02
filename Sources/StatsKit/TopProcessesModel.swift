@@ -1,13 +1,16 @@
 import Foundation
+import AppKit
 
 struct ProcessRow: Equatable, Identifiable {
     var id: Int32
     var name: String
     var cpu: Double
     var memoryBytes: UInt64
+    /// GPU busy share, 0…100 (GPU tab only).
+    var gpu: Double = 0
 }
 
-/// The five heaviest processes, refreshed only while the panel asks for them.
+/// The five heaviest processes (or, on the GPU tab, apps), refreshed only while the panel asks for them.
 /// The panel runs `watch` from `.task(id:)`, so SwiftUI cancels it when the
 /// panel goes away; `deadline` is a safety net for a loop that never gets cancelled.
 @MainActor
@@ -40,10 +43,14 @@ final class TopProcessesModel: ObservableObject {
     }
 
     func watch(metric: Metric) async {
-        guard metric == .cpu || metric == .memory else { return }
+        guard metric == .cpu || metric == .memory || metric == .gpu else { return }
         token += 1
         let mine = token
         fresh.remove(metric)
+        if metric == .gpu {
+            await watchGPU(token: mine)
+            return
+        }
         let arguments = metric == .cpu ? TopRunner.cpuArguments : TopRunner.memoryArguments
         while !Task.isCancelled, mine == token, Date() < deadline {
             let usages = await TopRunner.run(arguments: arguments)
@@ -60,5 +67,32 @@ final class TopProcessesModel: ObservableObject {
             // The CPU run already takes ~1.2 s; memory is instantaneous.
             try? await Task.sleep(nanoseconds: metric == .cpu ? 300_000_000 : 2_000_000_000)
         }
+    }
+
+    /// GPU time per app: no `top`, just IOKit reads about once a second, off the
+    /// main thread. The baseline lives in the session, for this stretch of the tab only.
+    private func watchGPU(token mine: Int) async {
+        let session = GPUUsageSession()
+        while !Task.isCancelled, mine == token, Date() < deadline {
+            let usages: [GPUAppUsage]? = await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async { continuation.resume(returning: session.next()) }
+            }
+            guard !Task.isCancelled, mine == token else { return }
+            if let usages {
+                rowsByMetric[.gpu] = usages.map {
+                    ProcessRow(id: $0.pid, name: Self.displayName(for: $0), cpu: 0, memoryBytes: 0, gpu: $0.percent)
+                }
+                fresh.insert(.gpu)
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+    }
+
+    /// The running app's localized name when it is one, else the grouped name.
+    private static func displayName(for usage: GPUAppUsage) -> String {
+        guard let bundle = usage.bundlePath,
+              let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.path == bundle }),
+              let name = app.localizedName, !name.isEmpty else { return usage.name }
+        return name
     }
 }

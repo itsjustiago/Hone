@@ -34,9 +34,9 @@ struct StatsPanel: View {
 
     private var selection: Metric? { state.selection(among: visible) }
 
-    /// CPU and Memory are the two most used tabs: they share a minimum height so
+    /// CPU, Memory and GPU have a process/app list: they share a minimum height so
     /// switching between them doesn't make the popover jump.
-    static let cpuMemoryMinHeight: CGFloat = 303
+    static let sharedMinHeight: CGFloat = 303
 
     private var historyHelp: String { "Últimos \(SystemMonitor.historyLength * monitor.intervalSeconds) s" }
 
@@ -207,7 +207,7 @@ struct StatsPanel: View {
             CoreBars(values: cpu?.perCore ?? [])
             processList(for: .cpu)
         }
-        .frame(minHeight: Self.cpuMemoryMinHeight, alignment: .top)
+        .frame(minHeight: Self.sharedMinHeight, alignment: .top)
     }
 
     private var memoryDetail: some View {
@@ -234,7 +234,7 @@ struct StatsPanel: View {
             }
             processList(for: .memory)
         }
-        .frame(minHeight: Self.cpuMemoryMinHeight, alignment: .top)
+        .frame(minHeight: Self.sharedMinHeight, alignment: .top)
     }
 
     private var gpuDetail: some View {
@@ -252,7 +252,9 @@ struct StatsPanel: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            processList(for: .gpu)
         }
+        .frame(minHeight: Self.sharedMinHeight, alignment: .top)
     }
 
     private func gpuDescription(_ gpu: GPUReading?) -> String {
