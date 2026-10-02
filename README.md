@@ -106,6 +106,10 @@ sem ventoinhas.
 ./build.sh debug     # faster debug build
 ```
 
+UI previews without opening windows: `swift build && HONE_RENDER_PREVIEWS=/tmp/renders .build/debug/Hone`
+renders the popover (fake data, `Sources/Hone/UI/Home/PreviewRenderer.swift`) to PNGs and exits
+before anything else starts. The shared look (tokens, `Blob` mascot, controls) lives in `Sources/HoneDesign`.
+
 `Hone` appears in the menu bar (no Dock icon) — a switch in **Settings ▸ Geral ▸ Barra de
 menus** hides the icon while the enabled tools keep running; reopening Hone from Launchpad
 brings Settings back. Both tools need **Accessibility**

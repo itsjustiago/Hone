@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// A visual, thumbnail-based window switcher. Hold the chosen modifier (⌥ Option
 /// by default) and tap Tab to bring up a grid of every open window; keep tapping
@@ -10,7 +11,10 @@ final class AltTabModule: HoneModule {
     let title = "Alt-Tab Visual"
     let summary = "Mantém ⌥ Option e carrega em Tab para ver e trocar entre todas as janelas abertas."
     let iconSystemName = "rectangle.stack.fill"
-    let tint = Color.teal
+    let tint = VibeToolColor.altTab
+    let category = "Janelas"
+    let shortTitle = "Alt-Tab"
+    let tagline = "Mantém ⌥ e carrega em Tab para ver e trocar entre todas as janelas."
     let isAvailable = true
     let requiresAccessibility = true
 

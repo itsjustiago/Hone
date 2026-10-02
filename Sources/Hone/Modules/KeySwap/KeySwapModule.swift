@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// Hone's replacement for a Karabiner-Elements modifier remap: ⌘ and ⌃ trade
 /// places system-wide, so the Windows shortcuts (⌃C, ⌃V, ⌃Z) work as they do
@@ -10,7 +11,10 @@ final class KeySwapModule: HoneModule {
     let title = "Comando ⇄ Controlo"
     let summary = "Troca a tecla ⌘ com a ⌃ — ⌃C e ⌃V passam a copiar e colar, como no Windows."
     let iconSystemName = "command.square.fill"
-    let tint = Color.orange
+    let tint = VibeToolColor.keySwap
+    let category = "Teclado"
+    let shortTitle = "⌘ ⇄ ⌃"
+    let tagline = "Troca ⌘ com ⌃ para copiares e colares como no Windows."
     let isAvailable = true
     let requiresAccessibility = true
 

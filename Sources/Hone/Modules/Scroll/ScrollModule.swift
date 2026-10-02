@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// Hone's replacement for MOS: independent mouse-wheel direction + smooth scrolling.
 @MainActor
@@ -8,7 +9,9 @@ final class ScrollModule: HoneModule {
     let title = "Scroll"
     let summary = "Inverte a roda do rato independentemente do trackpad e adiciona scroll suave."
     let iconSystemName = "computermouse.fill"
-    let tint = Color.blue
+    let tint = VibeToolColor.scroll
+    let category = "Rato"
+    let tagline = "Inverte a roda do rato sem mexer no trackpad e torna o scroll suave."
     let isAvailable = true
     let requiresAccessibility = true
 

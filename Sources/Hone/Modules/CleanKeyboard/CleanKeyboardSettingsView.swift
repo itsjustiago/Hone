@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 struct CleanKeyboardSettingsView: View {
     @Bindable var module: CleanKeyboardModule
@@ -6,7 +7,8 @@ struct CleanKeyboardSettingsView: View {
 
     var body: some View {
         @Bindable var settings = module.settings
-        let tint = module.tint
+        // White tool colour: native switches need a visible tint.
+        let tint = module.tint.vibeControlTint
 
         VStack(alignment: .leading, spacing: 18) {
             SettingsSection(title: "Teclas") {

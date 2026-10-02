@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 import ClippyKit
 
 extension ClippyTool: ToolKit {}
@@ -11,9 +12,10 @@ enum ClippyModule {
             id: "clippy",
             title: "Clippy",
             summary: "Histórico do clipboard: um atalho mostra o que copiaste, texto e imagens, para voltares a colar.",
+            category: "Clipboard",
+            tagline: "Um atalho mostra o que copiaste, texto e imagens.",
             iconSystemName: "doc.on.clipboard",
-            // Clippy's brand coral (`Brand.tint` in ClippyKit's DesignKit).
-            tint: Color(red: 0.97, green: 0.35, blue: 0.36),
+            tint: VibeToolColor.clippy,
             enabledByDefault: true,
             legacyBundleID: "com.tiagof.clippy",
             permission: ToolPermission(kind: .accessibility,

@@ -128,6 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         pop.animates = true
         pop.delegate = self
         pop.contentViewController = hosting
+        // Hone's panels are dark by design, and the black canvas runs under the
+        // arrow (the SwiftUI content itself stays inside the safe area).
+        pop.appearance = NSAppearance(named: .darkAqua)
+        pop.hasFullSizeContent = true
         popover = pop
     }
 
@@ -147,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         lastPopoverClose = Date()
-        // Reopen on the tool list, not inside whichever tool was last shown.
+        // Reopen on the home, not inside whichever tool was last shown.
         popoverNavigation.toolID = nil
     }
 

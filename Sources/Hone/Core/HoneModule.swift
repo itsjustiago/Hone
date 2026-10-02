@@ -16,10 +16,21 @@ protocol HoneModule: AnyObject {
     /// One-line description of what the tool does.
     var summary: String { get }
 
+    /// Name on the home's tool pills, where space is tight. Defaults to `title`.
+    var shortTitle: String { get }
+
+    /// Grey label beside the title on the home's hero card (e.g. "Rato").
+    var category: String { get }
+
+    /// What the hero card shows under the title: at most two lines. Defaults
+    /// to `summary`; tools with a longer summary give a shorter one.
+    var tagline: String { get }
+
     /// SF Symbol name for the tool's icon.
     var iconSystemName: String { get }
 
-    /// Accent colour used for the tool's icon and controls.
+    /// Accent colour used for the tool's icon and controls. Comes from
+    /// `VibeToolColor`, the single source of each tool's colour.
     var tint: Color { get }
 
     /// `false` for modules that are registered but not yet implemented
@@ -58,6 +69,9 @@ protocol HoneModule: AnyObject {
 extension HoneModule {
     var requiresAccessibility: Bool { false }
     var tint: Color { .accentColor }
+    var shortTitle: String { title }
+    var category: String { "" }
+    var tagline: String { summary }
     var isMomentary: Bool { false }
     var actionLabel: String { "" }
     func performAction() {}

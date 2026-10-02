@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Hone",
-            dependencies: ["SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit"],
+            dependencies: ["HoneDesign", "SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit"],
             path: "Sources/Hone",
             swiftSettings: [
                 // The system-level modules (event taps, AX API, C callbacks) are
@@ -16,26 +16,37 @@ let package = Package(
                 .swiftLanguageMode(.v5)
             ]
         ),
+        // Shared visual language (tokens, Blob mascot, controls) for Hone and
+        // the Kits. Pure SwiftUI so `ImageRenderer` can draw every piece of it.
+        .target(
+            name: "HoneDesign",
+            path: "Sources/HoneDesign",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         // Former standalone menu-bar apps, embedded as tools. Each lives in its
         // own module so their identically named types (DesignKit, MenuPanel,
         // SettingsSection…) never collide; only a small `…Tool` facade is public.
         .target(
             name: "SleepyKit",
+            dependencies: ["HoneDesign"],
             path: "Sources/SleepyKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
             name: "ClippyKit",
+            dependencies: ["HoneDesign"],
             path: "Sources/ClippyKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
             name: "ScreenlyKit",
+            dependencies: ["HoneDesign"],
             path: "Sources/ScreenlyKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
             name: "StatsKit",
+            dependencies: ["HoneDesign"],
             path: "Sources/StatsKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
