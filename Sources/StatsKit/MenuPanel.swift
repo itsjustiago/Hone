@@ -41,6 +41,14 @@ struct StatsPanel: View {
     private var historyHelp: String { "Últimos \(SystemMonitor.historyLength * monitor.intervalSeconds) s" }
 
     var body: some View {
+        // Pinned to the top: while the popover animates between tab heights the
+        // hosting view is taller or shorter than this content, and SwiftUI would
+        // centre it, making everything slide. The ideal size (what feeds
+        // `preferredContentSize`) is the content's own, unchanged.
+        TopAnchoredLayout { content }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.horizontal, contentInset)
@@ -276,5 +284,22 @@ struct StatsPanel: View {
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Takes whatever height the host offers (taller or shorter than the content)
+/// and keeps its single child at the top, at its own ideal height: extra space
+/// stays empty below, and a shorter frame clips the bottom, never the top.
+struct TopAnchoredLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let ideal = child.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: ideal.width, height: proposal.height ?? ideal.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let child = subviews.first else { return }
+        child.place(at: CGPoint(x: bounds.minX, y: bounds.minY), anchor: .topLeading,
+                    proposal: ProposedViewSize(width: bounds.width, height: nil))
     }
 }
