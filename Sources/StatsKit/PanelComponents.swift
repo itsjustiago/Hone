@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// Sparkline over a fixed 0…1 scale. Samples enter from the right, so a short
 /// history sits at the right edge instead of stretching across the width.
@@ -37,13 +38,13 @@ struct Sparkline: View {
     var body: some View {
         ZStack {
             SparklineShape(values: values, capacity: capacity, closed: true)
-                .fill(LinearGradient(colors: [Brand.tint.opacity(0.28), Brand.tint.opacity(0.02)],
+                .fill(LinearGradient(colors: [VibeToolColor.stats.opacity(0.28), VibeToolColor.stats.opacity(0.02)],
                                      startPoint: .top, endPoint: .bottom))
             SparklineShape(values: values, capacity: capacity, closed: false)
-                .stroke(Brand.tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+                .stroke(VibeToolColor.stats, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
         }
         .background(alignment: .bottom) {
-            Rectangle().fill(.primary.opacity(0.10)).frame(height: 0.5)
+            Rectangle().fill(VibeColor.track).frame(height: 0.5)
         }
         .drawingGroup(opaque: false)
         .help(help ?? "")
@@ -83,36 +84,36 @@ struct MetricTile: View {
     let action: () -> Void
     @State private var hovering = false
 
+    private let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(selected ? AnyShapeStyle(Brand.tintText) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(selected ? VibeToolColor.stats : VibeColor.text3)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text(value)
                         .font(.system(size: unit == nil ? 17 : 14, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(VibeColor.text1)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     if let unit {
-                        Text(unit).font(.system(size: 8.5)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(unit).font(.system(size: 8.5)).foregroundStyle(VibeColor.text3).lineLimit(1)
                     }
                 }
                 Sparkline(values: values, lineWidth: 1, help: historyHelp)
                     .frame(height: 14)
                     .padding(.top, 3)
             }
-            .padding(.horizontal, 7)
+            .padding(.horizontal, 8)
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(selected ? Brand.tint.opacity(0.28) : .primary.opacity(0.07))
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(background, in: shape)
+            .overlay(shape.strokeBorder(border))
+            .contentShape(shape)
         }
         .buttonStyle(TilePressStyle())
         .onHover { hovering = $0 }
@@ -122,9 +123,13 @@ struct MetricTile: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private var background: AnyShapeStyle {
-        if selected { return AnyShapeStyle(Brand.tint.opacity(0.10)) }
-        return AnyShapeStyle(.primary.opacity(hovering ? 0.07 : 0.04))
+    private var background: Color {
+        if selected { return VibeToolColor.stats.vibeMix(over: VibeColor.card, amount: 0.12) }
+        return hovering ? VibeColor.raised : VibeColor.card
+    }
+
+    private var border: Color {
+        selected ? VibeToolColor.stats.vibeMix(over: VibeColor.card, amount: 0.38) : VibeColor.cardBorder
     }
 }
 
@@ -135,9 +140,9 @@ struct InfoRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(title).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(VibeColor.text3)
             Spacer(minLength: 8)
-            Text(value).font(.system(size: 12).monospacedDigit())
+            Text(value).font(.system(size: 12).monospacedDigit()).foregroundStyle(VibeColor.text1)
         }
         .font(.system(size: 12))
         .frame(height: 17)
@@ -152,8 +157,8 @@ struct StatColumn: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.system(size: 10)).foregroundStyle(.secondary)
-            Text(value).font(.system(size: 13, weight: .semibold).monospacedDigit())
+            Text(title).font(.system(size: 10)).foregroundStyle(VibeColor.text3)
+            Text(value).font(.system(size: 13, weight: .semibold).monospacedDigit()).foregroundStyle(VibeColor.text1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -167,7 +172,7 @@ struct SectionCaption: View {
         Text(title.uppercased())
             .font(.caption2.weight(.semibold))
             .tracking(0.6)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(VibeColor.text3)
     }
 }
 
@@ -179,8 +184,8 @@ struct CoreBars: View {
         HStack(alignment: .bottom, spacing: 2) {
             ForEach(Array(values.enumerated()), id: \.offset) { _, value in
                 ZStack(alignment: .bottom) {
-                    Capsule().fill(.primary.opacity(0.08))
-                    Capsule().fill(Brand.tint).frame(height: max(2, 26 * clamp01(value)))
+                    Capsule().fill(VibeColor.track)
+                    Capsule().fill(VibeToolColor.stats).frame(height: max(2, 26 * clamp01(value)))
                 }
                 .frame(maxWidth: 14)
                 .frame(height: 26)
@@ -201,8 +206,8 @@ struct FractionBar: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(.primary.opacity(0.08))
-                Capsule().fill(Brand.tint).frame(width: max(3, proxy.size.width * clamp01(fraction)))
+                Capsule().fill(VibeColor.track)
+                Capsule().fill(VibeToolColor.stats).frame(width: max(3, proxy.size.width * clamp01(fraction)))
             }
         }
         .frame(height: 4)
@@ -222,15 +227,11 @@ struct PressurePill: View {
             .accessibilityLabel("Pressão da memória \(pressure.title)")
     }
 
-    // Darker text in light mode, where the system colours are too pale on a tint.
     private var color: Color {
         switch pressure {
-        case .normal:
-            return Color(light: NSColor(srgbRed: 0, green: 0.40, blue: 0.15, alpha: 1), dark: .systemGreen)
-        case .warning:
-            return Color(light: NSColor(srgbRed: 0.60, green: 0.27, blue: 0, alpha: 1), dark: .systemOrange)
-        case .critical:
-            return Color(light: NSColor(srgbRed: 0.72, green: 0.06, blue: 0.08, alpha: 1), dark: .systemRed)
+        case .normal: return VibeColor.success
+        case .warning: return VibeColor.warning
+        case .critical: return VibeColor.danger
         }
     }
 }
@@ -252,12 +253,12 @@ struct ProcessList: View {
                     Text(row?.name ?? placeholder(at: index))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .foregroundStyle(nameStyle(row))
+                        .foregroundStyle(nameColor(row))
                         .help(row?.name ?? "")
                     Spacer(minLength: 8)
                     Text(value(for: row))
                         .font(.system(size: 12).monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(VibeColor.text3)
                 }
                 .font(.system(size: 12))
                 .frame(height: 17)
@@ -272,9 +273,9 @@ struct ProcessList: View {
         return index == 0 ? "Nenhuma app a usar a GPU" : ""
     }
 
-    private func nameStyle(_ row: ProcessRow?) -> AnyShapeStyle {
-        if row == nil { return AnyShapeStyle(.tertiary) }
-        return isFresh ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
+    private func nameColor(_ row: ProcessRow?) -> Color {
+        if row == nil { return VibeColor.text4 }
+        return isFresh ? VibeColor.text1 : VibeColor.text3
     }
 
     private func value(for row: ProcessRow?) -> String {

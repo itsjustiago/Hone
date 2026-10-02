@@ -26,30 +26,31 @@ final class PanelLayoutTests: XCTestCase {
         monitor.unavailable = [:]
         let state = PanelState()
         state.selected = metric
+        // The panel paints its own black canvas and forces the dark scheme.
         let panel = StatsPanel(monitor: monitor, state: state, processes: TopProcessesModel(),
                                onSettings: {}, onBack: nil, onToggleOwnIcon: {})
-            .background(Color.white)
-            .environment(\.colorScheme, .light)
         return NSHostingView(rootView: AnyView(panel))
     }
 
     private func idealHeight(_ metric: Metric) -> CGFloat { makeHost(metric).fittingSize.height }
 
-    /// y (pt, from the top) of the first teal pixel in the left 100 pt: the header's app icon.
+    /// y (pt, from the top) of the first green pixel in the left 100 pt: the header's mascot.
     private func iconTop(_ metric: Metric, frameHeight: CGFloat) throws -> CGFloat {
         let host = makeHost(metric)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: frameHeight),
+        let width = host.fittingSize.width
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: frameHeight),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
-        host.frame = NSRect(x: 0, y: 0, width: 300, height: frameHeight)
+        host.frame = NSRect(x: 0, y: 0, width: width, height: frameHeight)
         host.layoutSubtreeIfNeeded()
         let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: rep)
-        let scale = CGFloat(rep.pixelsWide) / 300
+        let scale = CGFloat(rep.pixelsWide) / width
         for y in 0..<rep.pixelsHigh {
             for x in 0..<Int(100 * scale) {
                 guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
-                if c.redComponent < 0.35, c.greenComponent > 0.4, c.blueComponent > 0.4 { return CGFloat(y) / scale }
+                if c.greenComponent > 0.55, c.greenComponent - c.redComponent > 0.25,
+                   c.greenComponent - c.blueComponent > 0.15 { return CGFloat(y) / scale }
             }
         }
         return -1

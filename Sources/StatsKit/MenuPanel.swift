@@ -1,4 +1,5 @@
 import SwiftUI
+import HoneDesign
 
 /// What the user is looking at in the panel. Memory only, by design.
 final class PanelState: ObservableObject {
@@ -14,8 +15,7 @@ final class PanelState: ObservableObject {
 }
 
 /// The Stats panel, shown from its own menu-bar icon or inside Hone's popover.
-/// The vibrancy background is applied by `StatsTool.makeMenuPanel`, outside
-/// this view, so the content can be rendered off-screen.
+/// Plain SwiftUI, canvas included, so the content can be rendered off-screen.
 struct StatsPanel: View {
     @ObservedObject var monitor: SystemMonitor
     @ObservedObject var state: PanelState
@@ -25,10 +25,6 @@ struct StatsPanel: View {
     /// Non-nil when hosted inside Hone's popover: the header shows a back chevron.
     var onBack: (() -> Void)?
     var onToggleOwnIcon: () -> Void
-
-    private let panelWidth: CGFloat = 300
-    private let edge: CGFloat = 8
-    private let contentInset: CGFloat = 14
 
     private var visible: [Metric] { monitor.activeMetrics }
 
@@ -44,75 +40,44 @@ struct StatsPanel: View {
         // Pinned to the top: while the popover animates between tab heights the
         // hosting view is taller or shorter than this content, and SwiftUI would
         // centre it, making everything slide. The ideal size (what feeds
-        // `preferredContentSize`) is the content's own, unchanged.
+        // `preferredContentSize`) is the content's own, unchanged. The canvas
+        // goes outside the layout so it fills whatever height the host has.
         TopAnchoredLayout { content }
+            .vibePanelBackground()
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: VibeSpacing.cardGap) {
             header
-                .padding(.horizontal, contentInset)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
 
             if let selection {
                 // One metric: its card already has the sparkline, a tile would repeat it.
-                if visible.count > 1 {
-                    tiles
-                        .padding(.horizontal, edge)
-                        .padding(.bottom, 8)
-                }
+                if visible.count > 1 { tiles }
                 detailCard(for: selection)
-                    .padding(.horizontal, edge)
             } else {
-                emptyState.padding(.horizontal, edge)
+                emptyState
             }
 
-            Divider()
-                .padding(.horizontal, contentInset)
-                .padding(.vertical, 8)
-
-            MenuButton(action: onSettings) {
-                MenuActionLabel(title: "Definições…", shortcut: "", systemImage: "gearshape")
-            }
-            .padding(.horizontal, edge)
-            .padding(.bottom, 8)
+            VibeMenuRow("Definições…", systemImage: "gearshape", action: onSettings)
+                .vibeMenuCard()
         }
-        .frame(width: panelWidth)
+        .vibePanelLayout()
     }
 
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 11) {
-            if let onBack {
-                HeaderIconButton(systemName: "chevron.left", help: "Voltar ao Hone", action: onBack)
-                    .padding(.leading, -6)
-                    .padding(.trailing, -4)
-            }
-            AppIcon(systemName: "cpu", size: 27)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Stats").font(.system(size: 15, weight: .bold))
-                Text("\(monitor.chipName) · \(monitor.logicalCores) núcleos")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-            Spacer(minLength: 0)
-            HeaderIconButton(
-                systemName: state.showsOwnIcon ? "menubar.arrow.down.rectangle" : "menubar.arrow.up.rectangle",
-                help: state.showsOwnIcon
-                    ? "Tirar o ícone próprio (continua no menu do Hone)"
-                    : "Separar num ícone próprio na barra de menus",
-                action: onToggleOwnIcon)
+        VibePanelHeader(title: "Stats",
+                        subtitle: "\(monitor.chipName) · \(monitor.logicalCores) núcleos",
+                        color: VibeToolColor.stats, mood: .awake, onBack: onBack) {
+            VibeOwnIconButton(showsOwnIcon: state.showsOwnIcon, action: onToggleOwnIcon)
         }
     }
 
     // MARK: Tiles
 
     private var tiles: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: VibeSpacing.s) {
             ForEach(visible) { metric in
                 MetricTile(title: metric.title,
                            value: text(for: metric),
@@ -132,16 +97,14 @@ struct StatsPanel: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             Text("Nenhuma métrica ligada. Liga o CPU, a memória, a GPU ou as ventoinhas para as veres na barra de menus.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(VibeFont.caption)
+                .foregroundStyle(VibeColor.text3)
                 .multilineTextAlignment(.center)
             Button("Abrir Definições", action: onSettings)
-                .controlSize(.small)
+                .buttonStyle(VibeLinkButtonStyle(.strong))
         }
         .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.07)))
+        .vibeCard(padding: 16)
     }
 
     /// Value shown in a tile.
@@ -164,10 +127,8 @@ struct StatsPanel: View {
             .id(metric)
             .transition(.asymmetric(insertion: .opacity, removal: .identity))
             .animation(.easeOut(duration: 0.1), value: metric)
-            .padding(12)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.07)))
+            .vibeCard(padding: 12)
     }
 
     @ViewBuilder
@@ -218,9 +179,10 @@ struct StatsPanel: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(bytes(memory?.used))
                     .font(.system(size: 15, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(VibeColor.text1)
                 Text(memory.map { "de \(Format.bytes($0.total))" } ?? "")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(VibeColor.text3)
                 Spacer(minLength: 8)
                 PressurePill(pressure: monitor.snapshot.pressure)
             }
@@ -249,8 +211,8 @@ struct StatsPanel: View {
                 InfoRow(title: "Memória em uso", value: gpu?.inUseMemory.map(Format.bytes) ?? Format.noData)
             }
             Text(gpuDescription(gpu))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(VibeFont.caption)
+                .foregroundStyle(VibeColor.text3)
                 .lineLimit(1)
             processList(for: .gpu)
         }
@@ -275,15 +237,18 @@ struct StatsPanel: View {
     private func fanRow(_ fan: FanReading?, index: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(fan?.name ?? "Ventoinha \(index + 1)").font(.system(size: 12))
+                Text(fan?.name ?? "Ventoinha \(index + 1)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(VibeColor.text2)
                 Spacer(minLength: 8)
                 Text(fan.map { "\(Format.rpm($0.rpm)) rpm" } ?? Format.noData)
                     .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(VibeColor.text1)
             }
             FractionBar(fraction: fan?.loadFraction ?? 0)
             Text(fan.map { "\(Format.rpm($0.minRPM))–\(Format.rpm($0.maxRPM)) rpm" } ?? " ")
                 .font(.system(size: 10).monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(VibeColor.text3)
         }
         .accessibilityElement(children: .combine)
     }
@@ -303,5 +268,72 @@ struct TopAnchoredLayout: Layout {
         guard let child = subviews.first else { return }
         child.place(at: CGPoint(x: bounds.minX, y: bounds.minY), anchor: .topLeading,
                     proposal: ProposedViewSize(width: bounds.width, height: nil))
+    }
+}
+
+// MARK: - Preview fixtures
+
+/// Entry point for Hone's offscreen preview renders: fake readings, nothing samples.
+public enum StatsPreview {
+    public enum Tab: Sendable { case cpu, memory, gpu, fan }
+
+    @MainActor
+    public static func panel(_ tab: Tab = .cpu, back: (() -> Void)? = nil) -> AnyView {
+        let suite = "pt.hone.stats-preview"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        let monitor = SystemMonitor(settings: StatsSettings(store: defaults))
+
+        var snapshot = StatsSnapshot()
+        snapshot.cpu = CPUUsage(total: 0.37, user: 0.24, system: 0.13, idle: 0.63,
+                                perCore: [0.62, 0.55, 0.31, 0.12, 0.44, 0.21, 0.08, 0.33, 0.7, 0.18, 0.05, 0.27])
+        snapshot.load = LoadAverage(one: 2.84, five: 2.51, fifteen: 2.12)
+        snapshot.memory = MemorySampler.breakdown(
+            counters: VMCounters(internalPages: 634_842, purgeable: 6_718, wired: 219_287,
+                                 compressor: 414_007, external: 239_276, free: 5_646),
+            pageSize: 16_384, total: 25_769_803_776)
+        snapshot.swap = SwapUsage(total: 4 << 30, used: 1_300_000_000)
+        snapshot.gpu = GPUReading(device: 0.18, renderer: 0.16, tiler: 0.07, inUseMemory: 1 << 30,
+                                  name: "Apple GPU", cores: 20)
+        snapshot.fans = [FanReading(name: "Ventoinha 1", rpm: 3417, minRPM: 2317, maxRPM: 7826)]
+        monitor.snapshot = snapshot
+        monitor.fanCount = 1
+        monitor.unavailable = [:]
+        for (index, metric) in Metric.allCases.enumerated() {
+            var buffer = RingBuffer(capacity: SystemMonitor.historyLength)
+            for i in 0..<SystemMonitor.historyLength {
+                buffer.append(0.3 + 0.22 * sin(Double(i) / 4 + Double(index)) + 0.08 * sin(Double(i) * 1.7))
+            }
+            monitor.history[metric] = buffer
+        }
+
+        let state = PanelState()
+        switch tab {
+        case .cpu: state.selected = .cpu
+        case .memory: state.selected = .memory
+        case .gpu: state.selected = .gpu
+        case .fan: state.selected = .fan
+        }
+
+        let processes = TopProcessesModel()
+        let names = ["Safari", "Xcode", "WindowServer", "Slack", "Finder"]
+        processes.rowsByMetric = [
+            .cpu: names.enumerated().map {
+                ProcessRow(id: Int32($0.offset), name: $0.element, cpu: 38 / Double($0.offset + 1),
+                           memoryBytes: 0)
+            },
+            .memory: names.enumerated().map {
+                ProcessRow(id: Int32($0.offset), name: $0.element, cpu: 0,
+                           memoryBytes: UInt64(2_400_000_000 / ($0.offset + 1)))
+            },
+            .gpu: names.prefix(3).enumerated().map {
+                ProcessRow(id: Int32($0.offset), name: $0.element, cpu: 0, memoryBytes: 0,
+                           gpu: 21 / Double($0.offset + 1))
+            },
+        ]
+        processes.fresh = [.cpu, .memory, .gpu]
+
+        return AnyView(StatsPanel(monitor: monitor, state: state, processes: processes,
+                                  onSettings: {}, onBack: back, onToggleOwnIcon: {}))
     }
 }

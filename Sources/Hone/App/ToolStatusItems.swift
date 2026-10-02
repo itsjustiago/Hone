@@ -155,6 +155,9 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
         pop.animates = true
         pop.delegate = self
         pop.contentViewController = hosting
+        // Same dark, edge-to-edge look as Hone's own popover.
+        pop.appearance = NSAppearance(named: .darkAqua)
+        pop.hasFullSizeContent = true
         popover = pop
         return pop
     }
