@@ -16,7 +16,7 @@ enum PreviewRenderer {
         }
 
         let mixed = Fixture.tools(off: ["windowPeek", "quitOnClose", "sleepy"])
-        let pages: [(String, AnyView)] = [
+        var pages: [(String, AnyView)] = [
             ("home", popover(mixed, selected: "scroll")),
             ("home-alerts", popover(
                 Fixture.tools(off: ["windowPeek", "sleepy"],
@@ -27,6 +27,8 @@ enum PreviewRenderer {
             ("home-momentary", popover(mixed, selected: "cleanKeyboard")),
             ("blobs", AnyView(blobSheet)),
         ]
+        // Other surfaces add their pages in their own files.
+        pages += kitPages + settingsPages
 
         var ok = true
         for (name, view) in pages {
