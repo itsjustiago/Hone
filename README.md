@@ -61,6 +61,34 @@ autorização da app antiga não passa). As miniaturas do Window Peek passaram a
 opt-in (desligadas por omissão), para que o indicador de gravação não acenda a
 cada hover no Dock.
 
+## Stats — CPU, memória, GPU e ventoinhas
+
+O Stats mostra **CPU, memória, GPU e ventoinhas (rpm)** em direto na barra de menus,
+como widgets pequenos lado a lado (etiqueta por cima do valor, ou um símbolo antes
+do valor) num único ícone. Clicar abre um painel com o detalhe de cada um —
+histórico, utilizador/sistema/inativo e núcleos, pressão e swap da memória, GPU por
+componente, rpm de cada ventoinha — e os 5 processos que mais gastam (CPU e
+memória).
+
+Substitui a app [Stats](https://github.com/exelban/Stats) e vem **desligado por
+omissão**. Ao ligá-lo, o Hone fecha a app Stats antiga (`eu.exelban.Stats`); se
+ainda não aceitaste fechar as apps antigas, o Hone pergunta primeiro. Não há dados
+partilhados com ela: as preferências do Stats vivem nas definições do próprio Hone
+(`stats.*`) e o ícone próprio é independente.
+
+Nas Definições escolhes que métricas aparecem, se levam etiquetas, se as cores
+seguem a carga (laranja a partir de 60%, vermelho a partir de 85%) e de quanto em
+quanto tempo atualiza (1, 2, 5 ou 10 s). Só mede enquanto alguém vê: com o ícone
+próprio visível ou com o painel aberto.
+
+Está escrito de raiz com APIs do sistema — `host_statistics` e `sysctl` para CPU e
+memória, IOKit para a GPU, o SMC (não documentado, **só leitura**) para as
+ventoinhas e `/usr/bin/top` para os processos. Não pede permissões nem captura o
+ecrã. As ventoinhas nunca são controladas, e a métrica aparece desligada em Macs
+sem ventoinhas.
+
+**Fora de âmbito:** disco, rede, bateria e sensores (temperaturas).
+
 ## Requirements
 
 - macOS 14+
@@ -115,6 +143,10 @@ Sources/Hone/
     ├── QuitOnClose/ QuitOnCloseModule · QuitOnCloseController · AppWindowWatcher ·
     │               QuitOnCloseSettings(+View)
     └── KeySwap/    KeySwapModule · KeySwapTap · KeySwapSettings(+View)
+
+Sources/StatsKit/   Kit à parte, como SleepyKit / ClippyKit / ScreenlyKit (só `StatsTool` é público)
+                    StatsTool · SystemMonitor · CPUSampler · MemorySampler · GPUSampler ·
+                    FanSampler (SMC, só leitura) · TopProcesses · MenuBarRenderer · MenuPanel
 ```
 
 Most tools are on/off **toggles**, but a module can instead be **momentary** —

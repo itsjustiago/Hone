@@ -43,6 +43,7 @@ final class ModuleManager {
             ClippyModule.make(),
             ScreenlyModule.make(),
             SleepyModule.make(),
+            StatsModule.make(),
             // Momentary tools go last so the Settings sidebar matches the popover.
             CleanKeyboardModule(),
         ]

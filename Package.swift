@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Hone",
-            dependencies: ["SleepyKit", "ClippyKit", "ScreenlyKit"],
+            dependencies: ["SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit"],
             path: "Sources/Hone",
             swiftSettings: [
                 // The system-level modules (event taps, AX API, C callbacks) are
@@ -34,6 +34,11 @@ let package = Package(
             path: "Sources/ScreenlyKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .target(
+            name: "StatsKit",
+            path: "Sources/StatsKit",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "ScreenlyKitTests",
             dependencies: ["ScreenlyKit"],
@@ -44,6 +49,12 @@ let package = Package(
             name: "SleepyKitTests",
             dependencies: ["SleepyKit"],
             path: "Tests/SleepyKitTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "StatsKitTests",
+            dependencies: ["StatsKit"],
+            path: "Tests/StatsKitTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
