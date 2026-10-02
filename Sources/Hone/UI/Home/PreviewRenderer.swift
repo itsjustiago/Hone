@@ -85,7 +85,7 @@ enum PreviewRenderer {
 }
 
 /// The ten tools as fake values (mirrors the modules' metadata).
-private enum Fixture {
+enum Fixture {
     struct Spec {
         let id, title, shortTitle, category, tagline, icon: String
         let tint: Color

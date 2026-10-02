@@ -3,6 +3,7 @@ import HoneDesign
 
 // MARK: - Module icon (app-icon style squircle)
 
+/// Only the keyboard-lock overlay still wears it; Settings and the home use the mascot.
 struct ModuleIcon: View {
     let systemName: String
     let tint: Color
@@ -27,45 +28,28 @@ struct ModuleIcon: View {
     }
 }
 
-// MARK: - Section (label + card)
+// MARK: - Section, card and rows (forward to HoneDesign)
+
+// Hone's pages and the Kits' pages share one look; these keep the names the
+// pages already use and hand the drawing to `HoneDesign`.
 
 struct SettingsSection<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .tracking(0.6)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 6)
-            SettingsCard { content }
-        }
-    }
+    var body: some View { VibeSettingsSection(title: title) { content } }
 }
 
 struct SettingsCard<Content: View>: View {
     @ViewBuilder var content: Content
 
-    var body: some View {
-        VStack(spacing: 0) { content }
-            .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .strokeBorder(.primary.opacity(0.07))
-            )
-    }
+    var body: some View { VibeSettingsCard { content } }
 }
 
 /// A hairline divider inset to align with row text (used between rows in a card).
 struct RowDivider: View {
-    var body: some View {
-        Divider().padding(.leading, 14)
-    }
+    var body: some View { VibeRowDivider() }
 }
-
-// MARK: - Rows
 
 /// Generic row: title (+ optional subtitle) on the left, any control on the right.
 struct SettingsRow<Trailing: View>: View {
@@ -73,23 +57,7 @@ struct SettingsRow<Trailing: View>: View {
     var subtitle: String? = nil
     @ViewBuilder var trailing: Trailing
 
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 8)
-            trailing
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
+    var body: some View { VibeSettingsRow(title: title, subtitle: subtitle) { trailing } }
 }
 
 /// Toggle row.
@@ -99,14 +67,7 @@ struct ToggleRow: View {
     let tint: Color
     @Binding var isOn: Bool
 
-    var body: some View {
-        SettingsRow(title: title, subtitle: subtitle) {
-            Toggle("", isOn: $isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(tint)
-        }
-    }
+    var body: some View { VibeToggleRow(title: title, subtitle: subtitle, tint: tint, isOn: $isOn) }
 }
 
 /// Slider row with a live value caption under the title.
@@ -118,17 +79,10 @@ struct SliderRow: View {
     let range: ClosedRange<Double>
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(valueLabel).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 12)
+        VibeSettingsRow(title: title, subtitle: valueLabel) {
             Slider(value: $value, in: range)
-                .tint(tint)
+                .tint(tint.vibeControlTint)
                 .frame(width: 190)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 }

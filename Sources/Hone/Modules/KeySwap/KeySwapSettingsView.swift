@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import HoneDesign
 import UniformTypeIdentifiers
 
 struct KeySwapSettingsView: View {
@@ -43,7 +44,7 @@ struct KeySwapSettingsView: View {
                     if permissions.isAccessibilityTrusted {
                         Label("Concedida", systemImage: "checkmark.circle.fill")
                             .font(.callout)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(VibeColor.success)
                             .labelStyle(.titleAndIcon)
                     } else {
                         Button("Conceder…") { permissions.openAccessibilitySettings() }
