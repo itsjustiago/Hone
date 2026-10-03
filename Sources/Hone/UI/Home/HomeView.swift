@@ -214,6 +214,9 @@ private struct HeroCard: View {
         Text(tool.title)
             .font(VibeFont.title)
             .foregroundStyle(VibeColor.text1)
+            // The longest name (Comando ⇄ Controlo) shrinks a little beside the
+            // switch rather than losing its end.
+            .minimumScaleFactor(0.9)
     }
 
     @ViewBuilder

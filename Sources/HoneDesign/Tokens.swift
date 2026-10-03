@@ -116,7 +116,7 @@ public enum VibeMetrics {
     public static var cardWidth: CGFloat { panelWidth - 2 * VibeSpacing.outer }
     public static let pillHeight: CGFloat = 30
     public static let barTab = CGSize(width: 34, height: 24)
-    public static let toggle = CGSize(width: 30, height: 18)
+    public static let toggle = CGSize(width: 40, height: 24)
     public static let dot: CGFloat = 6
     public static let cornerButton: CGFloat = 16
 }
