@@ -46,9 +46,9 @@ public struct VibeDot: View {
 
 // MARK: - Switch
 
-/// Hone's switch: a 30×18 capsule in the tool's colour. The knob turns dark on
-/// light tracks (white, yellow) so it stays visible. `isPaused` keeps it on but
-/// visibly held back.
+/// Hone's switch: a capsule (`VibeMetrics.toggle`) in the tool's colour. The knob
+/// turns dark on light tracks (white, yellow) so it stays visible. `isPaused` keeps
+/// it on but visibly held back.
 public struct VibeToggleStyle: ToggleStyle {
     let tint: Color
     let isPaused: Bool

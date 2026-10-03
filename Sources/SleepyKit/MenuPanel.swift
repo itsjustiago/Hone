@@ -51,6 +51,8 @@ struct MenuPanelContent: View {
     let autoOffMinutes: Int
     let passwordlessInstalled: Bool
     let showsOwnIcon: Bool
+    /// Offscreen renders can't draw AppKit views, which the auto-off menu is anchored to.
+    var offscreen = false
     var onBack: (() -> Void)?
     var onToggleSleep: () -> Void = {}
     var onEnablePasswordless: () -> Void = {}
@@ -60,6 +62,8 @@ struct MenuPanelContent: View {
 
     private var tint: Color { VibeToolColor.sleepy }
     private let blobHeight: CGFloat = 50
+    /// Gap between the own-icon button and the switch in the card's corner.
+    private let cornerSpacing: CGFloat = 8
 
     var body: some View {
         VStack(spacing: VibeSpacing.cardGap) {
@@ -79,7 +83,7 @@ struct MenuPanelContent: View {
         }
         .vibePanelLayout()
         .vibePanelBackground()
-        // Keep controls (the picker) fully coloured even when the popover
+        // Keep controls (the auto-off menu) fully coloured even when the popover
         // window isn't key.
         .environment(\.controlActiveState, .active)
     }
@@ -101,7 +105,8 @@ struct MenuPanelContent: View {
                         .font(VibeFont.title)
                         .foregroundStyle(VibeColor.text1)
                 }
-                .padding(.trailing, 70)
+                // Clear of the corner buttons.
+                .padding(.trailing, VibeMetrics.cornerButton + cornerSpacing + VibeMetrics.toggle.width + 8)
                 VibeStatusLine(isActive ? "Mac e ecrã acordados" : "Sleep normal",
                                color: isActive ? tint : VibeColor.dotOff)
                 Text(statusLine)
@@ -116,7 +121,7 @@ struct MenuPanelContent: View {
         .frame(minHeight: 72)
         .vibeCard(padding: VibeSpacing.cardPadding)
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 8) {
+            HStack(spacing: cornerSpacing) {
                 VibeOwnIconButton(showsOwnIcon: showsOwnIcon, action: onToggleOwnIcon)
                 Toggle("Impedir sleep", isOn: Binding(
                     get: { isActive },
@@ -149,16 +154,17 @@ struct MenuPanelContent: View {
                 .font(VibeFont.body)
                 .foregroundStyle(VibeColor.text2)
             Spacer(minLength: 8)
-            Picker("Desligar sozinho", selection: Binding(get: { autoOffMinutes },
-                                                          set: { onChangeAutoOff($0) })) {
-                ForEach(SleepController.autoOffOptions) { Text($0.short).tag($0.minutes) }
-            }
-            .labelsHidden()
-            .controlSize(.small)
-            .fixedSize()
+            VibeMenuPicker("Desligar sozinho",
+                           selection: Binding(get: { autoOffMinutes }, set: { onChangeAutoOff($0) }),
+                           options: Self.autoOffChoices,
+                           offscreen: offscreen)
         }
         .padding(.horizontal, 8)
-        .frame(minHeight: 30)
+        .frame(minHeight: 36)
+    }
+
+    private static let autoOffChoices = SleepController.autoOffOptions.map {
+        VibeMenuPicker<Int>.Option($0.minutes, title: $0.title, label: $0.short)
     }
 }
 
@@ -175,6 +181,7 @@ public enum SleepyPreview {
             autoOffMinutes: 60,
             passwordlessInstalled: passwordlessInstalled,
             showsOwnIcon: true,
+            offscreen: true,
             onBack: back))
     }
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Pieces of the embedded tools' menu panels (Clippy, Screenly, Sleepy, Stats):
@@ -326,4 +327,126 @@ public struct VibeActionPill: View {
     }
 
     private var lit: Bool { hovering && isEnabled }
+}
+
+// MARK: - Menu picker
+
+/// A pill with the current choice that opens a menu of the others. Stands in for
+/// the native pop-up in the panels, which at this size is too small to hit and
+/// ignores Hone's look. A SwiftUI `Menu` can't be the pill (on macOS it draws
+/// only the text and image of its label), so the pill is a plain button that
+/// pops an `NSMenu` up under itself.
+public struct VibeMenuPicker<Value: Hashable>: View {
+    public struct Option: Identifiable {
+        public let value: Value
+        /// In the menu.
+        public let title: String
+        /// On the pill: short enough for a narrow row.
+        public let label: String
+        public var id: Value { value }
+
+        public init(_ value: Value, title: String, label: String) {
+            self.value = value
+            self.title = title
+            self.label = label
+        }
+    }
+
+    let title: String
+    let options: [Option]
+    @Binding var selection: Value
+    /// Offscreen renders can't draw the AppKit view the menu is anchored to.
+    let offscreen: Bool
+
+    @State private var hovering = false
+    @State private var anchor = MenuAnchor()
+
+    public init(_ title: String, selection: Binding<Value>, options: [Option], offscreen: Bool = false) {
+        self.title = title
+        self._selection = selection
+        self.options = options
+        self.offscreen = offscreen
+    }
+
+    private var current: Option? { options.first { $0.value == selection } }
+
+    public var body: some View {
+        Button(action: showMenu) { pill }
+            .buttonStyle(VibePressStyle())
+            .background { if !offscreen { MenuAnchorView(anchor: anchor) } }
+            .onHover { hovering = $0 }
+            .animation(VibeMotion.quick, value: hovering)
+            .accessibilityLabel(title)
+            .accessibilityValue(current?.title ?? "")
+    }
+
+    private var pill: some View {
+        HStack(spacing: 7) {
+            Text(current?.label ?? "")
+                .font(VibeFont.action)
+                .foregroundStyle(hovering ? VibeColor.text1 : VibeColor.text2)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(hovering ? VibeColor.text2 : VibeColor.text3)
+        }
+        .padding(.horizontal, 13)
+        .frame(height: 30)
+        .background(hovering ? VibeColor.control.vibeMix(over: .white, amount: 0.94) : VibeColor.control,
+                    in: Capsule(style: .continuous))
+        .overlay(Capsule(style: .continuous).strokeBorder(VibeColor.selectedBorder, lineWidth: 1))
+        .contentShape(Capsule(style: .continuous))
+    }
+
+    /// The menu hangs under the pill, its right edge in line with the pill's.
+    private func showMenu() {
+        let target = MenuTarget { index in
+            if options.indices.contains(index) { selection = options[index].value }
+        }
+        anchor.target = target
+
+        let menu = NSMenu(title: title)
+        menu.autoenablesItems = false
+        menu.appearance = NSAppearance(named: .darkAqua)
+        for (index, option) in options.enumerated() {
+            let item = NSMenuItem(title: option.title, action: #selector(MenuTarget.choose(_:)), keyEquivalent: "")
+            item.target = target
+            item.tag = index
+            item.state = option.value == selection ? .on : .off
+            menu.addItem(item)
+        }
+
+        var origin = NSEvent.mouseLocation
+        if let view = anchor.view, let window = view.window {
+            let pill = window.convertToScreen(view.convert(view.bounds, to: nil))
+            origin = NSPoint(x: pill.maxX - max(menu.size.width, pill.width), y: pill.minY - 4)
+        }
+        menu.popUp(positioning: nil, at: origin, in: nil)
+    }
+}
+
+/// The AppKit side of a `VibeMenuPicker`: the view that knows where the pill is
+/// on screen, and the target of the menu that is up (`NSMenuItem` doesn't retain it).
+private final class MenuAnchor {
+    weak var view: NSView?
+    var target: MenuTarget?
+}
+
+private struct MenuAnchorView: NSViewRepresentable {
+    let anchor: MenuAnchor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        anchor.view = view
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) { anchor.view = view }
+}
+
+private final class MenuTarget: NSObject {
+    let pick: (Int) -> Void
+
+    init(pick: @escaping (Int) -> Void) { self.pick = pick }
+
+    @objc func choose(_ item: NSMenuItem) { pick(item.tag) }
 }
