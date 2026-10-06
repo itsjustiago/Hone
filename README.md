@@ -16,7 +16,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 | **Window Peek** | DockDoor | ✅ Working (v1) | Hover a Dock icon to preview that app's open windows as live thumbnails, then click one to focus it. |
 | **Alt-Tab Visual** | [AltTab](https://github.com/lwouis/alt-tab-macos) | ✅ Working (v1) | Hold ⌥ Option and tap Tab for a full-screen grid of every open window — app icons by default, or opt into static / live window previews; cycle by keyboard or mouse, release to switch. |
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
-| **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows — right away, or after a delay you pick (default 1 min), cancelled if you open a window again. Per-app lists, and the Finder is never touched. |
+| **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows — right away, or after a delay you pick (default 1 min), cancelled if you open a window again. Per-app lists; it only quits an app it can *prove* has no windows left, and the Finder and Steam are never touched. |
 | **Key Swap** | Karabiner-Elements | ✅ Working | Swaps ⌘ with ⌃ system-wide, both keys and both directions, so ⌃C / ⌃V / ⌃Z copy, paste and undo like on Windows. Tab is never swapped — ⌘Tab stays the app switcher, ⌃Tab keeps cycling tabs. ⌃+click stays the macOS right-click; per-app exception list. |
 
 ## Clippy, Screenly e Sleepy — agora dentro do Hone
@@ -149,7 +149,7 @@ Sources/Hone/
     ├── CleanKeyboard/ CleanKeyboardModule · CleanKeyboardController · KeyboardBlocker ·
     │               CleanKeyboardOverlay(+View) · CleanKeyboardSettings(+View)
     ├── QuitOnClose/ QuitOnCloseModule · QuitOnCloseController · AppWindowWatcher ·
-    │               QuitOnCloseSettings(+View)
+    │               QuitRules · WindowCensus · QuitOnCloseSettings(+View)
     └── KeySwap/    KeySwapModule · KeySwapTap · KeySwapSettings(+View)
 
 Sources/StatsKit/   Kit à parte, como SleepyKit / ClippyKit / ScreenlyKit (só `StatsTool` é público)
@@ -244,48 +244,76 @@ is registered individually. A watcher never reports anything on attach, only
 destruction, so an app that has just launched and hasn't drawn a window yet can't
 be mistaken for one that was just closed.
 
-When a window dies, the app's remaining windows are counted through the AX API
-after a ~0.35 s debounce, dropping floating palettes by subrole. Two guards stand
-between "zero windows" and quitting:
+When a window dies, the app's remaining windows are counted after a ~0.35 s
+debounce — and **quit on proof, never on silence** is the rule that decides what
+"zero" means. A quit can't be taken back (Steam was once quit three minutes after
+every launch, the game it had started with it), so an app is left alone unless
+every one of these holds (`QuitRules`, kept free of system calls so it is unit
+tested; `WindowCensus` gathers the evidence):
 
-- an app that **didn't answer** the AX query (`stalled`) is not an app without
-  windows, and is left alone;
-- zero is **confirmed a second time** one debounce later, because leaving full
-  screen (and a few apps mid-transition) passes through a moment with no windows.
+- **the AX query answered.** Only a clean `AXWindows` reply is an answer: a
+  timeout, a refusal or an app that doesn't expose the attribute is *doubt*, not
+  an empty list;
+- **nothing counts as a window.** Minimized windows count (an app with a window in
+  the Dock was not closed), floating palettes don't, and `AXUnknown` windows —
+  the invisible helpers apps draw — only count while minimized;
+- **nothing of the app is on screen.** `CGWindowListCopyWindowInfo(.optionOnScreenOnly)`
+  is the veto for apps whose windows AX doesn't list (owner, layer and bounds
+  only — no screen capture, no permission);
+- **it isn't hidden** (⌘H) **and holds no running GUI child** — a launcher with
+  its game up is in use with nothing on screen of its own (children are found
+  with `proc_listchildpids`, a few levels down);
+- **it was seen with a window in this Space.** `WindowStamps` records the apps
+  seen with an ordinary AX window since the Spaces last changed (Space switch,
+  wake, display change). An app that AX never shows a window for can't earn the
+  mark, and one whose windows are all on another Space or in full screen loses it
+  as soon as the user moves away. An app that itself announced a window closing,
+  with no other known to its watcher, carries a stale mark over — otherwise
+  closing a full-screen window (which also changes the Space) could never quit
+  anything.
 
+Zero is **confirmed a second time** one debounce later, because leaving full
+screen (and a few apps mid-transition) passes through a moment with no windows.
 Confirmed zero starts a countdown rather than quitting, unless the delay is set to
-*Imediato* (`0`), which behaves exactly as before. The delay is picked from a list
-(10 s to 1 h, default 1 min). `kAXWindowCreatedNotification` cancels a pending quit
-outright — the app is in use again — and a further destroyed window does **not**
-restart the countdown, so emptying an app one window at a time can't keep pushing
-its own deadline away. When the timer fires nothing from the earlier verdict is
-reused: the app is still running, still watchable, still allowed by the lists, and
-the windows are counted again (same subrole filter, same `stalled` rule) before it
-is asked to quit.
+*Imediato* (`0`). The delay is picked from a list (10 s to 1 h, default 1 min).
+`kAXWindowCreatedNotification` cancels a pending quit outright — the app is in use
+again — and a further destroyed window does **not** restart the countdown, so
+emptying an app one window at a time can't keep pushing its own deadline away.
+When the timer fires nothing from the earlier verdict is reused: the app is still
+running, still watchable, still allowed by the lists, and the whole proof above is
+gathered again before it is asked to quit.
 
 That notification is the fast path, never the only one. A window can go away with
-nobody listening — while Hone wasn't running, before the tool was switched on, or
-in an app that never announces the destruction at all — leaving the app windowless
-with no one counting, which is how apps ended up sitting in the Dock for days. So
-a sweep every 20 s re-counts the windows of every app that isn't already being
-decided about, and feeds the answer through the very same guards. It costs one AX
-query per app, and any app that answers with a window is dropped on the spot. An
-app launched less than a minute ago is skipped (it hasn't failed to draw a window,
-it just hasn't got there yet), and an app that was asked to quit is left alone for
-five minutes, so one that refuses — an unsaved document, a modal sheet — is never
-nagged sweep after sweep.
+nobody listening — in an app that never announces the destruction at all — leaving
+the app windowless with no one counting. So a sweep every 20 s re-counts the
+windows of every app that isn't already being decided about, and feeds the answer
+through the very same proof. It costs one AX query per app, and any app that
+answers with a window is dropped on the spot. An app launched less than a minute
+ago is skipped (it hasn't failed to draw a window, it just hasn't got there yet),
+and an app that was asked to quit is left alone for five minutes, so one that
+refuses — an unsaved document, a modal sheet — is never nagged sweep after sweep.
+The price of the proof: an app that was already windowless before Hone saw it with
+a window is not auto-quit until it gets one.
 
-Minimized windows still count as open — a window sitting in the Dock means the
-app was not closed. Quitting is `NSRunningApplication.terminate()`, the normal
-quit AppleEvent and never `forceTerminate`, so the app can still show its "save
-changes?" sheet or refuse outright.
+Every decision that matters is logged — `quitting`, the countdown start, and
+`left alone` with the reason (once per change, not every sweep). The full path is
+needed because `log` is a zsh builtin:
+
+```
+/usr/bin/log show --predicate 'subsystem == "com.tiagof.hone" AND category == "quit-on-close"' --last 1h
+```
+
+Quitting is `NSRunningApplication.terminate()`, the normal quit AppleEvent and
+never `forceTerminate`, so the app can still show its "save changes?" sheet or
+refuse outright.
 
 Two modes: **all apps except a list**, or **only the apps you pick** (two separate
 lists, so switching mode doesn't lose the other). Underneath both there is a hard
-floor in code — Hone itself, the **Finder**, apps with no bundle id, and anything
-not `.regular` are never watched and never quit; the Finder because the desktop
-and the Dock's Finder icon depend on it running with no windows. The tool does no
-screen capture at all.
+floor in code — Hone itself, the **Finder**, **Steam**, apps with no bundle id, and
+anything not `.regular` are never watched and never quit; the Finder because the
+desktop and the Dock's Finder icon depend on it running with no windows, Steam
+because it lives happily with its window closed or minimized and quitting it ends
+the game it launched. The tool does no screen capture at all.
 
 ### How the Key Swap tool works
 

@@ -29,6 +29,10 @@ final class AppWindowWatcher {
     /// what was registered.
     private var observedWindows: [AXUIElement] = []
 
+    /// How many windows this watcher has seen open and not yet seen close —
+    /// whichever Space they are on, which the AX window list can't say.
+    var knownWindowCount: Int { observedWindows.count }
+
     init?(pid: pid_t) {
         var observer: AXObserver?
         guard AXObserverCreate(pid, axWatcherCallback, &observer) == .success,

@@ -50,6 +50,13 @@ let package = Package(
             path: "Sources/StatsKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Hone's own pure logic (Quit on Close's decisions). The Kits have their own.
+        .testTarget(
+            name: "HoneTests",
+            dependencies: ["Hone"],
+            path: "Tests/HoneTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "ScreenlyKitTests",
             dependencies: ["ScreenlyKit"],
