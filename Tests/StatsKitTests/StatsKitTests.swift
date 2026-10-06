@@ -271,6 +271,45 @@ final class PresentationTests: XCTestCase {
         }
     }
 
+    private func fullSpec(labels: Bool) -> MenuBarSpec {
+        MenuBarSpec(items: Metric.allCases.map { .init(metric: $0, text: "0", tone: .normal) },
+                    showLabels: labels, colorize: false)
+    }
+
+    func testSegmentsRunLeftToRightAcrossTheImage() {
+        for labels in [true, false] {
+            let spec = fullSpec(labels: labels)
+            let segments = MenuBarRenderer.segments(for: spec)
+            XCTAssertEqual(segments.map(\.metric), Metric.allCases)
+            XCTAssertEqual(segments.first?.span.lowerBound, 0)
+            for (previous, next) in zip(segments, segments.dropFirst()) {
+                XCTAssertEqual(next.span.lowerBound, previous.span.upperBound + MenuBarRenderer.spacing)
+            }
+            XCTAssertEqual(segments.last?.span.upperBound, MenuBarRenderer.imageSize(for: spec, height: 22).width)
+        }
+        XCTAssertTrue(MenuBarRenderer.segments(for: MenuBarSpec(items: [], showLabels: true, colorize: false)).isEmpty)
+    }
+
+    func testAClickLandsOnTheReadoutUnderIt() {
+        let spec = fullSpec(labels: true)
+        for segment in MenuBarRenderer.segments(for: spec) {
+            let middle = (segment.span.lowerBound + segment.span.upperBound) / 2
+            XCTAssertEqual(MenuBarRenderer.segment(atX: segment.span.lowerBound, in: spec), segment)
+            XCTAssertEqual(MenuBarRenderer.segment(atX: middle, in: spec), segment)
+            XCTAssertEqual(MenuBarRenderer.segment(atX: segment.span.upperBound, in: spec), segment)
+        }
+    }
+
+    func testAClickBetweenOrBeyondGoesToTheNearestReadout() {
+        let spec = fullSpec(labels: true)
+        let gap = MenuBarRenderer.segments(for: spec)[0].span.upperBound
+        XCTAssertEqual(MenuBarRenderer.segment(atX: gap + 1, in: spec)?.metric, .cpu)
+        XCTAssertEqual(MenuBarRenderer.segment(atX: gap + MenuBarRenderer.spacing - 1, in: spec)?.metric, .memory)
+        XCTAssertEqual(MenuBarRenderer.segment(atX: -20, in: spec)?.metric, .cpu)
+        XCTAssertEqual(MenuBarRenderer.segment(atX: 10_000, in: spec)?.metric, .fan)
+        XCTAssertNil(MenuBarRenderer.segment(atX: 5, in: MenuBarSpec(items: [], showLabels: true, colorize: false)))
+    }
+
     func testTemplateOnlyWhenNotColoured() {
         var s = spec(.cpu, "7%", labels: true)
         XCTAssertTrue(MenuBarRenderer.image(for: s, height: 22).isTemplate)
@@ -548,5 +587,18 @@ final class StatsToolTests: XCTestCase {
         XCTAssertEqual(notifications, 1)
         sample(0.13)
         XCTAssertEqual(notifications, 2)
+    }
+
+    func testAClickOnAReadoutOpensThePanelOnIt() {
+        let tool = StatsTool(defaults: makeStore())
+        let spec = MenuBarSpec(items: Metric.allCases.map { .init(metric: $0, text: "–", tone: .normal) },
+                               showLabels: true, colorize: false)
+        // Last to first: a Mac without fans drops that readout after the first
+        // sample, and the ones before it must not move.
+        for segment in MenuBarRenderer.segments(for: spec).reversed() {
+            let middle = (segment.span.lowerBound + segment.span.upperBound) / 2
+            XCTAssertEqual(tool.panelWillShow(clickedAtX: middle), segment.span)
+            XCTAssertEqual(tool.panelState.selected, segment.metric)
+        }
     }
 }

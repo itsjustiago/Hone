@@ -104,10 +104,34 @@ enum MenuBarRenderer {
         return prefixWidth(metric) + value + unitWidth(metric)
     }
 
+    /// Where each widget sits across the image, left to right, in image points.
+    struct Segment: Equatable {
+        var metric: Metric
+        var span: ClosedRange<CGFloat>
+    }
+
+    static func segments(for spec: MenuBarSpec) -> [Segment] {
+        var segments: [Segment] = []
+        var x: CGFloat = 0
+        for item in spec.items {
+            let w = widgetWidth(metric: item.metric, showLabels: spec.showLabels)
+            segments.append(Segment(metric: item.metric, span: x...(x + w)))
+            x += w + spacing
+        }
+        return segments
+    }
+
+    /// The widget under `x` (points from the image's left edge). In the gap between
+    /// two, or beyond either end, the nearest one; nil when nothing is drawn.
+    static func segment(atX x: CGFloat, in spec: MenuBarSpec) -> Segment? {
+        func distance(to span: ClosedRange<CGFloat>) -> CGFloat {
+            x < span.lowerBound ? span.lowerBound - x : max(0, x - span.upperBound)
+        }
+        return segments(for: spec).min { distance(to: $0.span) < distance(to: $1.span) }
+    }
+
     static func imageSize(for spec: MenuBarSpec, height: CGFloat) -> NSSize {
-        let widths = spec.items.map { widgetWidth(metric: $0.metric, showLabels: spec.showLabels) }
-        let total = widths.reduce(0, +) + spacing * CGFloat(max(0, widths.count - 1))
-        return NSSize(width: total, height: height)
+        NSSize(width: segments(for: spec).last?.span.upperBound ?? 0, height: height)
     }
 
     static func image(for spec: MenuBarSpec, height: CGFloat = NSStatusBar.system.thickness) -> NSImage {
@@ -117,12 +141,12 @@ enum MenuBarRenderer {
             return fallback
         }
         let template = spec.isTemplate
+        let segments = segments(for: spec)
         let image = NSImage(size: imageSize(for: spec, height: height), flipped: false) { _ in
-            var x: CGFloat = 0
-            for item in spec.items {
-                let w = widgetWidth(metric: item.metric, showLabels: spec.showLabels)
-                draw(item, in: NSRect(x: x, y: 0, width: w, height: height), spec: spec, template: template)
-                x += w + spacing
+            for (item, segment) in zip(spec.items, segments) {
+                let rect = NSRect(x: segment.span.lowerBound, y: 0,
+                                  width: segment.span.upperBound - segment.span.lowerBound, height: height)
+                draw(item, in: rect, spec: spec, template: template)
             }
             return true
         }
