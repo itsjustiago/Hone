@@ -10,7 +10,7 @@ public final class StatsTool {
     private let defaults: UserDefaults
     private let settings: StatsSettings
     let monitor: SystemMonitor
-    private let panelState = PanelState()
+    let panelState = PanelState()
     private let processes = TopProcessesModel()
     private var cancellable: AnyCancellable?
 
@@ -116,6 +116,16 @@ public final class StatsTool {
         panelState.showsOwnIcon = showsOwnMenuBarIcon
         processes.panelOpened()
         monitor.sample(.extra)
+    }
+
+    /// `panelWillShow()` for a click on the menu bar icon at `x` points from the
+    /// image's left edge: the panel opens on the readout that was clicked. Returns
+    /// the part of the image that readout covers, for the popover to point at.
+    public func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? {
+        let hit = MenuBarRenderer.segment(atX: x, in: currentSpec)
+        if let hit { panelState.selected = hit.metric }
+        panelWillShow()
+        return hit?.span
     }
 
     public func makeMenuPanel(back: (() -> Void)?,

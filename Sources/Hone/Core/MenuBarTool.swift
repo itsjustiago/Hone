@@ -27,6 +27,12 @@ protocol MenuBarTool: HoneModule {
     /// Call right before the panel appears.
     func panelWillShow()
 
+    /// `panelWillShow()` for a click on the tool's own icon, `x` points from the
+    /// left edge of `menuBarImage`. A tool whose icon holds several readouts
+    /// (Stats) opens on the one that was clicked and returns the part of the
+    /// image it covers, for the popover to point at; the rest return nil.
+    func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
+
     /// Stops, but keeps persisted state (e.g. an armed sleep block) for whoever
     /// runs the tool next — Hone after a relaunch, or the legacy twin.
     func stopKeepingState()
@@ -89,15 +95,22 @@ protocol ToolKit: AnyObject {
     var onMenuBarImageChange: (() -> Void)? { get set }
     var showsOwnMenuBarIcon: Bool { get set }
     func panelWillShow()
+    func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
     func makeSettingsView() -> AnyView
 }
 
-/// Kits with nothing to hand over just stop, and ignore the twin quitting.
+/// Kits with nothing to hand over just stop, and ignore the twin quitting; a
+/// Kit whose icon is one thing has no part of it to open on.
 extension ToolKit {
     func stopKeepingState() { stop() }
     func legacyTwinWillQuit() {}
+
+    func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? {
+        panelWillShow()
+        return nil
+    }
 }
 
 /// Generic `MenuBarTool` wrapping a Kit. An adapter only supplies metadata —
@@ -188,6 +201,8 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
     func legacyTwinWillQuit() { kit.legacyTwinWillQuit() }
 
     func panelWillShow() { kit.panelWillShow() }
+
+    func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? { kit.panelWillShow(clickedAtX: x) }
 
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView {

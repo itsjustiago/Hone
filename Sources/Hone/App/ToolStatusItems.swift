@@ -66,6 +66,8 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var lastPopoverClose = Date.distantPast
+    /// The part of the icon image the popover was last opened from (see `togglePopover`).
+    private var lastPart: ClosedRange<CGFloat>?
 
     init(tool: any MenuBarTool, manager: ModuleManager, openSettings: @escaping (String) -> Void,
          dismissPanels: @escaping (String) -> Void) {
@@ -119,13 +121,40 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
         let popover = self.popover ?? makePopover()
         if popover.isShown {
             popover.performClose(nil)
-        } else {
-            // Clicking the icon while open dismisses via the transient behaviour
-            // first; don't let the same click reopen it.
-            if Date().timeIntervalSince(lastPopoverClose) < 0.2 { return }
-            tool.panelWillShow()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            return
         }
+        let click = clickInImage(of: button)
+        // Clicking the icon while open dismisses via the transient behaviour
+        // first; don't let the same click reopen it. A click on another part of
+        // the icon (Stats' FAN after its CPU) is a new one: that part opens.
+        let sameSpot = click.map { lastPart?.contains($0.x) ?? true } ?? true
+        if Date().timeIntervalSince(lastPopoverClose) < 0.2, sameSpot { return }
+
+        // The arrow points at the part that was clicked, when the tool has parts.
+        var anchor = button.bounds
+        lastPart = nil
+        if let click {
+            if let part = tool.panelWillShow(clickedAtX: click.x) {
+                lastPart = part
+                anchor = NSRect(x: click.originX + part.lowerBound, y: button.bounds.minY,
+                                width: part.upperBound - part.lowerBound, height: button.bounds.height)
+            }
+        } else {
+            tool.panelWillShow()
+        }
+        popover.show(relativeTo: anchor, of: button, preferredEdge: .minY)
+    }
+
+    /// Where the mouse click that fired the button's action landed, as points from
+    /// the left edge of the icon image (`originX` is where that edge is in the
+    /// button). Nil for a press without a mouse (VoiceOver) or a button with no image.
+    private func clickInImage(of button: NSStatusBarButton) -> (x: CGFloat, originX: CGFloat)? {
+        let mouse: [NSEvent.EventType] = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp]
+        guard let event = NSApp.currentEvent, mouse.contains(event.type),
+              let width = button.image?.size.width else { return nil }
+        // The image is centred in the button.
+        let originX = (button.bounds.width - width) / 2
+        return (button.convert(event.locationInWindow, from: nil).x - originX, originX)
     }
 
     private func makePopover() -> NSPopover {
