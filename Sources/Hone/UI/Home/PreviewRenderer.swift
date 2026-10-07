@@ -24,6 +24,7 @@ enum PreviewRenderer {
                 notices: [.update(version: "1.6.0"), .accessibility])),
             ("home-off", popover(Fixture.tools(off: Set(Fixture.all.map(\.id))))),
             ("blobs", AnyView(blobSheet)),
+            ("blobs-gaze", AnyView(gazeSheet)),
         ]
         // Other surfaces add their pages in their own files.
         pages += kitPages + settingsPages
@@ -68,6 +69,43 @@ enum PreviewRenderer {
             }
         }
         .padding(20)
+        .background(VibeColor.card)
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// The eyes turned toward a pointer in each direction (the pointer is the
+    /// small white dot), at hero size and pill size, awake and alert.
+    private static var gazeSheet: some View {
+        let targets: [(String, CGPoint)] = [
+            ("cima-esq", CGPoint(x: -30, y: -20)), ("cima", CGPoint(x: 52, y: -30)),
+            ("dir", CGPoint(x: 150, y: 30)), ("baixo", CGPoint(x: 52, y: 120)),
+            ("perto", CGPoint(x: 70, y: 30)),
+        ]
+        func cell(_ mood: Blob.Mood, height: CGFloat, target: CGPoint) -> some View {
+            let size = CGSize(width: height * 1.3, height: height)
+            return Color.clear
+                .frame(width: 190, height: 150)
+                .overlay(alignment: .topLeading) {
+                    Blob(color: VibeToolColor.scroll, mood: mood, height: height)
+                        .frame(width: size.width, height: size.height)
+                        .offset(x: 52 - size.width / 2, y: 30 - size.height / 2)
+                }
+                .overlay(alignment: .topLeading) {
+                    Circle().fill(.white).frame(width: 5, height: 5)
+                        .offset(x: target.x - 2.5, y: target.y - 2.5)
+                }
+                .blobsLookAt(target)
+        }
+        return VStack(alignment: .leading, spacing: 4) {
+            ForEach([(Blob.Mood.awake, 50.0), (.alert, 50.0), (.awake, 19.0)], id: \.1) { mood, height in
+                HStack(spacing: 4) {
+                    ForEach(targets, id: \.0) { _, target in
+                        cell(mood, height: height, target: target)
+                    }
+                }
+            }
+        }
+        .padding(10)
         .background(VibeColor.card)
         .environment(\.colorScheme, .dark)
     }

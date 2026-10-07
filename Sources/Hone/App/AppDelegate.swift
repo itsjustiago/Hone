@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import HoneDesign
 
 /// Owns the app-wide `ModuleManager` and drives its lifecycle. Also hosts the
 /// menu-bar popover so the dropdown gets the arrow + smooth grow animation
@@ -120,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             dismissToolPanels: { [weak self] id in self?.dismissToolPanels(id) },
             openSettings: { [weak self] moduleID in self?.showSettings(moduleID: moduleID) })
 
-        let hosting = NSHostingController(rootView: panel)
+        let hosting = NSHostingController(rootView: panel.blobsFollowPointer())
         hosting.sizingOptions = .preferredContentSize
 
         let pop = NSPopover()

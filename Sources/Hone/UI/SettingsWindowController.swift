@@ -46,7 +46,7 @@ final class SettingsWindowController {
 
     private func build() {
         let root = SettingsView(manager: manager, updateChecker: updateChecker, navigation: navigation)
-        let hosting = NSHostingController(rootView: root)
+        let hosting = NSHostingController(rootView: root.blobsFollowPointer())
 
         let window = NSWindow(contentViewController: hosting)
         window.setContentSize(NSSize(width: SettingsLayout.size.width, height: SettingsLayout.size.height))

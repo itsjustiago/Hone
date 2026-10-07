@@ -36,7 +36,8 @@ final class OnboardingController: NSObject, NSWindowDelegate {
         w.isReleasedWhenClosed = false
         w.delegate = self
         w.contentView = NSHostingView(
-            rootView: OnboardingView(manager: manager, onClose: { [weak self] in self?.window?.close() }))
+            rootView: OnboardingView(manager: manager, onClose: { [weak self] in self?.window?.close() })
+                .blobsFollowPointer())
         window = w
     }
 }
