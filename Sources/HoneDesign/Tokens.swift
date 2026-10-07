@@ -71,6 +71,8 @@ public enum VibePalette {
 /// Single source of truth for which colour each Hone tool wears — the Hone
 /// modules and the embedded Kits both read it from here.
 public enum VibeToolColor {
+    /// Hone itself: the white mascot.
+    public static let hone = VibePalette.white
     public static let scroll = VibePalette.blue
     public static let windowPeek = VibePalette.purple
     public static let altTab = VibePalette.teal
@@ -115,6 +117,8 @@ public enum VibeMetrics {
     /// Card width inside a panel.
     public static var cardWidth: CGFloat { panelWidth - 2 * VibeSpacing.outer }
     public static let pillHeight: CGFloat = 30
+    /// A tweak's or app's row on the home.
+    public static let rowHeight: CGFloat = 34
     public static let barTab = CGSize(width: 34, height: 24)
     public static let toggle = CGSize(width: 40, height: 24)
     public static let dot: CGFloat = 6

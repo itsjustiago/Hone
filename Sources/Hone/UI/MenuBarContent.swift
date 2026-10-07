@@ -22,8 +22,6 @@ struct MenuBarContent: View {
     /// Opens Settings on the given tool's page; `nil` keeps the current page.
     var openSettings: (String?) -> Void = { _ in }
     @State private var permissions = Permissions.shared
-    /// The tool on the hero card, remembered across launches.
-    @AppStorage("home.selectedTool") private var selectedToolID = ""
 
     /// Embedded tools whose panel can be shown right now (on, not paused).
     private var openableTools: [any MenuBarTool] {
@@ -59,8 +57,7 @@ struct MenuBarContent: View {
                     toggleOwnIcon: { manager.setShowsOwnMenuBarIcon(!tool.showsOwnMenuBarIcon, for: tool) })
                     .background(backShortcut)
             } else {
-                HomeView(tools: homeTools, notices: notices, selectedToolID: resolvedSelection,
-                         onSelect: { selectedToolID = $0 }, actions: actions)
+                HomeView(tools: homeTools, notices: notices, actions: actions)
             }
         }
     }
@@ -81,12 +78,6 @@ struct MenuBarContent: View {
     }
 
     // MARK: - Manager → values
-
-    private var resolvedSelection: String {
-        manager.modules.contains { $0.id == selectedToolID && $0.isAvailable }
-            ? selectedToolID
-            : manager.modules.first(where: \.isAvailable)?.id ?? ""
-    }
 
     /// Manager order, momentary tools last.
     private var homeTools: [HomeTool] {
