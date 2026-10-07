@@ -282,7 +282,7 @@ private struct ToolRow: View {
 
     private var fill: Color {
         let base = VibeColor.inset
-        return hovering && tool.canOpenPanel ? base.vibeMix(over: .white, amount: 0.03) : base
+        return hovering && tool.canOpenPanel ? base.vibeMix(over: .white, amount: 0.97) : base
     }
 
     private var border: Color {
