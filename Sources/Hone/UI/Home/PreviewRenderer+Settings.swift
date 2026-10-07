@@ -73,8 +73,10 @@ extension PreviewRenderer {
                                              @ViewBuilder detail: () -> Detail) -> AnyView {
         let entries = Fixture.all.map { spec -> SettingsEntry in
             let active = spec.momentary || !off.contains(spec.id)
+            let isApp = spec.panel || spec.momentary
             return SettingsEntry(id: spec.id, title: spec.title,
-                                 leading: .blob(spec.tint, active ? .awake : .asleep), isActive: active)
+                                 leading: isApp ? .blob(spec.tint, active ? .awake : .asleep) : .tweak(spec.icon, spec.tint),
+                                 isActive: active, isApp: isApp)
         }
         return AnyView(
             SettingsShell(tools: entries, selection: .constant(selected), height: height, detail: detail)
@@ -86,6 +88,7 @@ extension PreviewRenderer {
                              ownIcon: Bool? = nil, settings: AnyView) -> some View {
         let spec = Fixture.all.first { $0.id == id }!
         return ToolPage(title: spec.title, summary: spec.tagline, tint: spec.tint, mood: mood,
+                        symbol: spec.panel || spec.momentary ? nil : spec.icon,
                         banners: banners, dimmed: !enabled, settings: settings, permission: permission,
                         ownIcon: ownIcon.map { Binding.constant($0) }) {
             if spec.momentary {
