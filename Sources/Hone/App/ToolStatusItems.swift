@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import HoneDesign
 
 /// Gives each embedded tool (Sleepy, …) its own menu-bar icon when the user
 /// wants one, alongside Hone's. Same process, one `NSStatusItem` per tool.
@@ -176,7 +177,7 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
                 self.manager.setShowsOwnMenuBarIcon(!self.tool.showsOwnMenuBarIcon, for: self.tool)
             })
 
-        let hosting = NSHostingController(rootView: panel)
+        let hosting = NSHostingController(rootView: panel.blobsFollowPointer())
         hosting.sizingOptions = .preferredContentSize
 
         let pop = NSPopover()

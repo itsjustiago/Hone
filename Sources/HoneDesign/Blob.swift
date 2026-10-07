@@ -3,6 +3,8 @@ import SwiftUI
 /// Hone's mascot: a soft, wider-than-tall blob with two little eyes glancing
 /// down and to the right. Every tool wears one in its own colour; its mood
 /// tells the tool's state at a glance. Reads well from 18pt to 70pt tall.
+/// Under a root with `.blobsFollowPointer()` an open-eyed blob looks at the
+/// pointer instead of its default glance.
 public struct Blob: View {
     public enum Mood: Sendable, CaseIterable {
         /// On and working: open eyes that blink now and then.
@@ -19,6 +21,7 @@ public struct Blob: View {
     let glow: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(PointerGaze.self) private var gaze: PointerGaze?
     @State private var blinking = false
 
     /// - Parameters:
@@ -42,10 +45,17 @@ public struct Blob: View {
     }
 
     public var body: some View {
-        RoundedRectangle(cornerRadius: radius, style: .continuous)
+        // Read here, not inside the GeometryReader, so a moving pointer
+        // re-evaluates this body.
+        let pointer = mood == .asleep || reduceMotion ? nil : gaze?.pointer
+        return RoundedRectangle(cornerRadius: radius, style: .continuous)
             .fill(bodyColor)
             .frame(width: width, height: height)
-            .overlay { eyes }
+            .overlay {
+                GeometryReader { geo in
+                    eyes(look: look(at: pointer, in: geo))
+                }
+            }
             .shadow(color: glow && mood != .asleep ? color.opacity(0.3) : .clear, radius: 14)
             .task(id: mood) { await blinkLoop() }
             .accessibilityHidden(true)
@@ -61,17 +71,45 @@ public struct Blob: View {
         return [(lerp(0.37, 0.48), y), (lerp(0.67, 0.76), y)]
     }
 
+    /// Eyes straight ahead, as a pair centred on the body: where they sit
+    /// while following the pointer (the pointer then moves them from here).
+    private var lookCenters: [(CGFloat, CGFloat)] {
+        let y = lerp(0.52, 0.60)
+        let half = lerp(0.15, 0.14)
+        return [(0.5 - half, y), (0.5 + half, y)]
+    }
+
+    /// How far the eyes slide toward the pointer, per axis.
+    private var lookReach: CGSize {
+        let scale: CGFloat = mood == .alert ? 0.6 : 1
+        return CGSize(width: height * lerp(0.14, 0.17) * scale, height: height * lerp(0.10, 0.14) * scale)
+    }
+
+    /// `nil` = no pointer to follow: the default glance.
+    private func look(at pointer: CGPoint?, in geo: GeometryProxy) -> CGSize? {
+        guard let pointer else { return nil }
+        let frame = geo.frame(in: .named(PointerGaze.space))
+        return BlobGaze.shift(toward: pointer, from: CGPoint(x: frame.midX, y: frame.midY),
+                              height: height, reach: lookReach)
+    }
+
+    private static let glanceAnimation = Animation.easeOut(duration: 0.14)
+
     @ViewBuilder
-    private var eyes: some View {
+    private func eyes(look: CGSize?) -> some View {
         switch mood {
         case .awake:
             eyePair(size: CGSize(width: height * lerp(0.24, 0.14), height: height * lerp(0.22, 0.125)),
-                    centers: gazeCenters)
+                    centers: look == nil ? gazeCenters : lookCenters,
+                    shift: look ?? .zero)
+                .animation(Self.glanceAnimation, value: look)
                 .scaleEffect(y: blinking ? 0.12 : 1, anchor: .center)
         case .alert:
             let y = lerp(0.56, 0.66)
             eyePair(size: CGSize(width: height * lerp(0.26, 0.165), height: height * lerp(0.26, 0.165)),
-                    centers: [(lerp(0.36, 0.40), y), (lerp(0.62, 0.64), y)])
+                    centers: [(lerp(0.36, 0.40), y), (lerp(0.62, 0.64), y)],
+                    shift: look ?? .zero)
+                .animation(Self.glanceAnimation, value: look)
         case .asleep:
             // Closed: short soft dashes where the eyes were.
             eyePair(size: CGSize(width: height * lerp(0.24, 0.16), height: max(1.5, height * lerp(0.07, 0.045))),
@@ -80,14 +118,14 @@ public struct Blob: View {
         }
     }
 
-    private func eyePair(size: CGSize, centers: [(CGFloat, CGFloat)],
+    private func eyePair(size: CGSize, centers: [(CGFloat, CGFloat)], shift: CGSize = .zero,
                          color: Color = VibeColor.blobEye) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(centers.indices, id: \.self) { i in
                 Capsule(style: .continuous)
                     .fill(color)
                     .frame(width: size.width, height: size.height)
-                    .position(x: width * centers[i].0, y: height * centers[i].1)
+                    .position(x: width * centers[i].0 + shift.width, y: height * centers[i].1 + shift.height)
             }
         }
         .frame(width: width, height: height)
