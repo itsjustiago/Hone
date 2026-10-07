@@ -3,7 +3,7 @@ import HoneDesign
 
 /// Sizes the Settings window and its pages agree on.
 enum SettingsLayout {
-    static let size = CGSize(width: 680, height: 520)
+    static let size = CGSize(width: 680, height: 540)
     static let sidebarWidth: CGFloat = 216
     /// The window has no visible title bar; content starts below its buttons.
     static let titlebar: CGFloat = 40
@@ -28,6 +28,8 @@ struct SettingsEntry: Identifiable {
     enum Leading {
         case blob(Color, Blob.Mood)
         case symbol(String)
+        /// A Hone tweak: its symbol, in its colour (only apps wear a mascot).
+        case tweak(String, Color)
     }
 
     let id: String
@@ -35,6 +37,8 @@ struct SettingsEntry: Identifiable {
     let leading: Leading
     /// Off tools read dimmer, like their pills on the home.
     var isActive = true
+    /// A dedicated app (own mascot) rather than one of Hone's tweaks.
+    var isApp = false
 
     static let general = SettingsEntry(id: "general", title: "Geral", leading: .symbol("gearshape.fill"))
 }
@@ -73,8 +77,8 @@ struct SettingsShell<Detail: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             VStack(alignment: .leading, spacing: 2) {
-                VibeSectionLabel("Ferramentas")
-                ForEach(tools) { row($0) }
+                group("Ajustes", tools.filter { !$0.isApp })
+                group("Apps", tools.filter(\.isApp), gap: 8)
                 row(.general).padding(.top, 10)
             }
             .padding(.horizontal, 10)
@@ -105,6 +109,15 @@ struct SettingsShell<Detail: View>: View {
         .padding(.bottom, 14)
     }
 
+    /// A titled run of rows; left out when empty.
+    @ViewBuilder
+    private func group(_ title: String, _ entries: [SettingsEntry], gap: CGFloat = 0) -> some View {
+        if !entries.isEmpty {
+            VibeSectionLabel(title).padding(.top, gap)
+            ForEach(entries) { row($0) }
+        }
+    }
+
     private func row(_ entry: SettingsEntry) -> some View {
         SidebarRow(entry: entry, isSelected: entry.id == selection) {
             selection = entry.id
@@ -114,7 +127,7 @@ struct SettingsShell<Detail: View>: View {
 
     /// ↑ and ↓ walk the sidebar, as in a list.
     private func move(_ direction: MoveCommandDirection) {
-        let ids = tools.map(\.id) + [SettingsEntry.general.id]
+        let ids = (tools.filter { !$0.isApp } + tools.filter(\.isApp)).map(\.id) + [SettingsEntry.general.id]
         guard let index = ids.firstIndex(of: selection) else { return }
         switch direction {
         case .up: selection = ids[max(index - 1, 0)]
@@ -168,6 +181,12 @@ private struct SidebarRow: View {
             Image(systemName: name)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(isSelected ? VibeColor.text1 : VibeColor.text3)
+        case .tweak(let name, let tint):
+            Image(systemName: name)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(entry.isActive ? tint : VibeColor.text4)
+                .frame(width: 21, height: 21)
+                .background(entry.isActive ? tint.opacity(0.16) : Color.white.opacity(0.05), in: Circle())
         }
     }
 
@@ -220,9 +239,12 @@ struct SettingsView: View {
     }
 
     private func entry(for module: any HoneModule) -> SettingsEntry {
-        SettingsEntry(id: module.id, title: module.title,
-                      leading: .blob(module.tint, manager.mood(for: module)),
-                      isActive: module.isAvailable && (module.isMomentary || module.isEnabled))
+        let isApp = module is any MenuBarTool || module.isMomentary
+        return SettingsEntry(id: module.id, title: module.title,
+                             leading: isApp ? .blob(module.tint, manager.mood(for: module))
+                                            : .tweak(module.iconSystemName, module.tint),
+                             isActive: module.isAvailable && (module.isMomentary || module.isEnabled),
+                             isApp: isApp)
     }
 
     @ViewBuilder
@@ -277,6 +299,8 @@ struct ToolPage<Control: View>: View {
     let summary: String
     let tint: Color
     let mood: Blob.Mood
+    /// A tweak's symbol, shown in place of the mascot (only apps have one).
+    let symbol: String?
     let banners: [ToolPageBanner]
     /// Off tools keep their settings in view, but out of reach.
     let dimmed: Bool
@@ -286,7 +310,7 @@ struct ToolPage<Control: View>: View {
     let ownIcon: Binding<Bool>?
     let control: Control
 
-    init(title: String, summary: String, tint: Color, mood: Blob.Mood,
+    init(title: String, summary: String, tint: Color, mood: Blob.Mood, symbol: String? = nil,
          banners: [ToolPageBanner] = [], dimmed: Bool = false, settings: AnyView,
          permission: ToolPagePermission? = nil, ownIcon: Binding<Bool>? = nil,
          @ViewBuilder control: () -> Control) {
@@ -294,6 +318,7 @@ struct ToolPage<Control: View>: View {
         self.summary = summary
         self.tint = tint
         self.mood = mood
+        self.symbol = symbol
         self.banners = banners
         self.dimmed = dimmed
         self.settings = settings
@@ -304,7 +329,7 @@ struct ToolPage<Control: View>: View {
 
     var body: some View {
         SettingsPage {
-            VibePageHeader(title: title, subtitle: summary, color: tint, mood: mood) { control }
+            VibePageHeader(title: title, subtitle: summary, color: tint, mood: mood, symbol: symbol) { control }
         } content: {
             ForEach(banners) { banner in
                 VibeBanner(color: banner.color, title: banner.title, detail: banner.detail,
@@ -347,7 +372,9 @@ private struct ModuleDetailView: View {
 
     var body: some View {
         ToolPage(title: module.title, summary: module.summary, tint: module.tint,
-                 mood: manager.mood(for: module), banners: banners,
+                 mood: manager.mood(for: module),
+                 symbol: module is any MenuBarTool || module.isMomentary ? nil : module.iconSystemName,
+                 banners: banners,
                  dimmed: module.isAvailable && !module.isMomentary && !module.isEnabled,
                  settings: module.makeSettingsView(), permission: permission, ownIcon: ownIcon) {
             control

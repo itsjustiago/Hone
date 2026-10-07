@@ -149,22 +149,26 @@ public struct VibePageHeader<Trailing: View>: View {
     let subtitle: String
     let color: Color
     let mood: Blob.Mood
+    let symbol: String?
     let trailing: Trailing
 
     private let blobHeight: CGFloat = 42
 
+    /// - Parameter symbol: an SF Symbol drawn in place of the mascot, for a
+    ///   tweak that belongs to Hone rather than being an app of its own.
     public init(title: String, subtitle: String, color: Color, mood: Blob.Mood = .awake,
-                @ViewBuilder trailing: () -> Trailing) {
+                symbol: String? = nil, @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.subtitle = subtitle
         self.color = color
         self.mood = mood
+        self.symbol = symbol
         self.trailing = trailing()
     }
 
     public var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            Blob(color: color, mood: mood, height: blobHeight, glow: mood == .awake)
+            mark
                 .padding(.leading, 4)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -181,6 +185,23 @@ public struct VibePageHeader<Trailing: View>: View {
         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
         .vibeCard(padding: VibeSpacing.cardPadding)
         .accessibilityElement(children: .contain)
+    }
+}
+
+private extension VibePageHeader {
+    @ViewBuilder
+    var mark: some View {
+        if let symbol {
+            let on = mood != .asleep
+            Image(systemName: symbol)
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(on ? color : VibeColor.text4)
+                .frame(width: 46, height: 46)
+                .background(on ? color.vibeMix(over: VibeColor.card, amount: 0.16) : VibeColor.inset, in: Circle())
+                .accessibilityHidden(true)
+        } else {
+            Blob(color: color, mood: mood, height: blobHeight, glow: mood == .awake)
+        }
     }
 }
 
