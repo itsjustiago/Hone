@@ -17,14 +17,12 @@ enum PreviewRenderer {
 
         let mixed = Fixture.tools(off: ["windowPeek", "quitOnClose", "sleepy"])
         var pages: [(String, AnyView)] = [
-            ("home", popover(mixed, selected: "scroll")),
+            ("home", popover(mixed)),
             ("home-alerts", popover(
                 Fixture.tools(off: ["windowPeek", "sleepy"],
                               alerts: ["clippy": .paused, "screenly": .missingPermission("Gravação de Ecrã")]),
-                selected: "clippy",
                 notices: [.update(version: "1.6.0"), .accessibility])),
-            ("home-off", popover(Fixture.tools(off: Set(Fixture.all.map(\.id))), selected: "keySwap")),
-            ("home-momentary", popover(mixed, selected: "cleanKeyboard")),
+            ("home-off", popover(Fixture.tools(off: Set(Fixture.all.map(\.id))))),
             ("blobs", AnyView(blobSheet)),
         ]
         // Other surfaces add their pages in their own files.
@@ -43,12 +41,12 @@ enum PreviewRenderer {
         return ok
     }
 
-    private static func popover(_ tools: [HomeTool], selected: String, notices: [HomeNotice] = []) -> AnyView {
+    private static func popover(_ tools: [HomeTool], notices: [HomeNotice] = []) -> AnyView {
         let tabs = [HomeTab.home] + tools.filter(\.canOpenPanel)
             .map { HomeTab(id: $0.id, systemImage: $0.iconSystemName, title: $0.title) }
         return AnyView(
             PopoverShell(tabs: tabs, selectedTab: nil) {
-                HomeView(tools: tools, notices: notices, selectedToolID: selected)
+                HomeView(tools: tools, notices: notices)
             }
         )
     }

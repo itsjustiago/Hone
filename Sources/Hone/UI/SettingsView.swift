@@ -408,7 +408,7 @@ private struct ModuleDetailView: View {
 // MARK: - General
 
 /// Hone's own colour: the white mascot, so its switches are white too.
-private let honeTint = VibePalette.white
+private let honeTint = VibeToolColor.hone
 
 struct GeneralSettingsView: View {
     var updateChecker: UpdateChecker

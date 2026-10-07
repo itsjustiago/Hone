@@ -47,34 +47,29 @@ struct PopoverShell<Content: View>: View {
     }
 }
 
-/// Hone's home: attention strips, a hero card for the selected tool and the
-/// tool pills in two groups: the tweaks that are simply on or off, then the
-/// dedicated apps. Pure values in, closures out (see `HomeModels`).
+/// Hone's home: attention strips, Hone's own card, then its tweaks (a symbol,
+/// a switch and a cog each) and the dedicated apps (each with its own mascot).
+/// Pure values in, closures out (see `HomeModels`).
 struct HomeView: View {
     let tools: [HomeTool]
     let notices: [HomeNotice]
-    let selectedToolID: String
-    var onSelect: (String) -> Void = { _ in }
     var actions = HomeActions()
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var selected: HomeTool? {
-        tools.first { $0.id == selectedToolID } ?? tools.first
-    }
 
     var body: some View {
         VStack(spacing: VibeSpacing.cardGap) {
             ForEach(notices) { notice in
                 noticeStrip(notice)
             }
-            if let selected {
-                HeroCard(tool: selected, actions: actions)
-            }
+            HoneCard(tweaks: tools.filter { !$0.isApp && $0.isAvailable }, actions: actions)
             ForEach(groups, id: \.title) { group in
                 VStack(alignment: .leading, spacing: 0) {
                     VibeSectionLabel(group.title)
-                    pillsCard(group.tools)
+                    VStack(spacing: 4) {
+                        ForEach(group.tools) { tool in
+                            ToolRow(tool: tool, actions: actions)
+                        }
+                    }
+                    .vibeCard(padding: 8)
                 }
             }
         }
@@ -101,217 +96,198 @@ struct HomeView: View {
         [("Ajustes", tools.filter { !$0.isApp }), ("Apps", tools.filter(\.isApp))]
             .filter { !$0.tools.isEmpty }
     }
-
-    /// Two columns; a lone last pill takes the full row.
-    private func pillsCard(_ tools: [HomeTool]) -> some View {
-        let rows = stride(from: 0, to: tools.count, by: 2).map { Array(tools[$0..<min($0 + 2, tools.count)]) }
-        return Grid(horizontalSpacing: 6, verticalSpacing: 6) {
-            ForEach(rows, id: \.first?.id) { row in
-                GridRow {
-                    ForEach(row) { tool in
-                        ToolPill(tool: tool, isSelected: tool.id == selected?.id,
-                                 onSelect: { select(tool.id) }, actions: actions)
-                            .gridCellColumns(row.count == 1 ? 2 : 1)
-                    }
-                }
-            }
-        }
-        .vibeCard(padding: 8)
-    }
-
-    private func select(_ id: String) {
-        guard id != selected?.id else { return }
-        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : VibeMotion.arrive) { onSelect(id) }
-    }
 }
 
-// MARK: - Hero
+// MARK: - Hone
 
-private struct HeroCard: View {
-    let tool: HomeTool
+/// Hone itself: one mascot for the app and all its tweaks, so no switch here
+/// (each tweak has its own below).
+private struct HoneCard: View {
+    let tweaks: [HomeTool]
     let actions: HomeActions
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let blobHeight: CGFloat = 50
 
     var body: some View {
         HStack(alignment: .center, spacing: 18) {
-            ZStack {
-                Blob(color: tool.tint, mood: tool.mood, height: blobHeight, glow: tool.isLive)
-                    .id(tool.id)
-                    .transition(blobTransition)
-            }
-            .frame(width: blobHeight * 1.3, height: blobHeight)
-            .padding(.leading, 6)
-            .animation(reduceMotion ? .easeOut(duration: 0.15) : VibeMotion.arrive, value: tool.id)
+            Blob(color: VibeToolColor.hone, mood: .awake, height: blobHeight, glow: true)
+                .frame(width: blobHeight * 1.3, height: blobHeight)
+                .padding(.leading, 6)
 
-            ZStack(alignment: .topLeading) {
-                details
-                    .id(tool.id)
-                    .transition(.opacity)
+            VStack(alignment: .leading, spacing: 6) {
+                // The count only when it fits beside the name.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        title
+                        Text(summary)
+                            .font(VibeFont.caption)
+                            .foregroundStyle(VibeColor.text3)
+                    }
+                    title
+                }
+                .lineLimit(1)
+                Text("Os ajustes que faltam ao macOS.")
+                    .font(VibeFont.body)
+                    .foregroundStyle(VibeColor.text3)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Definições…") { actions.openSettings(nil) }
+                    .buttonStyle(VibeLinkButtonStyle(.strong))
+                    .help("Definições do Hone")
+                    .padding(.top, 2)
             }
-            .animation(.easeOut(duration: 0.15), value: tool.id)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(minHeight: 72)
         .vibeCard(padding: VibeSpacing.cardPadding)
-        .overlay(alignment: .topTrailing) {
-            if tool.isAvailable && !tool.isMomentary {
-                Toggle("Ligar \(tool.title)", isOn: Binding(
-                    get: { tool.isEnabled },
-                    set: { actions.setEnabled(tool.id, $0) }))
-                    .toggleStyle(VibeToggleStyle(tint: tool.tint, isPaused: tool.isPaused))
-                    .accessibilityLabel("Ligar \(tool.title)")
-                    .padding(VibeSpacing.cardPadding)
-            }
-        }
-        .animation(VibeMotion.standard, value: tool.isEnabled)
-    }
-
-    private var blobTransition: AnyTransition {
-        reduceMotion ? .opacity : .asymmetric(insertion: .scale(scale: 0.92).combined(with: .opacity),
-                                              removal: .opacity)
-    }
-
-    private var details: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            titleRow
-            Text(tool.tagline)
-                .font(VibeFont.body)
-                .foregroundStyle(VibeColor.text3)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            if let alert = tool.alert, let text = tool.alertText {
-                VibeStatusLine(text, color: alert.color)
-            }
-            actionRow
-                .padding(.top, 2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var titleRow: some View {
-        HStack(alignment: .center, spacing: 7) {
-            VibeDot(tool.isEnabled || tool.isMomentary ? tool.tint : VibeColor.dotOff, size: 7)
-            // The grey category only when it fits beside the title.
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    title
-                    Text(tool.category)
-                        .font(VibeFont.subtitle)
-                        .foregroundStyle(VibeColor.text3)
-                }
-                title
-            }
-            .lineLimit(1)
-        }
-        // Clear of the switch in the corner.
-        .padding(.trailing, tool.isMomentary ? 0 : VibeMetrics.toggle.width + 8)
     }
 
     private var title: some View {
-        Text(tool.title)
+        Text("Hone")
             .font(VibeFont.title)
             .foregroundStyle(VibeColor.text1)
-            // The longest name (Comando ⇄ Controlo) shrinks a little beside the
-            // switch rather than losing its end.
-            .minimumScaleFactor(0.9)
     }
 
-    @ViewBuilder
-    private var actionRow: some View {
-        HStack(spacing: 12) {
-            if tool.isMomentary, tool.isAvailable {
-                Button(tool.actionLabel) { actions.perform(tool.id) }
-                    .buttonStyle(VibeLinkButtonStyle(.strong))
-                settingsButton(.secondary)
-            } else if tool.isPaused {
-                Button("Fechar app antiga") { actions.quitLegacyApp(tool.id) }
-                    .buttonStyle(VibeLinkButtonStyle(.strong))
-                    .help("Enquanto o \(tool.title) antigo estiver aberto, o do Hone fica em pausa para não haver ícones e atalhos em duplicado.")
-                settingsButton(.secondary)
-            } else if tool.canOpenPanel {
-                Button("Abrir \(tool.title)") { actions.openPanel(tool.id) }
-                    .buttonStyle(VibeLinkButtonStyle(.strong))
-                settingsButton(.secondary)
-            } else {
-                settingsButton(.strong)
-            }
-        }
-    }
-
-    private func settingsButton(_ emphasis: VibeLinkButtonStyle.Emphasis) -> some View {
-        Button("Definições…") { actions.openSettings(tool.id) }
-            .buttonStyle(VibeLinkButtonStyle(emphasis))
-            .help("Definições de \(tool.title)")
+    private var summary: String {
+        "\(tweaks.filter(\.isEnabled).count) de \(tweaks.count) ajustes ligados"
     }
 }
 
-// MARK: - Pill
+// MARK: - Row
 
-private struct ToolPill: View {
+/// One tweak or app: a symbol (tweaks) or its own mascot (apps), the name,
+/// then the switch and a cog for its settings. Only an app's row is itself
+/// clickable (it opens the app's panel); a tweak's controls are the switch
+/// and the cog.
+private struct ToolRow: View {
     let tool: HomeTool
-    let isSelected: Bool
-    let onSelect: () -> Void
     let actions: HomeActions
 
     @State private var hovering = false
 
     private let blobHeight: CGFloat = 19
+    private let leadingWidth: CGFloat = 26
 
     var body: some View {
-        Button(action: onSelect) {
-            Text(tool.shortTitle)
-                .font(VibeFont.pill)
-                .foregroundStyle(nameColor)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                // Name centred in the space right of the mascot.
-                .padding(.leading, 6 + blobHeight * 1.3 + 4)
-                .padding(.trailing, 12)
-                .frame(height: VibeMetrics.pillHeight)
-                .overlay(alignment: .leading) {
-                    Blob(color: tool.tint, mood: tool.mood, height: blobHeight)
-                        .padding(.leading, 6)
-                }
-                .overlay(alignment: .trailing) {
-                    if let alert = tool.alert {
-                        VibeDot(alert.color, size: 5).padding(.trailing, 9)
-                    }
-                }
-                .background(fill, in: Capsule(style: .continuous))
-                .overlay(Capsule(style: .continuous).strokeBorder(border, lineWidth: 1))
-                .contentShape(Capsule(style: .continuous))
+        HStack(spacing: 10) {
+            leading
+                .frame(width: leadingWidth)
+            VStack(alignment: .leading, spacing: 2) {
+                nameRow
+                if tool.alert != nil { statusLine }
+            }
+            Spacer(minLength: 4)
+            trailing
         }
-        .buttonStyle(VibePressStyle())
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .frame(minHeight: VibeMetrics.rowHeight)
+        .background(fill, in: Capsule(style: .continuous))
+        .overlay(Capsule(style: .continuous).strokeBorder(border, lineWidth: 1))
+        .contentShape(Capsule(style: .continuous))
         .onHover { hovering = $0 }
+        .onTapGesture { if tool.canOpenPanel { actions.openPanel(tool.id) } }
         .animation(VibeMotion.quick, value: hovering)
-        .animation(VibeMotion.standard, value: isSelected)
+        .animation(VibeMotion.standard, value: tool.isEnabled)
         .contextMenu { menu }
-        .help(tool.title)
+        .help(tool.canOpenPanel ? "Abrir \(tool.title)" : tool.tagline)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("\(tool.title), \(tool.accessibilityState)")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+    // MARK: Leading
+
+    @ViewBuilder
+    private var leading: some View {
+        if tool.isApp {
+            Blob(color: tool.tint, mood: tool.mood, height: blobHeight)
+        } else {
+            Image(systemName: tool.iconSystemName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tool.isEnabled ? tool.tint : VibeColor.text4)
+                .frame(width: 24, height: 24)
+                .background(tool.isEnabled ? tool.tint.vibeMix(over: VibeColor.inset, amount: 0.16)
+                                           : VibeColor.card,
+                            in: Circle())
+                .accessibilityHidden(true)
+        }
+    }
+
+    // MARK: Name & status
+
+    private var nameRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                name
+                Text(tool.category)
+                    .font(VibeFont.caption)
+                    .foregroundStyle(VibeColor.text4)
+            }
+            name
+        }
+        .lineLimit(1)
+    }
+
+    private var name: some View {
+        Text(tool.title)
+            .font(VibeFont.action)
+            .foregroundStyle(tool.isMomentary || (tool.isAvailable && tool.isEnabled) ? VibeColor.text1 : VibeColor.text3)
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        if let alert = tool.alert {
+            HStack(spacing: 5) {
+                VibeDot(alert.color, size: 5)
+                Text(tool.isPaused ? "Em pausa" : tool.alertText ?? "")
+                    .font(VibeFont.caption)
+                    .foregroundStyle(VibeColor.text3)
+                    .lineLimit(1)
+                    .fixedSize()
+                if tool.isPaused {
+                    RowLink(title: "Fechar app antiga") { actions.quitLegacyApp(tool.id) }
+                        .help("Enquanto o \(tool.title) antigo estiver aberto, o do Hone fica em pausa para não haver ícones e atalhos em duplicado.")
+                }
+            }
+        }
+    }
+
+    // MARK: Trailing
+
+    private var trailing: some View {
+        HStack(spacing: 6) {
+            if !tool.isAvailable {
+                Text("Em breve")
+                    .font(VibeFont.caption)
+                    .foregroundStyle(VibeColor.text4)
+            } else {
+                if tool.isMomentary {
+                    Button(tool.actionLabel) { actions.perform(tool.id) }
+                        .buttonStyle(VibeLinkButtonStyle(.strong))
+                        .padding(.trailing, 4)
+                } else {
+                    Toggle("Ligar \(tool.title)", isOn: Binding(
+                        get: { tool.isEnabled },
+                        set: { actions.setEnabled(tool.id, $0) }))
+                        .toggleStyle(VibeToggleStyle(tint: tool.tint, isPaused: tool.isPaused))
+                        .accessibilityLabel("Ligar \(tool.title)")
+                }
+                CogButton(help: "Definições de \(tool.title)") { actions.openSettings(tool.id) }
+            }
+        }
+    }
+
+    // MARK: Look
+
     private var fill: Color {
-        let base = isSelected ? VibeColor.raised : VibeColor.inset
-        return hovering ? base.vibeMix(over: .white, amount: 0.03) : base
+        let base = VibeColor.inset
+        return hovering && tool.canOpenPanel ? base.vibeMix(over: .white, amount: 0.03) : base
     }
 
     private var border: Color {
         let lit = tool.isLive || tool.isPaused || (tool.alert != nil && tool.isEnabled)
-        if isSelected {
-            return lit ? tool.tint.vibeMix(over: VibeColor.card, amount: 0.42) : VibeColor.selectedBorder
-        }
-        if lit && !tool.isMomentary { return tool.tint.vibeMix(over: VibeColor.card, amount: 0.17) }
-        return VibeColor.cardBorder
-    }
-
-    private var nameColor: Color {
-        if isSelected { return VibeColor.text1 }
-        if tool.isMomentary || (tool.isAvailable && tool.isEnabled) { return VibeColor.text2 }
-        return VibeColor.text4
+        return lit && !tool.isMomentary ? tool.tint.vibeMix(over: VibeColor.card, amount: 0.17) : VibeColor.cardBorder
     }
 
     @ViewBuilder
@@ -329,5 +305,51 @@ private struct ToolPill: View {
         }
         Divider()
         Button("Definições de \(tool.title)…") { actions.openSettings(tool.id) }
+    }
+}
+
+/// The settings cog at the end of a row.
+private struct CogButton: View {
+    let help: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(hovering ? VibeColor.text1 : VibeColor.text3)
+                .frame(width: 26, height: 26)
+                .background(hovering ? VibeColor.control : .clear, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(VibePressStyle(scale: 0.92))
+        .onHover { hovering = $0 }
+        .animation(VibeMotion.quick, value: hovering)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// A small text link for a row's status line.
+private struct RowLink: View {
+    let title: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(hovering ? VibeColor.text1 : VibeColor.text2)
+                .lineLimit(1)
+                .fixedSize()
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(VibeMotion.quick, value: hovering)
     }
 }
