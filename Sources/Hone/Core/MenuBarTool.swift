@@ -46,6 +46,10 @@ protocol MenuBarTool: HoneModule {
     /// image it covers, for the popover to point at; the rest return nil.
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
 
+    /// Call once the popover showing the panel has closed. SwiftUI's
+    /// `onDisappear` isn't reliable inside an `NSPopover`.
+    func panelDidClose()
+
     /// Stops, but keeps persisted state (e.g. an armed sleep block) for whoever
     /// runs the tool next — Hone after a relaunch, or the legacy twin.
     func stopKeepingState()
@@ -114,6 +118,7 @@ protocol ToolKit: AnyObject {
     var showsOwnMenuBarIcon: Bool { get set }
     func panelWillShow()
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
+    func panelDidClose()
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
     func makeSettingsView() -> AnyView
@@ -127,6 +132,7 @@ extension ToolKit {
     func stopKeepingState() { stop() }
     func legacyTwinWillQuit() {}
     var liveState: ToolLiveState? { nil }
+    func panelDidClose() {}
 
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? {
         panelWillShow()
@@ -231,6 +237,8 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
     func panelWillShow() { kit.panelWillShow() }
 
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? { kit.panelWillShow(clickedAtX: x) }
+
+    func panelDidClose() { kit.panelDidClose() }
 
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView {
