@@ -46,11 +46,10 @@ protocol MenuBarTool: HoneModule {
     /// image it covers, for the popover to point at; the rest return nil.
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
 
-    /// Set by whoever shows the panel from the tool's own icon. Called when the
-    /// panel itself moves to another readout (Stats' tabs), with the part of the
-    /// image it covers, so the popover's arrow can follow. Tools whose icon is one
-    /// thing never call it.
-    var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)? { get set }
+    /// Whether the popover opened from the tool's own icon has an arrow. A panel
+    /// that switches between readouts (Stats' tabs) has none: the arrow would stay
+    /// on the readout it opened from.
+    var popoverShowsArrow: Bool { get }
 
     /// Call once the popover showing the panel has closed. SwiftUI's
     /// `onDisappear` isn't reliable inside an `NSPopover`.
@@ -124,7 +123,7 @@ protocol ToolKit: AnyObject {
     var showsOwnMenuBarIcon: Bool { get set }
     func panelWillShow()
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
-    var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)? { get set }
+    var popoverShowsArrow: Bool { get }
     func panelDidClose()
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
@@ -146,10 +145,7 @@ extension ToolKit {
         return nil
     }
 
-    var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)? {
-        get { nil }
-        set {}
-    }
+    var popoverShowsArrow: Bool { true }
 }
 
 /// Generic `MenuBarTool` wrapping a Kit. An adapter only supplies metadata —
@@ -250,10 +246,7 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
 
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? { kit.panelWillShow(clickedAtX: x) }
 
-    var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)? {
-        get { kit.onPanelPartChange }
-        set { kit.onPanelPartChange = newValue }
-    }
+    var popoverShowsArrow: Bool { kit.popoverShowsArrow }
 
     func panelDidClose() { kit.panelDidClose() }
 
