@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Sleepy packaged as a tool a host app (Hone) can embed.
@@ -22,6 +23,10 @@ public final class SleepyTool {
     /// Refreshes the watts line while the panel is on screen, never otherwise.
     private var powerTimer: Timer?
     private var powerReadInFlight = false
+    /// The last watts line read, shown at once when the panel opens (the IORegistry
+    /// read never runs on the main thread); the fresh one replaces it a moment later.
+    private var lastPowerText: String?
+    private var cancellables = Set<AnyCancellable>()
     private static let powerQueue = DispatchQueue(label: "sleepy.power", qos: .utility)
     private static let powerInterval: TimeInterval = 2
 
@@ -30,6 +35,15 @@ public final class SleepyTool {
 
     public init() {
         menuModel.showsOwnIcon = showsOwnMenuBarIcon
+        // The panel and Settings show the same Low Power Mode toggle and rule state:
+        // whatever changes in Settings reaches the panel straight away (the other
+        // way round, `refreshMenuModel()` refreshes the Settings model).
+        settingsModel.$lowPowerWhenLidClosed
+            .sink { [menuModel] in menuModel.lowPowerWhenLidClosed = $0 }
+            .store(in: &cancellables)
+        settingsModel.$lowPowerRuleAllowed
+            .sink { [menuModel] in menuModel.lowPowerRuleAllowed = $0 }
+            .store(in: &cancellables)
     }
 
     // MARK: - Lifecycle
@@ -147,8 +161,19 @@ public final class SleepyTool {
     public func panelWillShow() {
         SleepController.shared.reassert()
         refreshMenuModel()
-        // Already there on the first frame; the timer takes over once the panel appears.
-        menuModel.powerText = PowerReadout.currentText()
+        // `sudo -n -l` off the main thread, and only with the toggle on.
+        settingsModel.refreshLowPowerRule()
+        // The last reading is there on the first frame; the fresh one comes from
+        // `startPowerReadout()` (started here too, as `onAppear` is not reliable
+        // inside an NSPopover), off the main thread.
+        menuModel.powerText = lastPowerText
+        startPowerReadout()
+    }
+
+    /// The host closed the panel (popover or own menu): stop the watts readout.
+    /// SwiftUI's `onDisappear` is not reliable inside an `NSPopover`. Idempotent.
+    public func panelDidClose() {
+        stopPowerReadout()
     }
 
     public func makeMenuPanel(back: (() -> Void)?,
@@ -174,6 +199,18 @@ public final class SleepyTool {
                 // Recusada (prompt de admin cancelado), o modelo volta ao modo
                 // guardado e o picker recua.
                 SleepController.shared.setSleepMode(mode)
+                self?.refreshMenuModel()
+            },
+            onChangeLowPower: { [weak self] on in
+                LidExtras.lowPowerWhenLidClosed = on
+                // Syncs the Settings model (and so its toggle); then the sudoers
+                // check, which only matters with the toggle on.
+                self?.refreshMenuModel()
+                self?.settingsModel.refreshLowPowerRule()
+            },
+            onUpdateRule: { [weak self] in
+                // Admin prompt, like `onEnablePasswordless`; it re-checks the rule.
+                self?.settingsModel.updateRule()
                 self?.refreshMenuModel()
             },
             onExtend: { SleepController.shared.extendSession() },
@@ -222,6 +259,8 @@ public final class SleepyTool {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.powerReadInFlight = false
+                    // Cached even if the panel closed meanwhile; only shown while it's open.
+                    self.lastPowerText = text
                     if self.powerTimer != nil, self.menuModel.powerText != text { self.menuModel.powerText = text }
                 }
             }

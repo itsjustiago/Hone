@@ -122,6 +122,32 @@ final class PowerGuardsTests: XCTestCase {
         XCTAssertTrue(guardian.recordRead(succeeded: false))
     }
 
+    /// O limite lê-se de cada vez (o utilizador muda-o nas Definições com o Sleepy ligado).
+    func testThresholdChangesTakeEffectAtOnce() {
+        var guardian = BatteryGuard(threshold: 20)
+        XCTAssertFalse(guardian.shouldStop(percent: 30, onBattery: true))
+        guardian.threshold = 40
+        XCTAssertTrue(guardian.shouldStop(percent: 30, onBattery: true))
+        guardian.threshold = 0
+        XCTAssertFalse(guardian.shouldStop(percent: 1, onBattery: true), "0 = nunca")
+    }
+
+    /// Falhar a leitura só serve para registar no log: nunca desliga por si.
+    func testFailedReadsNeverStopByThemselves() {
+        var guardian = BatteryGuard(threshold: 90)
+        for _ in 0..<5 {
+            _ = guardian.recordRead(succeeded: false)
+            XCTAssertFalse(guardian.shouldStop(percent: nil, onBattery: nil))
+        }
+    }
+
+    /// Só duas leituras falhadas seguidas contam (o log); a terceira e as seguintes não.
+    func testOnlyTheSecondConsecutiveFailureCounts() {
+        var guardian = BatteryGuard(threshold: 20)
+        let results = (0..<6).map { _ in guardian.recordRead(succeeded: false) }
+        XCTAssertEqual(results, [false, true, false, false, false, false])
+    }
+
     // MARK: - ThermalGuard
 
     private let t0 = Date(timeIntervalSinceReferenceDate: 1_000)
@@ -178,6 +204,77 @@ final class PowerGuardsTests: XCTestCase {
         var guardian = ThermalGuard()
         XCTAssertFalse(guardian.shouldStop(state: .nominal, closedWithoutExternal: true, at: t0))
         XCTAssertFalse(guardian.shouldStop(state: .fair, closedWithoutExternal: true, at: t0.addingTimeInterval(3600)))
+    }
+
+    /// Reavaliar com o mesmo `.serious` (o timer de 30 s, o reagendamento certo,
+    /// o `lidStateChanged`) não recomeça a contagem: conta desde a primeira vez.
+    func testRepeatedEvaluationsDoNotRestartTheSeriousCount() {
+        var guardian = ThermalGuard()
+        for offset in stride(from: 0.0, to: 30.0, by: 5.0) {
+            XCTAssertFalse(guardian.shouldStop(state: .serious, closedWithoutExternal: true,
+                                               at: t0.addingTimeInterval(offset)))
+        }
+        XCTAssertTrue(guardian.shouldStop(state: .serious, closedWithoutExternal: true,
+                                          at: t0.addingTimeInterval(30)))
+    }
+
+    /// Um `.critical` a meio da contagem não espera pelos 30 s.
+    func testCriticalDuringTheSeriousCountStopsAtOnce() {
+        var guardian = ThermalGuard()
+        XCTAssertFalse(guardian.shouldStop(state: .serious, closedWithoutExternal: true, at: t0))
+        XCTAssertTrue(guardian.shouldStop(state: .critical, closedWithoutExternal: true, at: t0.addingTimeInterval(5)))
+    }
+
+    // MARK: - Tampa e estado térmico (o que o `lidStateChanged` passa ao `checkPowerGuards`)
+
+    private func closedForThermal(_ state: ProcessInfo.ThermalState, closed: Bool, external: Bool) -> Bool {
+        SleepController.closedForThermal(state, lid: LidState(lidClosed: closed, externalDisplay: external))
+    }
+
+    func testClosedForThermalNeedsSeriousAndLidClosedWithoutExternal() {
+        for state in [ProcessInfo.ThermalState.serious, .critical] {
+            XCTAssertTrue(closedForThermal(state, closed: true, external: false))
+            XCTAssertFalse(closedForThermal(state, closed: false, external: false), "tampa aberta")
+            XCTAssertFalse(closedForThermal(state, closed: true, external: true), "com ecrã externo")
+        }
+        for state in [ProcessInfo.ThermalState.nominal, .fair] {
+            XCTAssertFalse(closedForThermal(state, closed: true, external: false), "abaixo de .serious")
+        }
+    }
+
+    /// Abaixo de `.serious` a tampa nem se lê (evita o IOKit a cada evento de energia).
+    func testClosedForThermalDoesNotReadTheLidBelowSerious() {
+        var reads = 0
+        func lid() -> LidState { reads += 1; return LidState(lidClosed: true, externalDisplay: false) }
+        XCTAssertFalse(SleepController.closedForThermal(.nominal, lid: lid()))
+        XCTAssertFalse(SleepController.closedForThermal(.fair, lid: lid()))
+        XCTAssertEqual(reads, 0)
+        XCTAssertTrue(SleepController.closedForThermal(.serious, lid: lid()))
+        XCTAssertEqual(reads, 1)
+    }
+
+    /// O fluxo que o `lidStateChanged` desencadeia: com o Mac já em `.serious`, fechar a
+    /// tampa começa a contagem e 30 s depois desliga; abrir antes disso zera-a.
+    /// (O `lidStateChanged` em si não se testa: `isActive` é `private(set)` e o
+    /// `checkPowerGuards` lê o IOKit e o `ProcessInfo` reais.)
+    func testClosingTheLidWhileSeriousStartsTheCountAndOpeningItResets() {
+        var guardian = ThermalGuard()
+        let open = LidState(lidClosed: false, externalDisplay: false)
+        let closed = LidState(lidClosed: true, externalDisplay: false)
+        func evaluate(_ lid: LidState, at offset: TimeInterval) -> Bool {
+            guardian.shouldStop(state: .serious,
+                                closedWithoutExternal: SleepController.closedForThermal(.serious, lid: lid),
+                                at: t0.addingTimeInterval(offset))
+        }
+        XCTAssertFalse(evaluate(open, at: 0))
+        XCTAssertFalse(guardian.isCounting)
+        XCTAssertFalse(evaluate(closed, at: 10))
+        XCTAssertTrue(guardian.isCounting, "fechar a tampa começa a contar")
+        XCTAssertFalse(evaluate(open, at: 25))
+        XCTAssertFalse(guardian.isCounting, "abrir zera")
+        XCTAssertFalse(evaluate(closed, at: 30))
+        XCTAssertFalse(evaluate(closed, at: 59))
+        XCTAssertTrue(evaluate(closed, at: 60))
     }
 
     // MARK: - Textos e preferência

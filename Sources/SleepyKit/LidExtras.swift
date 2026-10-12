@@ -19,12 +19,13 @@ enum LidExtras {
     // Preferências.
     private static let lowPowerKey = "lowPowerWhenLidClosed"
     private static let muteKey = "muteWhenLidClosed"
-    // Estado que nos pertence.
-    private static let lowPowerByUsKey = "lidLowPowerByUs"
-    private static let mutedByUsKey = "lidMutedByUs"
-    private static let mutedDeviceKey = "lidMutedDeviceUID"
+    // Estado que nos pertence. Internas: o [[CrashWatchdog]] lê e apaga as mesmas
+    // chaves num `sh`, e tem de bater com estes nomes.
+    static let lowPowerByUsKey = "lidLowPowerByUs"
+    static let mutedByUsKey = "lidMutedByUs"
+    static let mutedDeviceKey = "lidMutedDeviceUID"
     /// Só existe quando silenciámos pelo volume (o dispositivo não tem mute): o volume anterior.
-    private static let mutedVolumeKey = "lidMutedVolume"
+    static let mutedVolumeKey = "lidMutedVolume"
 
     private static let queue = DispatchQueue(label: "sleepy.lidextras", qos: .utility)
 
@@ -178,6 +179,12 @@ enum LidExtras {
 
     // MARK: - Som
 
+    /// Silencia o dispositivo de saída por omissão **no momento em que a tampa
+    /// fecha** (mute próprio, ou volume a 0 se não tiver mute) e guarda o UID dele
+    /// com o volume de antes. A reposição atua nesse mesmo UID, não no dispositivo
+    /// por omissão de agora; se a saída mudar entretanto (auscultadores, AirPods),
+    /// o novo dispositivo não é silenciado e a reposição devolve o som ao antigo. Se
+    /// o dispositivo desapareceu (desligado), não há o que repor e a flag cai.
     private static func muteOutput() {
         guard !mutedByUs else { return }
         guard let device = Audio.defaultOutputDevice(), let uid = Audio.uid(of: device) else {

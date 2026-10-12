@@ -8,7 +8,8 @@ import Foundation
 /// própria, sobrevive ao Hone) que espera que o Hone morra e, passado um período
 /// de graça, larga o `disablesleep` — a menos que já haja outro Hone/Sleepy a
 /// correr, que é quem trata do assunto (cobre o relançamento do `build.sh` e do
-/// auto-updater).
+/// auto-updater). Repõe também o que o [[LidExtras]] mexeu com a tampa fechada
+/// (Low Power Mode, som), lendo as flags que ele grava.
 ///
 /// A linha de comandos do watchdog **não pode** conter `Hone.app/Contents/MacOS/Hone`:
 /// o `build.sh` faz `pkill -f` com esse padrão e levava o watchdog atrás.
@@ -24,15 +25,74 @@ enum CrashWatchdog {
 
     private static let pidKey = "watchdogPID"
 
+    /// `pmset -a lowpowermode 0` da regra sudoers v2. Com a v1 falha em silêncio.
+    static let lowPowerOffCommand = "/usr/bin/sudo -n /usr/bin/pmset -a lowpowermode 0"
+    /// Tira o mute (o dispositivo tinha mute próprio).
+    static let unmuteCommand = "/usr/bin/osascript -e 'set volume without output muted'"
+    /// Volta ao volume de antes (o dispositivo só tinha volume): `$pct` é 0–100.
+    static let setVolumeCommand = "/usr/bin/osascript -e \"set volume output volume $pct\""
+
     /// O script do `sh -c`. O PID do Hone chega por argumento (`$1`).
-    /// `otherInstances` são nomes simples, sem espaços nem aspas.
-    static func script(grace: Int, otherInstances: [String], command: String) -> String {
-        """
+    /// `otherInstances` são nomes simples, sem espaços nem aspas. `extras`, se
+    /// houver, corre depois do `command` (ver `extrasRestoreScript`).
+    ///
+    /// O `pgrep` só conta processos do mesmo utilizador (`-U`): o `Hone` de outra
+    /// sessão não segura o `disablesleep` de quem crashou.
+    static func script(grace: Int, otherInstances: [String], command: String, extras: String? = nil) -> String {
+        let base = """
         pid="$1"
         while kill -0 "$pid" 2>/dev/null; do sleep 2; done
         sleep \(grace)
-        for n in \(otherInstances.joined(separator: " ")); do /usr/bin/pgrep -x "$n" >/dev/null 2>&1 && exit 0; done
+        for n in \(otherInstances.joined(separator: " ")); do /usr/bin/pgrep -x -U "$(/usr/bin/id -u)" "$n" >/dev/null 2>&1 && exit 0; done
         \(command)
+        """
+        guard let extras else { return base }
+        return base + "\n" + extras
+    }
+
+    /// O script de produção: `disablesleep 0` e depois os extras da tampa.
+    static var productionScript: String {
+        script(grace: grace, otherInstances: otherInstances, command: command,
+               extras: extrasRestoreScript(suite: SleepyDefaults.suiteName))
+    }
+
+    /// Repõe o que o `LidExtras` deixou feito (as flags dele, em `suite`): o Low
+    /// Power Mode e o som. Cada flag só se apaga se a reposição correu bem, para o
+    /// `restoreOnLaunch` do Hone repetir o que ficou por fazer — e só isso. Sem
+    /// flags não faz nada. O `restoreOnLaunch` só olha para as mesmas flags (e,
+    /// com `lidMutedByUs` a false, ignora o UID e o volume guardados), por isso
+    /// apagá-las aqui não o deixa inconsistente.
+    ///
+    /// Limite: o `osascript` mexe no dispositivo de saída **de agora**, não no que
+    /// silenciámos (resolver o UID é com o Hone). Se o de saída mudou entretanto
+    /// (auscultadores, AirPods), o mute fica no antigo e a flag cai na mesma.
+    ///
+    /// Os comandos são parâmetros só para os testes os trocarem por inofensivos.
+    static func extrasRestoreScript(suite: String,
+                                    lowPowerOff: String = lowPowerOffCommand,
+                                    unmute: String = unmuteCommand,
+                                    setVolume: String = setVolumeCommand) -> String {
+        let defaults = "/usr/bin/defaults"
+        func read(_ key: String) -> String { "\(defaults) read \(suite) \(key) 2>/dev/null" }
+        func delete(_ key: String) -> String { "\(defaults) delete \(suite) \(key) 2>/dev/null" }
+        return """
+        if [ "$(\(read(LidExtras.lowPowerByUsKey)))" = 1 ]; then
+          \(lowPowerOff) && \(delete(LidExtras.lowPowerByUsKey))
+        fi
+        if [ "$(\(read(LidExtras.mutedByUsKey)))" = 1 ]; then
+          v="$(\(read(LidExtras.mutedVolumeKey)))"
+          if [ -n "$v" ]; then
+            pct="$(/usr/bin/awk -v v="$v" 'BEGIN { printf "%d", v * 100 + 0.5 }')"
+            \(setVolume)
+          else
+            \(unmute)
+          fi && {
+            \(delete(LidExtras.mutedByUsKey))
+            \(delete(LidExtras.mutedDeviceKey))
+            \(delete(LidExtras.mutedVolumeKey))
+            :
+          }
+        fi
         """
     }
 
@@ -46,8 +106,7 @@ enum CrashWatchdog {
     /// Lança o watchdog contra este processo. Idempotente: pára o anterior antes.
     static func start() {
         stop()
-        let body = script(grace: grace, otherInstances: otherInstances, command: command)
-        guard let pid = spawn(script: body, hostPID: getpid()) else {
+        guard let pid = spawn(script: productionScript, hostPID: getpid()) else {
             NSLog("Sleepy: não deu para lançar o watchdog de crash")
             return
         }
@@ -61,9 +120,16 @@ enum CrashWatchdog {
         let stored = store.integer(forKey: pidKey)
         store.removeObject(forKey: pidKey)
         guard stored > 1, stored <= Int(Int32.max) else { return }
-        let pid = pid_t(stored)
-        guard pid != getpid(), isWatchdog(pid: pid) else { return }
-        kill(pid, SIGTERM)
+        terminate(pid: pid_t(stored))
+    }
+
+    /// SIGTERM ao grupo do watchdog, não só ao `sh`: ele é líder da própria sessão
+    /// (`POSIX_SPAWN_SETSID`, logo pgid == pid) e o `sleep 2` do ciclo é filho dele —
+    /// só ao `sh` ficava órfão uns segundos. Confirma sempre que é o nosso.
+    static func terminate(pid: pid_t) {
+        guard pid > 1, pid != getpid(), isWatchdog(pid: pid) else { return }
+        // Se por alguma razão não é líder de grupo, nunca se mata um grupo alheio.
+        kill(getpgid(pid) == pid ? -pid : pid, SIGTERM)
     }
 
     // MARK: - Processo

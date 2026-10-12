@@ -24,6 +24,12 @@ final class SleepMenuModel: ObservableObject {
     @Published var powerText: String?
     /// "sessão SSH ativa" while a remote session keeps Sleepy on (nil = it's on by hand, or off).
     @Published var remoteSessionText: String?
+    /// Same preference as Settings' "Low Power Mode com a tampa fechada" (the tool
+    /// mirrors the Settings model into this, so both stay in step).
+    @Published var lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
+    /// Does the installed sudoers rule let Sleepy switch Low Power Mode? nil = not
+    /// known yet, or the toggle is off and it doesn't matter.
+    @Published var lowPowerRuleAllowed: Bool?
 }
 
 /// The Sleepy panel, shown either from its own menu-bar icon or inside Hone's
@@ -37,6 +43,8 @@ struct MenuPanel: View {
     var onChangeAutoOff: (Int) -> Void
     var onChangeBatteryThreshold: (Int) -> Void
     var onChangeSleepMode: (SleepMode) -> Void
+    var onChangeLowPower: (Bool) -> Void
+    var onUpdateRule: () -> Void
     var onExtend: () -> Void
     var onSettings: () -> Void
     /// Non-nil when hosted inside Hone's popover: the header shows a back chevron.
@@ -67,7 +75,11 @@ struct MenuPanel: View {
             onChangeSleepMode: onChangeSleepMode,
             onExtend: onExtend,
             powerText: model.powerText,
-            remoteSessionText: model.remoteSessionText)
+            remoteSessionText: model.remoteSessionText,
+            lowPowerWhenLidClosed: model.lowPowerWhenLidClosed,
+            lowPowerRuleAllowed: model.lowPowerRuleAllowed,
+            onChangeLowPower: onChangeLowPower,
+            onUpdateRule: onUpdateRule)
             .onAppear(perform: onAppear)
             .onDisappear(perform: onDisappear)
     }
@@ -98,6 +110,10 @@ struct MenuPanelContent: View {
     var powerText: String?
     /// Sleepy was turned on by a remote session: no deadline, the status line says which one.
     var remoteSessionText: String?
+    var lowPowerWhenLidClosed = false
+    var lowPowerRuleAllowed: Bool?
+    var onChangeLowPower: (Bool) -> Void = { _ in }
+    var onUpdateRule: () -> Void = {}
 
     private var tint: Color { VibeToolColor.sleepy }
     private let blobHeight: CGFloat = 50
@@ -121,6 +137,11 @@ struct MenuPanelContent: View {
                 modeRow
                 autoOffRow
                 batteryRow
+                // Só no "fica acordado": em "adormece" o Mac dorme de tampa fechada.
+                if sleepMode.usesDisableSleep {
+                    lowPowerRow
+                    if lowPowerWhenLidClosed, lowPowerRuleAllowed == false { lowPowerRuleRow }
+                }
                 VibeMenuRow("Definições…", systemImage: "gearshape", action: onSettings)
             }
             .vibeMenuCard()
@@ -228,12 +249,46 @@ struct MenuPanelContent: View {
                   selection: batteryThreshold, onChange: onChangeBatteryThreshold, options: Self.batteryChoices)
     }
 
-    private func pickerRow<Value: Hashable, Accessory: View>(
-        symbol: String, title: String, selection: Value,
-        onChange: @escaping (Value) -> Void,
-        options: [VibeMenuPicker<Value>.Option],
-        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
-    ) -> some View {
+    /// O mesmo valor das Definições: poupa bateria enquanto o Mac trabalha de tampa
+    /// fechada, sem ir lá.
+    private var lowPowerRow: some View {
+        HStack(spacing: 10) {
+            rowLabel(symbol: "leaf", title: Self.lowPowerTitle)
+                .minimumScaleFactor(0.85)
+            Spacer(minLength: 8)
+            Toggle(Self.lowPowerTitle, isOn: Binding(
+                get: { lowPowerWhenLidClosed },
+                set: { on in if on != lowPowerWhenLidClosed { onChangeLowPower(on) } }))
+                .toggleStyle(VibeToggleStyle(tint: tint))
+                .accessibilityLabel(Self.lowPowerTitle)
+        }
+        .padding(.horizontal, 8)
+        .frame(minHeight: 36)
+    }
+
+    /// A regra sudoers não deixa ligar o Low Power Mode: "Atualizar" se há uma
+    /// antiga, "Instalar" se não há nenhuma. Alinhada com o título da linha de cima.
+    private var lowPowerRuleRow: some View {
+        HStack(spacing: 10) {
+            Text(PrivilegedAccess.lowPowerRuleNotice(installed: passwordlessInstalled).title)
+                .font(VibeFont.caption)
+                .foregroundStyle(VibeColor.text3)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button(PrivilegedAccess.ruleButtonTitle(installed: passwordlessInstalled), action: onUpdateRule)
+                .buttonStyle(VibeButtonStyle())
+                .controlSize(.small)
+                .help(PrivilegedAccess.lowPowerRuleNotice(installed: passwordlessInstalled).detail)
+        }
+        .padding(.leading, 36)
+        .padding(.trailing, 8)
+        .padding(.bottom, 6)
+    }
+
+    private static let lowPowerTitle = "Low Power Mode com a tampa fechada"
+
+    /// Ícone e título à esquerda de uma linha do cartão.
+    private func rowLabel(symbol: String, title: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
                 .font(.system(size: 13))
@@ -242,6 +297,18 @@ struct MenuPanelContent: View {
             Text(title)
                 .font(VibeFont.body)
                 .foregroundStyle(VibeColor.text2)
+                .lineLimit(1)
+        }
+    }
+
+    private func pickerRow<Value: Hashable, Accessory: View>(
+        symbol: String, title: String, selection: Value,
+        onChange: @escaping (Value) -> Void,
+        options: [VibeMenuPicker<Value>.Option],
+        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
+    ) -> some View {
+        HStack(spacing: 10) {
+            rowLabel(symbol: symbol, title: title)
             Spacer(minLength: 8)
             accessory()
             VibeMenuPicker(title,
@@ -303,6 +370,8 @@ public enum SleepyPreview {
                              displayOnly: Bool = false,
                              powerText: String? = nil,
                              remoteSessionText: String? = nil,
+                             lowPowerWhenLidClosed: Bool = false,
+                             lowPowerRuleAllowed: Bool? = nil,
                              back: (() -> Void)? = nil) -> AnyView {
         AnyView(MenuPanelContent(
             isActive: isActive,
@@ -317,7 +386,9 @@ public enum SleepyPreview {
             onBack: back,
             sleepMode: displayOnly ? .displayOnly : .lidClosedAwake,
             powerText: powerText,
-            remoteSessionText: remoteSessionText))
+            remoteSessionText: remoteSessionText,
+            lowPowerWhenLidClosed: lowPowerWhenLidClosed,
+            lowPowerRuleAllowed: lowPowerRuleAllowed))
     }
 
     /// The tool's page in Settings, with the stored values.

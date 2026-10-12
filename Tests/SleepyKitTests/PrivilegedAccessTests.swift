@@ -153,4 +153,23 @@ final class PrivilegedAccessTests: XCTestCase {
         let tagged = "    (root) NOPASSWD: SETENV: /usr/bin/pmset -a lowpowermode 1\n"
         XCTAssertTrue(PrivilegedAccess.listingAllowsWithoutPassword(tagged, command: lowPower))
     }
+
+    // MARK: - Textos da regra na UI
+
+    func testRuleButtonSaysUpdateOnlyWhenThereIsARule() {
+        XCTAssertEqual(PrivilegedAccess.ruleButtonTitle(installed: true), "Atualizar regra…")
+        XCTAssertEqual(PrivilegedAccess.ruleButtonTitle(installed: false), "Instalar regra…")
+    }
+
+    func testRuleNoticeDiffersByWhetherARuleExists() {
+        let outdated = PrivilegedAccess.lowPowerRuleNotice(installed: true)
+        let missing = PrivilegedAccess.lowPowerRuleNotice(installed: false)
+        XCTAssertNotEqual(outdated.title, missing.title)
+        XCTAssertTrue(outdated.title.contains("atualizar"))
+        XCTAssertTrue(missing.title.contains("em falta"))
+        for notice in [outdated, missing] {
+            XCTAssertTrue(notice.detail.contains("Low Power Mode"))
+            XCTAssertTrue(notice.detail.contains("admin"), "avisa que pede admin")
+        }
+    }
 }

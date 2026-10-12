@@ -25,6 +25,13 @@ enum LidDisplay {
     private static var generation = 0
     /// Até aqui não se amostra: o valor ainda pode ser o do powerd, não o do utilizador.
     private static var restoringUntil: Date?
+    /// Há um callback de reconfiguração de ecrãs registado à espera do painel
+    /// interno (só um de cada vez). Só no main.
+    private static var waitingForPanel = false
+    /// Quantas vezes o callback já voltou a tentar nesta rodada; trava um painel
+    /// que está online mas recusa o brilho. A zero em cada `dim()` e em cada reposição.
+    private static var panelRetries = 0
+    private static let maxPanelRetries = 10
 
     /// Escurecemos e ainda não repusemos (sobrevive a um crash).
     static var dimmedByUs: Bool { SleepyDefaults.store.bool(forKey: dimmedKey) }
@@ -56,6 +63,9 @@ enum LidDisplay {
     static func dim() {
         generation += 1
         restoringUntil = nil
+        // Uma reposição que ficou à espera do painel já não faz sentido.
+        stopWaitingForPanel()
+        panelRetries = 0
         SleepyDefaults.store.set(true, forKey: dimmedKey)
         if trustedPanel != nil, let id = builtInDisplayID() {
             setPanelBrightness(0, id)
@@ -67,19 +77,69 @@ enum LidDisplay {
     }
 
     /// Repõe painel e teclado com a amostra, e outra vez `reapplyDelay` depois.
-    /// Amostra desconhecida ⇒ não mexe. A flag só cai se o painel foi reposto
-    /// (com um ecrã externo e a tampa fechada o interno pode estar offline —
-    /// tenta-se outra vez na próxima mudança).
+    /// Amostra desconhecida ⇒ não mexe. A flag só cai se o painel foi reposto.
+    /// Com um ecrã externo e a tampa fechada, ou ao abrir a tampa, o interno pode
+    /// ainda estar offline: aí fica um callback de reconfiguração de ecrãs à
+    /// espera dele, que volta a repor assim que ele aparecer (sem esperar pela
+    /// próxima mudança de tampa, que pode não vir).
     static func restore() {
         generation += 1
         let current = generation
         restoringUntil = Date().addingTimeInterval(reapplyDelay + 0.5)
-        guard apply() else { return }
+        guard apply() else {
+            waitForPanel()
+            return
+        }
+        stopWaitingForPanel()
+        panelRetries = 0
         SleepyDefaults.store.set(false, forKey: dimmedKey)
         DispatchQueue.main.asyncAfter(deadline: .now() + reapplyDelay) {
             guard generation == current else { return }
             _ = apply()
         }
+    }
+
+    // MARK: - Painel ainda offline
+
+    /// Uma reconfiguração só vale a pena se já acabou (o início ainda não diz
+    /// nada) e o painel interno está online. Pura.
+    static func shouldRetryRestore(flags: CGDisplayChangeSummaryFlags, builtInOnline: Bool) -> Bool {
+        !flags.contains(.beginConfigurationFlag) && builtInOnline
+    }
+
+    /// Regista o callback. Idempotente: com um já registado não faz nada.
+    private static func waitForPanel() {
+        guard !waitingForPanel else { return }
+        guard panelRetries < maxPanelRetries else {
+            NSLog("Sleepy: o painel interno não aceita o brilho — desisto de repor sozinho")
+            return
+        }
+        waitingForPanel = CGDisplayRegisterReconfigurationCallback(displayCallback, nil) == .success
+    }
+
+    private static func stopWaitingForPanel() {
+        guard waitingForPanel else { return }
+        CGDisplayRemoveReconfigurationCallback(displayCallback, nil)
+        waitingForPanel = false
+    }
+
+    /// Sem capturas (é um ponteiro C): só decide e passa ao main.
+    private static let displayCallback: CGDisplayReconfigurationCallBack = { _, flags, _ in
+        guard LidDisplay.shouldRetryRestore(flags: flags, builtInOnline: LidDisplay.builtInDisplayID() != nil) else { return }
+        DispatchQueue.main.async { LidDisplay.retryRestoreAfterReconfiguration() }
+    }
+
+    private static func retryRestoreAfterReconfiguration() {
+        guard waitingForPanel else { return }
+        // Outro caminho já repôs (ou voltámos a escurecer): nada à espera.
+        guard dimmedByUs, builtInDisplayID() != nil else {
+            if !dimmedByUs { stopWaitingForPanel() }
+            return
+        }
+        stopWaitingForPanel()
+        panelRetries += 1
+        NSLog("Sleepy: o painel interno voltou — a repor o brilho")
+        restore()
     }
 
     /// `true` se o painel ficou reposto (ou não havia nada a repor).

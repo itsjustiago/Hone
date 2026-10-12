@@ -68,7 +68,7 @@ struct SleepySettingsView: View {
             SettingsSection(title: "Impedir sleep") {
                 SettingsRow(
                     title: "Com a tampa fechada",
-                    subtitle: "Fica acordado precisa de admin (pmset disablesleep). Adormece não precisa."
+                    subtitle: "Fica acordado: o Mac continua a trabalhar com a tampa fechada (precisa da password de admin). Adormece: só fica acordado com a tampa aberta."
                 ) {
                     Picker("", selection: Binding(
                         get: { model.sleepMode },
@@ -188,11 +188,9 @@ struct SleepySettingsView: View {
             .opacity(extrasDisabled ? 0.45 : 1)
         if model.lowPowerWhenLidClosed, !extrasDisabled, model.lowPowerRuleAllowed == false {
             RowDivider()
-            SettingsRow(
-                title: "Regra sem password por atualizar",
-                subtitle: "Falta o Low Power Mode na regra; sem ele, o Mac fica como está. Pede admin uma vez."
-            ) {
-                Button("Atualizar regra…") { model.updateRule() }
+            let notice = PrivilegedAccess.lowPowerRuleNotice(installed: model.passwordless)
+            SettingsRow(title: notice.title, subtitle: notice.detail) {
+                Button(PrivilegedAccess.ruleButtonTitle(installed: model.passwordless)) { model.updateRule() }
                     .buttonStyle(VibeButtonStyle())
                     .controlSize(.small)
             }

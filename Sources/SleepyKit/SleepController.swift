@@ -891,6 +891,12 @@ final class SleepController {
     func lidStateChanged(_ state: LidState) {
         // Em `.displayOnly` ninguém apaga o painel: a tampa fechada adormece o Mac.
         guard isActive, activeMode.usesDisableSleep else { return }
+        // Fechar ou abrir a tampa muda o que a térmica conta (só `.serious` com a
+        // tampa fechada sem externo) e a bateria com a tampa fechada interessa já:
+        // avalia-se agora, não só no próximo tick. Sem reentrada: desligar daqui
+        // passa por `disable()` → `stopLidMonitor()`, que só pára o monitor (não
+        // volta a chamar esta função). Corre depois de tudo, também nos `return`.
+        defer { checkPowerGuards(reason: state.lidClosed ? "tampa fechada" : "tampa aberta") }
         if LidMonitor.shouldDim(state) {
             // O sleep da tampa chega uns 5–8 s depois de fechar: dá tempo de
             // confirmar o SleepDisabled e, se caiu, repô-lo.
@@ -1383,9 +1389,7 @@ final class SleepController {
         }
 
         let thermal = ProcessInfo.processInfo.thermalState
-        // A tampa só interessa a partir de `.serious`: abaixo disso nem se lê.
-        let closed = thermal.rawValue >= ProcessInfo.ThermalState.serious.rawValue
-            && LidMonitor.current().closedWithoutExternal
+        let closed = Self.closedForThermal(thermal, lid: LidMonitor.current())
         if thermalGuard.shouldStop(state: thermal, closedWithoutExternal: closed, at: Date()) {
             NSLog("Sleepy: estado térmico \(thermal.rawValue) (\(reason))")
             // `.critical` também dispara de tampa aberta: diz-se a verdade.
@@ -1393,6 +1397,13 @@ final class SleepController {
             return
         }
         updateThermalRecheck()
+    }
+
+    /// O que o `ThermalGuard` entende por "tampa fechada sem ecrã externo". A
+    /// tampa só interessa a partir de `.serious`: abaixo disso nem se lê (daí o
+    /// autoclosure, que evita o IOKit). Pura.
+    static func closedForThermal(_ state: ProcessInfo.ThermalState, lid: @autoclosure () -> LidState) -> Bool {
+        state.rawValue >= ProcessInfo.ThermalState.serious.rawValue && lid().closedWithoutExternal
     }
 
     /// O `.serious` precisa de 30 s seguidos, e o timer de 30 s pode escorregar

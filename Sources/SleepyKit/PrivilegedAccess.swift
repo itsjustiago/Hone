@@ -93,6 +93,23 @@ enum PrivilegedAccess {
         return allowed
     }
 
+    // MARK: - Textos da regra na UI
+
+    /// "Atualizar" se já há regra (a v1, sem o Low Power Mode), "Instalar" se não
+    /// há nenhuma. `installed` = `isInstalled`. Pura.
+    static func ruleButtonTitle(installed: Bool) -> String {
+        installed ? "Atualizar regra…" : "Instalar regra…"
+    }
+
+    /// Título e explicação do aviso "falta o Low Power Mode na regra". Pura.
+    static func lowPowerRuleNotice(installed: Bool) -> (title: String, detail: String) {
+        installed
+            ? ("Regra sem password por atualizar",
+               "Falta o Low Power Mode na regra; sem ele, o Mac fica como está. Pede admin uma vez.")
+            : ("Regra sem password em falta",
+               "Sem a regra, o Low Power Mode não liga com a tampa fechada. Pede admin uma vez.")
+    }
+
     /// O conteúdo do drop-in sudoers (v2): quatro linhas, os comandos exatos, sem
     /// wildcards. Puro, para testar.
     static func ruleContent(user: String) -> String {
