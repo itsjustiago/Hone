@@ -235,6 +235,13 @@ public final class SleepyTool {
                 self?.settingsModel.updateRule()
                 self?.refreshMenuModel()
             },
+            onChangeWaitForClaude: { [weak self] on in
+                // Turning it on may turn Sleepy on (admin prompt). Refused, nothing is
+                // armed and no callback fires: resync so the switch snaps back.
+                SleepController.shared.setWaitForClaude(on)
+                self?.refreshMenuModel()
+                self?.onMenuBarImageChange?()
+            },
             onExtend: { SleepController.shared.extendSession() },
             onSettings: { dismiss(); openSettings() },
             onBack: back,
@@ -299,6 +306,8 @@ public final class SleepyTool {
         // O modo em uso: numa sessão do gatilho remoto pode não ser o guardado.
         menuModel.sleepMode = SleepController.shared.activeMode
         menuModel.remoteSessionText = SleepController.shared.remoteSessionLabel
+        menuModel.waitForClaude = SleepController.shared.isActive && SleepController.shared.waitsForClaude
+        menuModel.claudeWaitText = SleepController.shared.claudeWaitText
         menuModel.stopReasonText = stopReasonText()
         menuModel.passwordlessInstalled = PrivilegedAccess.isInstalled
         menuModel.warning = SleepController.shared.lidWarning
