@@ -83,6 +83,8 @@ public enum VibeToolColor {
     public static let sleepy = VibePalette.lilac
     public static let stats = VibePalette.green
     public static let cleanKeyboard = VibePalette.white
+    /// Shares Alt-Tab's teal: the palette is fully assigned and the two sit far apart in the list.
+    public static let lidFold = VibePalette.teal
 }
 
 // MARK: - Shape & space

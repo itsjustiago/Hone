@@ -122,7 +122,7 @@ enum PreviewRenderer {
     }
 }
 
-/// The ten tools as fake values (mirrors the modules' metadata).
+/// The eleven tools as fake values (mirrors the modules' metadata).
 enum Fixture {
     struct Spec {
         let id, title, shortTitle, category, tagline, icon: String
@@ -148,6 +148,9 @@ enum Fixture {
         Spec(id: "keySwap", title: "Comando ⇄ Controlo", shortTitle: "⌘ ⇄ ⌃", category: "Teclado",
              tagline: "Troca ⌘ com ⌃ para copiares e colares como no Windows.",
              icon: "command.square.fill", tint: VibeToolColor.keySwap),
+        Spec(id: "lidFold", title: "Dobra da tampa", shortTitle: "Tampa", category: "Ecrã",
+             tagline: "O ecrã dobra-se quando fechas ou abres a tampa.",
+             icon: "laptopcomputer", tint: VibeToolColor.lidFold),
         Spec(id: "clippy", title: "Clippy", shortTitle: "Clippy", category: "Clipboard",
              tagline: "Um atalho mostra o que copiaste, texto e imagens.",
              icon: "doc.on.clipboard", tint: VibeToolColor.clippy, panel: true),

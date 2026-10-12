@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Hone",
-            dependencies: ["HoneDesign", "SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit"],
+            dependencies: ["HoneDesign", "SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit", "LidFoldKit"],
             path: "Sources/Hone",
             swiftSettings: [
                 // The system-level modules (event taps, AX API, C callbacks) are
@@ -50,11 +50,25 @@ let package = Package(
             path: "Sources/StatsKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Lid-angle sensor plus the pure fold maths ("iPhone Duo" screen effect).
+        // System frameworks only: it depends on no Kit, never touches brightness,
+        // display sleep or power assertions (Sleepy owns those).
+        .target(
+            name: "LidFoldKit",
+            path: "Sources/LidFoldKit",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         // Hone's own pure logic (Quit on Close's decisions). The Kits have their own.
         .testTarget(
             name: "HoneTests",
             dependencies: ["Hone"],
             path: "Tests/HoneTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "LidFoldKitTests",
+            dependencies: ["LidFoldKit"],
+            path: "Tests/LidFoldKitTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

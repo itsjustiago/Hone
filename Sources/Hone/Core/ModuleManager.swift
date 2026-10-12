@@ -39,6 +39,7 @@ final class ModuleManager {
             AltTabModule(),
             QuitOnCloseModule(),
             KeySwapModule(),
+            LidFoldModule(),
             // Former standalone apps, embedded as tools.
             ClippyModule.make(),
             ScreenlyModule.make(),
