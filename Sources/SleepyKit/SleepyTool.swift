@@ -38,6 +38,10 @@ public final class SleepyTool {
                 self?.onMenuBarImageChange?()
             }
         }
+        // "Mais 1 h" no aviso de 5 min antes do auto-desligar (já chega no main).
+        Notifier.shared.onAction = { action in
+            if action == Notifier.extendActionID { SleepController.shared.extendSession() }
+        }
         Notifier.shared.activate()
         SleepController.shared.restoreOnLaunch()
     }
@@ -57,6 +61,7 @@ public final class SleepyTool {
             return
         }
         SleepController.shared.onStateChange = nil
+        Notifier.shared.onAction = nil
         isRunning = false
         refreshMenuModel()
         onMenuBarImageChange?()
@@ -68,6 +73,7 @@ public final class SleepyTool {
     public func stopKeepingState() {
         guard isRunning else { return }
         SleepController.shared.onStateChange = nil
+        Notifier.shared.onAction = nil
         SleepController.shared.suspend()
         isRunning = false
         refreshMenuModel()
@@ -88,7 +94,8 @@ public final class SleepyTool {
     public var menuBarImage: NSImage {
         let active = SleepController.shared.isActive
         let symbol = active ? "sun.max.fill" : "moon.zzz"
-        let description = active ? "Sleepy — Mac e ecrã acordados" : "Sleepy — sleep normal"
+        let awake = SleepController.sleepMode == .lidClosedAwake ? "Mac e ecrã acordados" : "ecrã acordado"
+        let description = active ? "Sleepy — \(awake)" : "Sleepy — sleep normal"
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description) ?? NSImage()
         image.isTemplate = true
         return image
@@ -134,6 +141,13 @@ public final class SleepyTool {
                 SleepController.batteryThreshold = percent
                 self?.refreshMenuModel()
             },
+            onChangeSleepMode: { [weak self] mode in
+                // Recusada (prompt de admin cancelado), o modelo volta ao modo
+                // guardado e o picker recua.
+                SleepController.shared.setSleepMode(mode)
+                self?.refreshMenuModel()
+            },
+            onExtend: { SleepController.shared.extendSession() },
             onSettings: { dismiss(); openSettings() },
             onBack: back,
             onToggleOwnIcon: toggleOwnIcon))
@@ -152,6 +166,7 @@ public final class SleepyTool {
         menuModel.autoOffText = autoOffText()
         menuModel.autoOffMinutes = SleepController.autoOffMinutes
         menuModel.batteryThreshold = SleepController.batteryThreshold
+        menuModel.sleepMode = SleepController.sleepMode
         menuModel.stopReasonText = stopReasonText()
         menuModel.passwordlessInstalled = PrivilegedAccess.isInstalled
         menuModel.warning = SleepController.shared.lidWarning

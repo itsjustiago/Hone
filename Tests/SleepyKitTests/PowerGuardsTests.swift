@@ -183,11 +183,20 @@ final class PowerGuardsTests: XCTestCase {
     // MARK: - Textos e preferência
 
     func testStopReasonTexts() {
-        XCTAssertEqual(SleepController.StopReason.battery(percent: 19).notificationReason, "bateria a 19 %")
-        XCTAssertEqual(SleepController.StopReason.thermal.notificationReason,
+        typealias Reason = SleepController.StopReason
+        XCTAssertEqual(Reason.battery(percent: 19).notificationReason, "bateria a 19 %")
+        XCTAssertEqual(Reason.autoOff.notificationReason, "passou o tempo escolhido")
+        XCTAssertEqual(Reason.thermal(lidClosed: true).notificationReason,
                        "o Mac estava a aquecer com a tampa fechada")
-        XCTAssertEqual(SleepController.StopReason.autoOff.notificationReason, "passou o tempo escolhido")
-        XCTAssertEqual(SleepController.StopReason.thermal.panelReason, "o Mac estava a aquecer")
+        XCTAssertEqual(Reason.thermal(lidClosed: true).panelReason,
+                       "o Mac estava a aquecer com a tampa fechada")
+    }
+
+    /// O `.critical` dispara de tampa aberta: o texto não pode dizer "tampa fechada".
+    func testThermalTextsWithLidOpenDoNotMentionTheLid() {
+        let reason = SleepController.StopReason.thermal(lidClosed: false)
+        XCTAssertEqual(reason.notificationReason, "o Mac estava a aquecer")
+        XCTAssertEqual(reason.panelReason, "o Mac estava a aquecer")
     }
 
     func testBatteryOptionsStartWithNeverAndIncludeTheDefault() {

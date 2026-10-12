@@ -41,6 +41,11 @@ import IOKit.pwr_mgt
 /// Tampa fechada sem ecrã externo: o `disablesleep` deixa o painel interno
 /// aceso dentro da tampa. Aí largamos a assertion de ecrã e apagamos painel e
 /// teclado ([[LidDisplay]]); ao abrir a tampa ou ligar um externo, repomos.
+///
+/// Dois modos ([[SleepMode]]): `.lidClosedAwake` é tudo o que está acima;
+/// `.displayOnly` só segura o ecrã e o idle (nº 2 e nº 3), sem `disablesleep`,
+/// sem root, sem watchdog nem monitor da tampa — fechar a tampa adormece o Mac.
+/// Mantém o limite de bateria e o auto-desligar.
 final class SleepController {
     static let shared = SleepController()
 
@@ -70,6 +75,9 @@ final class SleepController {
     /// O prompt de admin do auto-desligar foi recusado: as tentativas seguintes
     /// são só em silêncio, para não o repetir a cada 15s.
     private var autoOffPromptDeclined = false
+    /// Já avisámos (5 min antes) que o auto-desligar se aproxima. Só em memória:
+    /// vale por sessão e volta a armar ao prolongar ou mudar a duração.
+    private var autoOffWarned = false
 
     /// Porque é que o Sleepy se desligou sozinho, e quando. Só em memória: vive
     /// até o utilizador voltar a ligar (`enable()`).
@@ -100,6 +108,9 @@ final class SleepController {
     private let activeSinceKey = "activeSince"
     private static let autoOffKey = "autoOffMinutes"
     private static let legacyAutoOffKey = "autoOffHours"
+    private static let autoOffExtensionKey = "autoOffExtension"
+    private static let sleepModeKey = "sleepMode"
+    private static let endActionKey = "endAction"
 
     /// Minutos até desligar sozinho. 0 = nunca. Antes disto a preferência era em
     /// horas — migra-se na primeira leitura para não perder a escolha do utilizador.
@@ -115,8 +126,24 @@ final class SleepController {
         }
         set {
             SleepyDefaults.store.set(newValue, forKey: autoOffKey)
+            // Duração nova = prazo novo: o "+1 h" de antes já não conta.
+            shared.autoOffExtension = 0
+            shared.autoOffWarned = false
             shared.scheduleAutoOff()
         }
+    }
+
+    /// Modo guardado. Muda-se com `setSleepMode`, que aplica a troca ao Sleepy
+    /// ligado e só então a guarda.
+    private(set) static var sleepMode: SleepMode {
+        get { SleepMode(rawValue: SleepyDefaults.store.string(forKey: sleepModeKey) ?? "") ?? .lidClosedAwake }
+        set { SleepyDefaults.store.set(newValue.rawValue, forKey: sleepModeKey) }
+    }
+
+    /// O que fazer quando o Sleepy se desliga sozinho (tempo ou bateria).
+    static var endAction: EndAction {
+        get { EndAction(rawValue: SleepyDefaults.store.string(forKey: endActionKey) ?? "") ?? .none }
+        set { SleepyDefaults.store.set(newValue.rawValue, forKey: endActionKey) }
     }
 
     /// As escolhas de auto-desligar, partilhadas pelo menu e pelas definições.
@@ -175,25 +202,36 @@ final class SleepController {
     enum StopReason: Equatable {
         case autoOff
         case battery(percent: Int)
-        case thermal
+        /// `lidClosed`: a tampa estava fechada sem ecrã externo quando parou
+        /// (o `.critical` também dispara de tampa aberta).
+        case thermal(lidClosed: Bool)
 
         /// Para a notificação: "Sleepy desligou-se — <isto>."
         var notificationReason: String {
             switch self {
             case .autoOff: return "passou o tempo escolhido"
             case .battery(let percent): return "bateria a \(percent) %"
-            case .thermal: return "o Mac estava a aquecer com a tampa fechada"
+            case .thermal(let lidClosed):
+                return lidClosed ? "o Mac estava a aquecer com a tampa fechada" : "o Mac estava a aquecer"
             }
         }
 
         /// Para o painel: "Desligou-se às HH:mm — <isto>."
-        var panelReason: String {
+        var panelReason: String { notificationReason }
+
+        /// A ação escolhida para o fim só corre quando o Sleepy acaba por tempo
+        /// ou bateria; com o Mac quente o melhor é não mexer em mais nada.
+        var runsEndAction: Bool {
             switch self {
-            case .autoOff: return "passou o tempo escolhido"
-            case .battery(let percent): return "bateria a \(percent) %"
-            case .thermal: return "o Mac estava a aquecer"
+            case .autoOff, .battery: return true
+            case .thermal: return false
             }
         }
+    }
+
+    /// A ação no fim para este motivo. Pura: `nil` = nada a fazer.
+    static func endCommand(action: EndAction, reason: StopReason) -> EndCommand? {
+        reason.runsEndAction ? action.command : nil
     }
 
     private init() {}
@@ -235,20 +273,29 @@ final class SleepController {
 
     // MARK: - IOKit power assertions (ecrã + idle + system sleep)
 
-    /// As que devem estar seguras agora: com o painel apagado, sem a de ecrã.
-    private var wantedAssertionTypes: [String] {
-        guard lidDimmed else { return Self.assertionTypes }
-        return Self.assertionTypes.filter { $0 != kIOPMAssertionTypePreventUserIdleDisplaySleep }
+    /// As que cada modo deve ter seguras. `.lidClosedAwake`: as três, e sem a de
+    /// ecrã com o painel apagado (`lidDimmed`). `.displayOnly`: só ecrã + idle —
+    /// sem `PreventSystemSleep`, para fechar a tampa adormecer mesmo na corrente.
+    static func assertionTypes(for mode: SleepMode, lidDimmed: Bool) -> [String] {
+        switch mode {
+        case .displayOnly:
+            return [kIOPMAssertionTypePreventUserIdleDisplaySleep,
+                    kIOPMAssertionTypePreventUserIdleSystemSleep]
+        case .lidClosedAwake:
+            guard lidDimmed else { return assertionTypes }
+            return assertionTypes.filter { $0 != kIOPMAssertionTypePreventUserIdleDisplaySleep }
+        }
     }
 
-    /// Segura as três assertions (ecrã, idle, system) — só idle + system com
-    /// `lidDimmed`, e aí larga a de ecrã. Sem privilégios. Idempotente: cria só
-    /// as que faltam, por isso uma falha parcial não fica para sempre — a
-    /// próxima chamada tenta de novo.
+    /// Segura as assertions do modo (ver `assertionTypes(for:lidDimmed:)`) e
+    /// larga as que já não fazem falta (a de ecrã com `lidDimmed`, a de system
+    /// ao passar a `.displayOnly`). Sem privilégios. Idempotente: cria só as que
+    /// faltam, por isso uma falha parcial não fica para sempre — a próxima
+    /// chamada tenta de novo. `mode` só para os testes; por omissão, o guardado.
     @discardableResult
-    func ensureAssertions() -> Bool {
-        if lidDimmed { releaseAssertion(ofType: kIOPMAssertionTypePreventUserIdleDisplaySleep) }
-        let wanted = wantedAssertionTypes
+    func ensureAssertions(mode: SleepMode? = nil) -> Bool {
+        let wanted = Self.assertionTypes(for: mode ?? Self.sleepMode, lidDimmed: lidDimmed)
+        for type in Array(assertionIDs.keys) where !wanted.contains(type) { releaseAssertion(ofType: type) }
         for type in wanted where assertionIDs[type] == nil {
             var id: IOPMAssertionID = 0
             let result = IOPMAssertionCreateWithName(
@@ -303,20 +350,21 @@ final class SleepController {
 
     func enable() {
         guard !isActive else { return }
+        let mode = Self.sleepMode
         // Sem o disablesleep não há proteção de lid-close — se o utilizador
-        // cancelar o prompt de admin, não fingimos que ficou ligado.
-        guard setDisableSleep(true) else { return }
+        // cancelar o prompt de admin, não fingimos que ficou ligado. Em
+        // `.displayOnly` não há disablesleep: liga sem root e sem prompt.
+        if mode.usesDisableSleep { guard setDisableSleep(true) else { return } }
         if !ensureAssertions() {
             NSLog("Sleepy: falha a criar as power assertions — o ecrã ou o Mac podem adormecer")
         }
         isActive = true
         lastStop = nil
         activeSince = Date()
+        autoOffExtension = 0
+        autoOffWarned = false
         SleepyDefaults.store.set(true, forKey: activeKey)
-        setRestoreAllowed(true)
-        startLidMonitor()
-        startVerification()
-        CrashWatchdog.start()
+        startModeServices(for: mode)
         scheduleAutoOff()
         Notifier.shared.requestAuthorizationIfNeeded()
         onStateChange?()
@@ -326,9 +374,12 @@ final class SleepController {
         guard isActive else { return }
         // Antes do pmset: uma verificação em curso não pode repor o 1 por cima.
         setRestoreAllowed(false)
-        guard setDisableSleep(false, allowPrompt: allowPrompt) else {
-            setRestoreAllowed(true)
-            return
+        // Em `.displayOnly` não há disablesleep para largar (nem prompt).
+        if Self.sleepMode.usesDisableSleep {
+            guard setDisableSleep(false, allowPrompt: allowPrompt) else {
+                setRestoreAllowed(true)
+                return
+            }
         }
         stopLidMonitor()
         releaseAssertion()
@@ -339,6 +390,61 @@ final class SleepController {
         autoOffTimer?.invalidate()
         autoOffTimer = nil
         onStateChange?()
+    }
+
+    /// O que corre enquanto o Sleepy está ligado, conforme o modo. O `disablesleep`
+    /// já tem de estar posto (ou, em `.displayOnly`, não se usa). A bateria e o
+    /// auto-desligar valem nos dois modos; o resto é só de `.lidClosedAwake`.
+    private func startModeServices(for mode: SleepMode) {
+        if mode.usesDisableSleep {
+            setRestoreAllowed(true)
+            startLidMonitor()
+            CrashWatchdog.start()
+        } else {
+            // Sem monitor da tampa ninguém escurece o painel: repõe-se o que
+            // ficou de uma sessão que crashou.
+            setRestoreAllowed(false)
+            stopLidMonitor()
+        }
+        startVerification()
+    }
+
+    /// Troca o modo. Com o Sleepy ligado aplica-se já: para `.lidClosedAwake`
+    /// põe o `disablesleep` (pode pedir admin) e arranca watchdog, verificador e
+    /// monitor da tampa; para `.displayOnly` larga-o, pára-os, larga a assertion
+    /// de system e repõe o painel se estiver apagado. Se o `pmset` falhar
+    /// (prompt recusado), a troca é rejeitada: devolve `false` e o modo guardado
+    /// não muda — quem chama volta a ler o modelo para o picker recuar.
+    @discardableResult
+    func setSleepMode(_ mode: SleepMode) -> Bool {
+        guard mode != Self.sleepMode else { return true }
+        guard isActive else {
+            Self.sleepMode = mode
+            return true
+        }
+        switch mode {
+        case .lidClosedAwake:
+            guard setDisableSleep(true) else { return false }
+            Self.sleepMode = mode
+            startModeServices(for: mode)
+        case .displayOnly:
+            // Antes do pmset, como no `disable()`: o verificador não repõe o 1.
+            setRestoreAllowed(false)
+            guard setDisableSleep(false) else {
+                setRestoreAllowed(true)
+                return false
+            }
+            Self.sleepMode = mode
+            CrashWatchdog.stop()
+            startModeServices(for: mode)
+        }
+        // Acrescenta ou larga a assertion de system (e a de ecrã, se o painel estava apagado).
+        if !ensureAssertions() {
+            NSLog("Sleepy: falha a ajustar as power assertions ao novo modo — o ecrã ou o Mac podem adormecer")
+        }
+        NSLog("Sleepy: modo \(mode.rawValue)")
+        onStateChange?()
+        return true
     }
 
     /// Lets go of what this process holds (power assertions, auto-off timer)
@@ -376,7 +482,8 @@ final class SleepController {
     /// der, o Sleepy fica ligado — as assertions seguram o Mac de tampa aberta —
     /// e o aviso diz a verdade. Uma leitura falhada nunca desarma nada.
     func verifySleepDisabled(reason: String) {
-        guard isActive, !verifyInFlight else { return }
+        // Em `.displayOnly` não há disablesleep para confirmar (nem repor).
+        guard isActive, Self.sleepMode.usesDisableSleep, !verifyInFlight else { return }
         verifyInFlight = true
         Self.pmsetQueue.async { [self] in
             let outcome = readAndRestore()
@@ -409,7 +516,8 @@ final class SleepController {
 
     private func finishVerification(_ outcome: VerifyOutcome, reason: String) {
         verifyInFlight = false
-        guard isActive else { return }
+        // Uma verificação que ficou a meio de uma troca para `.displayOnly` não conta.
+        guard isActive, Self.sleepMode.usesDisableSleep else { return }
         let now = Date()
         switch outcome {
         case .unreadable, .skipped:
@@ -434,6 +542,9 @@ final class SleepController {
         onStateChange?()
     }
 
+    /// Os timers de fundo do Sleepy ligado: o verificador do SleepDisabled (só
+    /// `.lidClosedAwake`; em `.displayOnly` o `verifySleepDisabled` é no-op) e
+    /// a bateria/temperatura (os dois modos).
     private func startVerification() {
         stopVerification()
         // Pouco depois de ligar: apanha um pmset que não pegou.
@@ -520,8 +631,16 @@ final class SleepController {
     /// Decisão pura do `restoreOnLaunch`. `resetSucceeded` é o resultado do
     /// reset defensivo (só corre quando não era para ficar ligado);
     /// `systemValue` é o `SleepDisabled` lido depois, `nil` se a leitura falhou.
-    static func restoreDecision(persistedActive: Bool, expired: Bool,
+    /// Em `.displayOnly` o `SleepDisabled` não faz parte da decisão: o estado é
+    /// só a intenção guardada (um 1 sobrado repõe-se a 0 à parte).
+    static func restoreDecision(mode: SleepMode = .lidClosedAwake,
+                                persistedActive: Bool, expired: Bool,
                                 resetSucceeded: Bool, systemValue: Bool?) -> RestoreDecision {
+        if mode == .displayOnly {
+            return persistedActive && !expired
+                ? .init(active: true, clearPersisted: false, keepActiveSince: true)
+                : .init(active: false, clearPersisted: true, keepActiveSince: false)
+        }
         if persistedActive && !expired {
             // Era para estar ligado. Só uma leitura 0 confirmada diz que o rearme
             // não pegou — aí não deixa `sleepActive` pendurado. Leitura falhada:
@@ -549,22 +668,32 @@ final class SleepController {
         restoreHandoff()
         // O watchdog de uma sessão anterior já não faz falta: há Hone a correr.
         CrashWatchdog.stop()
+        let mode = Self.sleepMode
         let persistedActive = SleepyDefaults.store.bool(forKey: activeKey)
         let expired = autoOffExpired()
 
         var resetSucceeded = false
-        if persistedActive && !expired {
-            _ = PrivilegedAccess.setDisableSleep(true)
-        } else {
-            resetSucceeded = PrivilegedAccess.setDisableSleep(false)
+        var systemValue: Bool?
+        if mode.usesDisableSleep {
+            if persistedActive && !expired {
+                _ = PrivilegedAccess.setDisableSleep(true)
+            } else {
+                resetSucceeded = PrivilegedAccess.setDisableSleep(false)
+            }
+            // O ícone segue o que o sistema diz, não o que julgamos ter feito. Sem
+            // acesso sem password não conseguimos mexer no disablesleep em silêncio,
+            // e mentir sobre o estado seria pior do que mostrá-lo.
+            systemValue = Self.systemSleepDisabled()
+        } else if Self.systemSleepDisabled() == true {
+            // Neste modo não há disablesleep: um 1 sobrado (crash, modo trocado
+            // por fora) repõe-se a 0 em silêncio, e só com o caminho sem password.
+            if !PrivilegedAccess.setDisableSleep(false) {
+                NSLog("Sleepy: SleepDisabled sobrado a 1 e sem acesso sem password para o repor — o Mac pode não adormecer com a tampa fechada")
+            }
         }
-
-        // O ícone segue o que o sistema diz, não o que julgamos ter feito. Sem
-        // acesso sem password não conseguimos mexer no disablesleep em silêncio,
-        // e mentir sobre o estado seria pior do que mostrá-lo.
         let decision = Self.restoreDecision(
-            persistedActive: persistedActive, expired: expired,
-            resetSucceeded: resetSucceeded, systemValue: Self.systemSleepDisabled())
+            mode: mode, persistedActive: persistedActive, expired: expired,
+            resetSucceeded: resetSucceeded, systemValue: systemValue)
         if decision.clearPersisted { clearPersisted() }
         isActive = decision.active
         if isActive {
@@ -574,12 +703,10 @@ final class SleepController {
             SleepyDefaults.store.set(true, forKey: activeKey)
             if !decision.keepActiveSince || activeSince == nil { activeSince = Date() }
             // Crash a meio de uma tampa fechada: o brilho ficou a 0. De tampa
-            // fechada não se repõe aqui — o monitor volta a apagar ou repõe.
-            if LidDisplay.dimmedByUs, !LidMonitor.current().lidClosed { LidDisplay.restore() }
-            setRestoreAllowed(true)
-            startLidMonitor()
-            startVerification()
-            CrashWatchdog.start()
+            // fechada não se repõe aqui — o monitor volta a apagar ou repõe
+            // (em `.displayOnly` não há monitor: o `startModeServices` repõe).
+            if mode.usesDisableSleep, LidDisplay.dimmedByUs, !LidMonitor.current().lidClosed { LidDisplay.restore() }
+            startModeServices(for: mode)
             // Por último: com o prazo passado o auto-off dispara já (em silêncio),
             // e se der certo o `disable()` desfaz tudo o que ficou acima.
             scheduleAutoOff(silent: true)
@@ -619,7 +746,8 @@ final class SleepController {
 
     /// Único ponto de entrada das mudanças de tampa/ecrã externo (já estabilizadas).
     func lidStateChanged(_ state: LidState) {
-        guard isActive else { return }
+        // Em `.displayOnly` ninguém apaga o painel: a tampa fechada adormece o Mac.
+        guard isActive, Self.sleepMode.usesDisableSleep else { return }
         if LidMonitor.shouldDim(state) {
             // O sleep da tampa chega uns 5–8 s depois de fechar: dá tempo de
             // confirmar o SleepDisabled e, se caiu, repô-lo.
@@ -654,20 +782,72 @@ final class SleepController {
         set { SleepyDefaults.store.set(newValue, forKey: activeSinceKey) }
     }
 
+    /// Segundos somados ao prazo com o "+1 h". Persistido (sobrevive a um
+    /// relançamento); limpa-se ao ligar, ao desligar e ao mudar a duração.
+    private var autoOffExtension: TimeInterval {
+        get { SleepyDefaults.store.double(forKey: Self.autoOffExtensionKey) }
+        set {
+            if newValue > 0 {
+                SleepyDefaults.store.set(newValue, forKey: Self.autoOffExtensionKey)
+            } else {
+                SleepyDefaults.store.removeObject(forKey: Self.autoOffExtensionKey)
+            }
+        }
+    }
+
+    /// Quando o auto-desligar dispara: início + duração + extensão. `nil` com
+    /// a duração a 0 (nunca). Pura.
+    static func autoOffDate(since: Date, minutes: Int, extension seconds: TimeInterval = 0) -> Date? {
+        guard minutes > 0 else { return nil }
+        return since.addingTimeInterval(TimeInterval(minutes) * 60 + max(0, seconds))
+    }
+
+    /// Faltam no máximo 5 min (e ainda não passou o prazo) e ainda não avisámos.
+    static let autoOffWarning: TimeInterval = 5 * 60
+
+    static func shouldWarnBeforeAutoOff(offDate: Date, now: Date, alreadyWarned: Bool) -> Bool {
+        let remaining = offDate.timeIntervalSince(now)
+        return !alreadyWarned && remaining > 0 && remaining <= autoOffWarning
+    }
+
     /// Momento em que o auto-off vai disparar, para mostrar no menu.
     var autoOffDate: Date? {
-        guard isActive, Self.autoOffMinutes > 0, let since = activeSince else { return nil }
-        return since.addingTimeInterval(TimeInterval(Self.autoOffMinutes) * 60)
+        guard isActive, let since = activeSince else { return nil }
+        return Self.autoOffDate(since: since, minutes: Self.autoOffMinutes, extension: autoOffExtension)
     }
 
     private func autoOffExpired() -> Bool {
-        guard Self.autoOffMinutes > 0, let since = activeSince else { return false }
-        return Date().timeIntervalSince(since) >= TimeInterval(Self.autoOffMinutes) * 60
+        guard let since = activeSince,
+              let off = Self.autoOffDate(since: since, minutes: Self.autoOffMinutes, extension: autoOffExtension)
+        else { return false }
+        return Date() >= off
+    }
+
+    /// Adia o desligar sozinho (por omissão, 1 h). Só com o Sleepy ligado e com
+    /// auto-desligar (com "Nunca" não há prazo para adiar). Volta a armar o aviso.
+    func extendSession(by seconds: TimeInterval = 3600) {
+        guard isActive, seconds > 0, autoOffDate != nil else { return }
+        autoOffExtension += seconds
+        autoOffWarned = false
+        scheduleAutoOff()
+        onStateChange?()
+    }
+
+    /// Cinco minutos antes do prazo, uma vez por sessão: notifica, com a ação "Mais 1 h".
+    private func warnBeforeAutoOffIfNeeded() {
+        guard let off = autoOffDate,
+              Self.shouldWarnBeforeAutoOff(offDate: off, now: Date(), alreadyWarned: autoOffWarned) else { return }
+        autoOffWarned = true
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+        Notifier.shared.notify("O Sleepy desliga-se às \(fmt.string(from: off))",
+                               category: Notifier.autoOffCategory)
     }
 
     private func clearPersisted() {
         SleepyDefaults.store.set(false, forKey: activeKey)
         SleepyDefaults.store.removeObject(forKey: activeSinceKey)
+        autoOffExtension = 0
     }
 
     /// Verificação periódica em vez de um único timer para o prazo todo: um
@@ -684,7 +864,11 @@ final class SleepController {
         if autoOffExpired() { autoOff() }
         guard isActive else { return }
         let timer = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
-            guard let self, self.autoOffExpired() else { return }
+            guard let self else { return }
+            guard self.autoOffExpired() else {
+                self.warnBeforeAutoOffIfNeeded()
+                return
+            }
             self.autoOff()
         }
         timer.tolerance = 5
@@ -730,7 +914,11 @@ final class SleepController {
         // fechada é o comportamento que o utilizador espera, por isso pedimos
         // o sleep explicitamente (o pmset sleepnow não precisa de privilégios).
         guard closed else {
-            // Lote D: ação no fim
+            // Ação escolhida para o fim (só tempo e bateria). Com a tampa
+            // fechada sem externo o Mac já dorme, por isso não chega aqui.
+            if let command = Self.endCommand(action: Self.endAction, reason: reason) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Self.run(command) }
+            }
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Self.sleepNow() }
@@ -782,7 +970,8 @@ final class SleepController {
             && LidMonitor.current().closedWithoutExternal
         if thermalGuard.shouldStop(state: thermal, closedWithoutExternal: closed, at: Date()) {
             NSLog("Sleepy: estado térmico \(thermal.rawValue) (\(reason))")
-            stopAutomatically(.thermal)
+            // `.critical` também dispara de tampa aberta: diz-se a verdade.
+            stopAutomatically(.thermal(lidClosed: closed))
             return
         }
         updateThermalRecheck()
@@ -809,6 +998,30 @@ final class SleepController {
 
     private static func sleepNow() {
         runPmsetInBackground(["sleepnow"])
+    }
+
+    // MARK: - Ação no fim
+
+    /// Executa a ação já resolvida por `endCommand`. Só no main.
+    private static func run(_ command: EndCommand) {
+        switch command {
+        case .pmset(let arguments): runPmsetInBackground(arguments)
+        case .lockScreen: lockScreen()
+        }
+    }
+
+    /// Bloqueia já o ecrã com `SACLockScreenImmediate` (login.framework, o que o
+    /// "Bloquear ecrã" do macOS usa). É API privada: se faltar, apaga o ecrã —
+    /// que com "pedir password" ativo também bloqueia. Nunca simula teclas.
+    private static func lockScreen() {
+        typealias LockFunction = @convention(c) () -> Int32
+        let path = "/System/Library/PrivateFrameworks/login.framework/Versions/Current/login"
+        guard let handle = dlopen(path, RTLD_LAZY), let symbol = dlsym(handle, "SACLockScreenImmediate") else {
+            NSLog("Sleepy: SACLockScreenImmediate indisponível — a apagar o ecrã em vez de bloquear")
+            runPmsetInBackground(["displaysleepnow"])
+            return
+        }
+        _ = unsafeBitCast(symbol, to: LockFunction.self)()
     }
 
     /// `pmset` sem privilégios (`sleepnow`, `displaysleepnow`), fora do main

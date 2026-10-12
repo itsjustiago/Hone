@@ -9,6 +9,8 @@ final class SleepMenuModel: ObservableObject {
     @Published var autoOffText: String?
     @Published var autoOffMinutes = SleepController.autoOffMinutes
     @Published var batteryThreshold = SleepController.batteryThreshold
+    /// What happens when the lid closes; the picker snaps back if a change is refused.
+    @Published var sleepMode = SleepController.sleepMode
     /// Why Sleepy last turned itself off, shown while it's off (nil = it didn't).
     @Published var stopReasonText: String?
     @Published var passwordlessInstalled = PrivilegedAccess.isInstalled
@@ -29,6 +31,8 @@ struct MenuPanel: View {
     var onEnablePasswordless: () -> Void
     var onChangeAutoOff: (Int) -> Void
     var onChangeBatteryThreshold: (Int) -> Void
+    var onChangeSleepMode: (SleepMode) -> Void
+    var onExtend: () -> Void
     var onSettings: () -> Void
     /// Non-nil when hosted inside Hone's popover: the header shows a back chevron.
     var onBack: (() -> Void)?
@@ -50,7 +54,10 @@ struct MenuPanel: View {
             onChangeAutoOff: onChangeAutoOff,
             onChangeBatteryThreshold: onChangeBatteryThreshold,
             onSettings: onSettings,
-            onToggleOwnIcon: onToggleOwnIcon)
+            onToggleOwnIcon: onToggleOwnIcon,
+            sleepMode: model.sleepMode,
+            onChangeSleepMode: onChangeSleepMode,
+            onExtend: onExtend)
     }
 }
 
@@ -73,6 +80,9 @@ struct MenuPanelContent: View {
     var onChangeBatteryThreshold: (Int) -> Void = { _ in }
     var onSettings: () -> Void = {}
     var onToggleOwnIcon: () -> Void = {}
+    var sleepMode: SleepMode = .lidClosedAwake
+    var onChangeSleepMode: (SleepMode) -> Void = { _ in }
+    var onExtend: () -> Void = {}
 
     private var tint: Color { VibeToolColor.sleepy }
     private let blobHeight: CGFloat = 50
@@ -85,13 +95,15 @@ struct MenuPanelContent: View {
 
             if let warning { WarningStrip(text: warning) }
 
-            if !passwordlessInstalled {
+            // Só o modo "fica acordado" usa o pmset disablesleep.
+            if sleepMode.usesDisableSleep, !passwordlessInstalled {
                 VibeNoticeStrip("Ligar sem password", color: VibeColor.warning,
                                 actionTitle: "Ativar…", action: onEnablePasswordless)
                     .help("Instala uma regra restrita para não pedir password a cada toggle.")
             }
 
             VStack(alignment: .leading, spacing: 0) {
+                modeRow
                 autoOffRow
                 batteryRow
                 VibeMenuRow("Definições…", systemImage: "gearshape", action: onSettings)
@@ -124,7 +136,7 @@ struct MenuPanelContent: View {
                 }
                 // Clear of the corner buttons.
                 .padding(.trailing, VibeMetrics.cornerButton + cornerSpacing + VibeMetrics.toggle.width + 8)
-                VibeStatusLine(isActive ? "Mac e ecrã acordados" : "Sleep normal",
+                VibeStatusLine(isActive ? awakeLine : "Sleep normal",
                                color: isActive ? tint : VibeColor.dotOff)
                 Text(statusLine)
                     .font(VibeFont.body)
@@ -151,19 +163,40 @@ struct MenuPanelContent: View {
         .animation(VibeMotion.standard, value: isActive)
     }
 
+    private var awakeLine: String {
+        sleepMode.usesDisableSleep ? "Mac e ecrã acordados" : "Ecrã acordado"
+    }
+
     private var statusLine: String {
         if !isActive { return stopReasonText ?? "O Mac dorme normalmente." }
         if let autoOffText { return autoOffText }
-        return "O ecrã não se apaga. De tampa fechada, o Mac continua acordado."
+        return sleepMode.usesDisableSleep
+            ? "O ecrã não se apaga. De tampa fechada, o Mac continua acordado."
+            : "O ecrã não se apaga. Ao fechar a tampa, o Mac dorme."
     }
 
     // MARK: - Picker rows
 
+    /// O que acontece com a tampa fechada: o Mac fica acordado (pmset) ou dorme.
+    private var modeRow: some View {
+        pickerRow(symbol: "laptopcomputer", title: "Tampa fechada",
+                  selection: sleepMode, onChange: onChangeSleepMode, options: Self.modeChoices)
+    }
+
     /// A duração é a definição que se mexe com frequência, por isso vive aqui e
     /// não dentro das Definições — o "Iniciar no login" ficou lá, é de uma vez só.
+    /// Com prazo a correr, o "+1 h" adia-o sem abrir o picker.
     private var autoOffRow: some View {
         pickerRow(symbol: "timer", title: "Desligar sozinho",
-                  selection: autoOffMinutes, onChange: onChangeAutoOff, options: Self.autoOffChoices)
+                  selection: autoOffMinutes, onChange: onChangeAutoOff, options: Self.autoOffChoices) {
+            if isActive, autoOffMinutes > 0 {
+                Button("+1 h", action: onExtend)
+                    .buttonStyle(VibeButtonStyle())
+                    .controlSize(.small)
+                    .help("Adia o desligar sozinho em 1 hora")
+                    .accessibilityLabel("Mais 1 hora")
+            }
+        }
     }
 
     /// O limite de bateria a que o Sleepy se desliga sozinho, ao lado da duração.
@@ -172,9 +205,12 @@ struct MenuPanelContent: View {
                   selection: batteryThreshold, onChange: onChangeBatteryThreshold, options: Self.batteryChoices)
     }
 
-    private func pickerRow(symbol: String, title: String, selection: Int,
-                           onChange: @escaping (Int) -> Void,
-                           options: [VibeMenuPicker<Int>.Option]) -> some View {
+    private func pickerRow<Value: Hashable, Accessory: View>(
+        symbol: String, title: String, selection: Value,
+        onChange: @escaping (Value) -> Void,
+        options: [VibeMenuPicker<Value>.Option],
+        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
+    ) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
                 .font(.system(size: 13))
@@ -184,6 +220,7 @@ struct MenuPanelContent: View {
                 .font(VibeFont.body)
                 .foregroundStyle(VibeColor.text2)
             Spacer(minLength: 8)
+            accessory()
             VibeMenuPicker(title,
                            selection: Binding(get: { selection }, set: { onChange($0) }),
                            options: options,
@@ -191,6 +228,10 @@ struct MenuPanelContent: View {
         }
         .padding(.horizontal, 8)
         .frame(minHeight: 36)
+    }
+
+    private static let modeChoices = SleepMode.allCases.map {
+        VibeMenuPicker<SleepMode>.Option($0, title: $0.title, label: $0.short)
     }
 
     private static let autoOffChoices = SleepController.autoOffOptions.map {
@@ -236,6 +277,7 @@ public enum SleepyPreview {
                              warning: String? = nil,
                              batteryThreshold: Int = 20,
                              stopReasonText: String? = nil,
+                             displayOnly: Bool = false,
                              back: (() -> Void)? = nil) -> AnyView {
         AnyView(MenuPanelContent(
             isActive: isActive,
@@ -247,7 +289,8 @@ public enum SleepyPreview {
             showsOwnIcon: true,
             warning: warning,
             offscreen: true,
-            onBack: back))
+            onBack: back,
+            sleepMode: displayOnly ? .displayOnly : .lidClosedAwake))
     }
 
     /// The tool's page in Settings, with the stored values.

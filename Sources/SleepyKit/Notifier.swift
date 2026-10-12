@@ -12,9 +12,13 @@ import UserNotifications
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
 
-    /// Recebe o identificador da ação carregada numa notificação (ponto de
-    /// extensão: o "Mais 1 h" do lote D). Corre no main. Inclui o clique no
-    /// corpo da notificação (`UNNotificationDefaultActionIdentifier`).
+    /// Categoria do aviso de 5 min antes do auto-desligar, com a ação "Mais 1 h".
+    static let autoOffCategory = "sleepy.autooff"
+    static let extendActionID = "extend1h"
+
+    /// Recebe o identificador da ação carregada numa notificação (hoje, o
+    /// "Mais 1 h"). Corre no main. Inclui o clique no corpo da notificação
+    /// (`UNNotificationDefaultActionIdentifier`).
     var onAction: ((String) -> Void)?
 
     private static let askedKey = "notificationsAsked"
@@ -32,7 +36,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func activate() {
         guard Self.isAvailable, !configured else { return }
         configured = true
-        UNUserNotificationCenter.current().delegate = self
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        // Sem `.foreground`: "Mais 1 h" atua em segundo plano, sem abrir nada.
+        let extend = UNNotificationAction(identifier: Self.extendActionID, title: "Mais 1 h", options: [])
+        let autoOff = UNNotificationCategory(identifier: Self.autoOffCategory, actions: [extend],
+                                             intentIdentifiers: [], options: [])
+        center.setNotificationCategories([autoOff])
     }
 
     /// Pede autorização (aviso + som) só da primeira vez que se liga o Sleepy.
@@ -49,13 +59,15 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Mostra já uma notificação. Sem autorização o sistema ignora-a em silêncio.
-    func notify(_ body: String, title: String = "Sleepy") {
+    /// `category`: as ações que ela leva (ver `activate()`).
+    func notify(_ body: String, title: String = "Sleepy", category: String? = nil) {
         guard Self.isAvailable else { return }
         activate()
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
+        if let category { content.categoryIdentifier = category }
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
             if let error { NSLog("Sleepy: notificação falhou: \(error)") }

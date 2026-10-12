@@ -126,9 +126,9 @@ final class SleepVerificationTests: XCTestCase {
 
     private typealias Decision = SleepController.RestoreDecision
 
-    private func decide(persisted: Bool, expired: Bool = false, reset: Bool = false,
-                        system: Bool?) -> Decision {
-        SleepController.restoreDecision(persistedActive: persisted, expired: expired,
+    private func decide(mode: SleepMode = .lidClosedAwake, persisted: Bool, expired: Bool = false,
+                        reset: Bool = false, system: Bool?) -> Decision {
+        SleepController.restoreDecision(mode: mode, persistedActive: persisted, expired: expired,
                                         resetSucceeded: reset, systemValue: system)
     }
 
@@ -179,5 +179,41 @@ final class SleepVerificationTests: XCTestCase {
                        Decision(active: true, clearPersisted: false, keepActiveSince: false))
         XCTAssertEqual(decide(persisted: false, reset: false, system: nil),
                        Decision(active: false, clearPersisted: true, keepActiveSince: false))
+    }
+
+    // MARK: - restoreDecision em `.displayOnly`
+
+    /// Sem disablesleep o sistema diz sempre 0: o estado é só a intenção guardada.
+    func testDisplayOnlyRestoreRearmsFromPersistedIntentWhateverTheSystemSays() {
+        for system in [false, true, nil] as [Bool?] {
+            XCTAssertEqual(decide(mode: .displayOnly, persisted: true, system: system),
+                           Decision(active: true, clearPersisted: false, keepActiveSince: true),
+                           "SleepDisabled = \(String(describing: system))")
+        }
+    }
+
+    func testDisplayOnlyRestoreClearsWhenNothingWasPersisted() {
+        for system in [false, true, nil] as [Bool?] {
+            for reset in [false, true] {
+                XCTAssertEqual(decide(mode: .displayOnly, persisted: false, reset: reset, system: system),
+                               Decision(active: false, clearPersisted: true, keepActiveSince: false))
+            }
+        }
+    }
+
+    /// Prazo passado: não volta a ligar, mesmo que um reset do 1 sobrado não tenha pegado.
+    func testDisplayOnlyRestoreClearsAnExpiredSession() {
+        for system in [false, true, nil] as [Bool?] {
+            XCTAssertEqual(decide(mode: .displayOnly, persisted: true, expired: true, reset: false, system: system),
+                           Decision(active: false, clearPersisted: true, keepActiveSince: false))
+        }
+    }
+
+    /// O modo por omissão é o de hoje.
+    func testRestoreDecisionDefaultsToLidClosedAwake() {
+        XCTAssertEqual(
+            SleepController.restoreDecision(persistedActive: true, expired: false,
+                                            resetSucceeded: false, systemValue: false),
+            decide(mode: .lidClosedAwake, persisted: true, system: false))
     }
 }

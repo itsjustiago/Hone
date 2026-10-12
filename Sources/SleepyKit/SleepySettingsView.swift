@@ -6,11 +6,15 @@ final class SettingsModel: ObservableObject {
     @Published var passwordless = PrivilegedAccess.isInstalled
     @Published var autoOffMinutes = SleepController.autoOffMinutes
     @Published var batteryThreshold = SleepController.batteryThreshold
+    @Published var sleepMode = SleepController.sleepMode
+    @Published var endAction = SleepController.endAction
 
     func refresh() {
         passwordless = PrivilegedAccess.isInstalled
         autoOffMinutes = SleepController.autoOffMinutes
         batteryThreshold = SleepController.batteryThreshold
+        sleepMode = SleepController.sleepMode
+        endAction = SleepController.endAction
     }
 }
 
@@ -22,6 +26,23 @@ struct SleepySettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsSection(title: "Impedir sleep") {
+                SettingsRow(
+                    title: "Com a tampa fechada",
+                    subtitle: "Fica acordado precisa de admin (pmset disablesleep). Adormece não precisa."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { model.sleepMode },
+                        set: { mode in
+                            // Recusada (prompt de admin cancelado), o refresh faz o picker recuar.
+                            SleepController.shared.setSleepMode(mode)
+                            model.refresh()
+                        })) {
+                        ForEach(SleepMode.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+                RowDivider()
                 ToggleRow(
                     title: "Não pedir password",
                     subtitle: "Instala uma regra restrita (só pmset disablesleep). Pede admin uma vez.",
@@ -56,6 +77,19 @@ struct SleepySettingsView: View {
                     }
                     .labelsHidden()
                     .frame(width: 120)
+                }
+                RowDivider()
+                SettingsRow(
+                    title: "Quando desligar sozinho",
+                    subtitle: "Com a tampa fechada sem ecrã externo, o Mac dorme sempre."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { model.endAction },
+                        set: { model.endAction = $0; SleepController.endAction = $0 })) {
+                        ForEach(EndAction.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 140)
                 }
             }
         }
