@@ -8,6 +8,9 @@ final class SleepMenuModel: ObservableObject {
     @Published var isActive = false
     @Published var autoOffText: String?
     @Published var autoOffMinutes = SleepController.autoOffMinutes
+    @Published var batteryThreshold = SleepController.batteryThreshold
+    /// Why Sleepy last turned itself off, shown while it's off (nil = it didn't).
+    @Published var stopReasonText: String?
     @Published var passwordlessInstalled = PrivilegedAccess.isInstalled
     /// Honest warning when the lid-closed guarantee is gone (see `DisableSleepGuard`).
     @Published var warning: String?
@@ -25,6 +28,7 @@ struct MenuPanel: View {
     var onToggleSleep: () -> Void
     var onEnablePasswordless: () -> Void
     var onChangeAutoOff: (Int) -> Void
+    var onChangeBatteryThreshold: (Int) -> Void
     var onSettings: () -> Void
     /// Non-nil when hosted inside Hone's popover: the header shows a back chevron.
     var onBack: (() -> Void)?
@@ -35,6 +39,8 @@ struct MenuPanel: View {
             isActive: model.isActive,
             autoOffText: model.autoOffText,
             autoOffMinutes: model.autoOffMinutes,
+            batteryThreshold: model.batteryThreshold,
+            stopReasonText: model.stopReasonText,
             passwordlessInstalled: model.passwordlessInstalled,
             showsOwnIcon: model.showsOwnIcon,
             warning: model.warning,
@@ -42,6 +48,7 @@ struct MenuPanel: View {
             onToggleSleep: onToggleSleep,
             onEnablePasswordless: onEnablePasswordless,
             onChangeAutoOff: onChangeAutoOff,
+            onChangeBatteryThreshold: onChangeBatteryThreshold,
             onSettings: onSettings,
             onToggleOwnIcon: onToggleOwnIcon)
     }
@@ -52,6 +59,8 @@ struct MenuPanelContent: View {
     let isActive: Bool
     let autoOffText: String?
     let autoOffMinutes: Int
+    let batteryThreshold: Int
+    let stopReasonText: String?
     let passwordlessInstalled: Bool
     let showsOwnIcon: Bool
     let warning: String?
@@ -61,6 +70,7 @@ struct MenuPanelContent: View {
     var onToggleSleep: () -> Void = {}
     var onEnablePasswordless: () -> Void = {}
     var onChangeAutoOff: (Int) -> Void = { _ in }
+    var onChangeBatteryThreshold: (Int) -> Void = { _ in }
     var onSettings: () -> Void = {}
     var onToggleOwnIcon: () -> Void = {}
 
@@ -83,6 +93,7 @@ struct MenuPanelContent: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 autoOffRow
+                batteryRow
                 VibeMenuRow("Definições…", systemImage: "gearshape", action: onSettings)
             }
             .vibeMenuCard()
@@ -141,28 +152,41 @@ struct MenuPanelContent: View {
     }
 
     private var statusLine: String {
-        if !isActive { return "O Mac dorme normalmente." }
+        if !isActive { return stopReasonText ?? "O Mac dorme normalmente." }
         if let autoOffText { return autoOffText }
         return "O ecrã não se apaga. De tampa fechada, o Mac continua acordado."
     }
 
-    // MARK: - Auto-off row
+    // MARK: - Picker rows
 
     /// A duração é a definição que se mexe com frequência, por isso vive aqui e
     /// não dentro das Definições — o "Iniciar no login" ficou lá, é de uma vez só.
     private var autoOffRow: some View {
+        pickerRow(symbol: "timer", title: "Desligar sozinho",
+                  selection: autoOffMinutes, onChange: onChangeAutoOff, options: Self.autoOffChoices)
+    }
+
+    /// O limite de bateria a que o Sleepy se desliga sozinho, ao lado da duração.
+    private var batteryRow: some View {
+        pickerRow(symbol: "battery.25percent", title: "Bateria mínima",
+                  selection: batteryThreshold, onChange: onChangeBatteryThreshold, options: Self.batteryChoices)
+    }
+
+    private func pickerRow(symbol: String, title: String, selection: Int,
+                           onChange: @escaping (Int) -> Void,
+                           options: [VibeMenuPicker<Int>.Option]) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "timer")
+            Image(systemName: symbol)
                 .font(.system(size: 13))
                 .frame(width: 18)
                 .foregroundStyle(VibeColor.text3)
-            Text("Desligar sozinho")
+            Text(title)
                 .font(VibeFont.body)
                 .foregroundStyle(VibeColor.text2)
             Spacer(minLength: 8)
-            VibeMenuPicker("Desligar sozinho",
-                           selection: Binding(get: { autoOffMinutes }, set: { onChangeAutoOff($0) }),
-                           options: Self.autoOffChoices,
+            VibeMenuPicker(title,
+                           selection: Binding(get: { selection }, set: { onChange($0) }),
+                           options: options,
                            offscreen: offscreen)
         }
         .padding(.horizontal, 8)
@@ -171,6 +195,10 @@ struct MenuPanelContent: View {
 
     private static let autoOffChoices = SleepController.autoOffOptions.map {
         VibeMenuPicker<Int>.Option($0.minutes, title: $0.title, label: $0.short)
+    }
+
+    private static let batteryChoices = SleepController.batteryOptions.map {
+        VibeMenuPicker<Int>.Option($0.percent, title: $0.title, label: $0.short)
     }
 }
 
@@ -206,11 +234,15 @@ public enum SleepyPreview {
     @MainActor
     public static func panel(isActive: Bool, passwordlessInstalled: Bool = true,
                              warning: String? = nil,
+                             batteryThreshold: Int = 20,
+                             stopReasonText: String? = nil,
                              back: (() -> Void)? = nil) -> AnyView {
         AnyView(MenuPanelContent(
             isActive: isActive,
             autoOffText: isActive ? "Desliga sozinho às 23:40" : nil,
             autoOffMinutes: 60,
+            batteryThreshold: batteryThreshold,
+            stopReasonText: stopReasonText,
             passwordlessInstalled: passwordlessInstalled,
             showsOwnIcon: true,
             warning: warning,

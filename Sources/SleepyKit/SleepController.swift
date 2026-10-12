@@ -30,6 +30,10 @@ import IOKit.pwr_mgt
 /// ecrã externo) nessa altura, mandamos o Mac dormir logo, que é o que a tampa
 /// fechada quer dizer.
 ///
+/// Desliga-se também sozinho por segurança — bateria no limite escolhido, ou o
+/// Mac a aquecer de tampa fechada ([[PowerGuards]]) — e diz porquê (`lastStop`
+/// no painel, notificação do sistema).
+///
 /// O `disablesleep` é confirmado de forma contínua (`verifySleepDisabled`, o
 /// macOS pode repô-lo a 0 por fora) e, se o Hone morrer, um watchdog destacado
 /// larga-o ([[CrashWatchdog]]).
@@ -66,6 +70,16 @@ final class SleepController {
     /// O prompt de admin do auto-desligar foi recusado: as tentativas seguintes
     /// são só em silêncio, para não o repetir a cada 15s.
     private var autoOffPromptDeclined = false
+
+    /// Porque é que o Sleepy se desligou sozinho, e quando. Só em memória: vive
+    /// até o utilizador voltar a ligar (`enable()`).
+    private(set) var lastStop: (reason: StopReason, at: Date)?
+
+    // Bateria e temperatura (ver [[PowerGuards]]). Só enquanto o Sleepy está ligado.
+    private let powerWatcher = PowerWatcher()
+    private var batteryGuard = BatteryGuard(threshold: SleepController.batteryThreshold)
+    private var thermalGuard = ThermalGuard()
+    private var thermalRecheckTimer: Timer?
 
     // Verificação contínua do SleepDisabled (ver "Verificação contínua").
     /// Fila serial para o `pmset -g` e o `sudo -n` do verificador: nunca no main.
@@ -125,6 +139,62 @@ final class SleepController {
         .init(minutes: 720, title: "12 horas", short: "12 h"),
         .init(minutes: 0, title: "Nunca", short: "Nunca"),
     ]
+
+    private static let batteryThresholdKey = "batteryThreshold"
+
+    /// Percentagem de bateria a que o Sleepy se desliga (só em bateria). 0 = nunca.
+    static var batteryThreshold: Int {
+        get { SleepyDefaults.store.object(forKey: batteryThresholdKey) as? Int ?? 20 }
+        set {
+            SleepyDefaults.store.set(newValue, forKey: batteryThresholdKey)
+            // Com o Sleepy ligado e a bateria já abaixo do novo limite, desliga já.
+            shared.checkPowerGuards(reason: "limiar")
+        }
+    }
+
+    /// As escolhas de limite de bateria, partilhadas pelo menu e pelas definições.
+    struct BatteryOption: Identifiable, Hashable {
+        let percent: Int
+        let title: String
+        let short: String
+        var id: Int { percent }
+    }
+
+    static let batteryOptions: [BatteryOption] = [
+        .init(percent: 0, title: "Nunca", short: "Nunca"),
+        .init(percent: 10, title: "10 %", short: "10 %"),
+        .init(percent: 15, title: "15 %", short: "15 %"),
+        .init(percent: 20, title: "20 %", short: "20 %"),
+        .init(percent: 25, title: "25 %", short: "25 %"),
+        .init(percent: 30, title: "30 %", short: "30 %"),
+        .init(percent: 40, title: "40 %", short: "40 %"),
+        .init(percent: 50, title: "50 %", short: "50 %"),
+    ]
+
+    /// Porque é que o Sleepy se desligou sozinho.
+    enum StopReason: Equatable {
+        case autoOff
+        case battery(percent: Int)
+        case thermal
+
+        /// Para a notificação: "Sleepy desligou-se — <isto>."
+        var notificationReason: String {
+            switch self {
+            case .autoOff: return "passou o tempo escolhido"
+            case .battery(let percent): return "bateria a \(percent) %"
+            case .thermal: return "o Mac estava a aquecer com a tampa fechada"
+            }
+        }
+
+        /// Para o painel: "Desligou-se às HH:mm — <isto>."
+        var panelReason: String {
+            switch self {
+            case .autoOff: return "passou o tempo escolhido"
+            case .battery(let percent): return "bateria a \(percent) %"
+            case .thermal: return "o Mac estava a aquecer"
+            }
+        }
+    }
 
     private init() {}
 
@@ -240,6 +310,7 @@ final class SleepController {
             NSLog("Sleepy: falha a criar as power assertions — o ecrã ou o Mac podem adormecer")
         }
         isActive = true
+        lastStop = nil
         activeSince = Date()
         SleepyDefaults.store.set(true, forKey: activeKey)
         setRestoreAllowed(true)
@@ -247,6 +318,7 @@ final class SleepController {
         startVerification()
         CrashWatchdog.start()
         scheduleAutoOff()
+        Notifier.shared.requestAuthorizationIfNeeded()
         onStateChange?()
     }
 
@@ -357,6 +429,8 @@ final class SleepController {
     private func publishWarning(_ warning: String?) {
         guard warning != lidWarning else { return }
         lidWarning = warning
+        // Só quando muda: um aviso novo notifica uma vez, não a cada verificação.
+        if let warning { Notifier.shared.notify(warning) }
         onStateChange?()
     }
 
@@ -369,6 +443,7 @@ final class SleepController {
         }
         let periodic = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             self?.verifySleepDisabled(reason: "periódica")
+            self?.checkPowerGuards(reason: "periódica")
         }
         periodic.tolerance = 5
         // .common para continuar a correr enquanto um menu/popover está aberto.
@@ -380,7 +455,9 @@ final class SleepController {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.verifySleepDisabled(reason: "ao acordar")
+            self?.checkPowerGuards(reason: "ao acordar")
         }
+        startPowerGuards()
     }
 
     private func stopVerification() {
@@ -392,6 +469,7 @@ final class SleepController {
         wakeObserver = nil
         disableSleepGuard = DisableSleepGuard()
         lidWarning = nil
+        stopPowerGuards()
     }
 
     // MARK: - Hand-off from the standalone app
@@ -616,27 +694,115 @@ final class SleepController {
     }
 
     private func autoOff() {
+        stopAutomatically(.autoOff)
+    }
+
+    /// Desliga o Sleepy por segurança e diz porquê. Único caminho do auto-desligar,
+    /// do limite de bateria e da proteção térmica.
+    func stopAutomatically(_ reason: StopReason) {
         guard isActive else { return }
         // Tampa fechada com ecrã externo é um Mac em uso: há prompt (vê-se no
         // externo) e não se manda dormir.
         let closed = LidMonitor.current().closedWithoutExternal
-        NSLog("Sleepy: auto-desligar ao fim de \(Self.autoOffMinutes) min (tampa \(closed ? "fechada sem ecrã externo" : "aberta ou com ecrã externo"))")
+        let lid = closed ? "fechada sem ecrã externo" : "aberta ou com ecrã externo"
+        switch reason {
+        case .autoOff: NSLog("Sleepy: auto-desligar ao fim de \(Self.autoOffMinutes) min (tampa \(lid))")
+        case .battery(let percent): NSLog("Sleepy: a desligar com a bateria a \(percent) % (tampa \(lid))")
+        case .thermal: NSLog("Sleepy: a desligar, o Mac está a aquecer (tampa \(lid))")
+        }
+        // Já marcado para o `disable()` publicar o motivo de uma vez; se falhar, desfaz-se.
+        lastStop = (reason, Date())
         // De tampa fechada sem externo não pode haver prompt de admin: era
         // invisível e ficava a bloquear a app. Só o caminho sem password.
         disable(allowPrompt: !closed && !autoOffPromptDeclined)
         guard !isActive else {
-            NSLog("Sleepy: auto-desligar falhou — sem acesso sem password instalado")
-            // O timer continua: tenta de novo em silêncio a cada 15s e, ao abrir
-            // a tampa, pede admin uma vez. Recusado, não volta a pedir.
+            lastStop = nil
+            NSLog("Sleepy: desligar sozinho falhou — sem acesso sem password instalado")
+            // Os timers continuam: tentam de novo em silêncio (15s o auto-desligar,
+            // 30s e as mudanças de bateria/temperatura o resto) e, ao abrir a
+            // tampa, pede admin uma vez. Recusado, não volta a pedir.
             if !closed { autoOffPromptDeclined = true }
             return
         }
+        Notifier.shared.notify("Sleepy desligou-se — \(reason.notificationReason).")
         // Repor o disablesleep não faz o Mac adormecer sozinho: o evento de
         // lid-close já foi consumido e ele fica acordado até ao idle. De tampa
         // fechada é o comportamento que o utilizador espera, por isso pedimos
         // o sleep explicitamente (o pmset sleepnow não precisa de privilégios).
-        guard closed else { return }
+        guard closed else {
+            // Lote D: ação no fim
+            return
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Self.sleepNow() }
+    }
+
+    // MARK: - Bateria e temperatura
+
+    /// Segue a bateria e o estado térmico enquanto o Sleepy está ligado. Chamado
+    /// pelo `startVerification` (mesmo ciclo de vida: ligar, restaurar, desligar).
+    private func startPowerGuards() {
+        thermalGuard = ThermalGuard()
+        batteryGuard = BatteryGuard(threshold: Self.batteryThreshold)
+        powerWatcher.start { [weak self] in self?.checkPowerGuards(reason: "mudança") }
+        // Se já está abaixo do limite ao ligar, diz-se logo — não ao fim de 30 s.
+        // Adiado para depois do `enable()`/`restoreOnLaunch()` acabarem.
+        DispatchQueue.main.async { [weak self] in self?.checkPowerGuards(reason: "ao ligar") }
+    }
+
+    private func stopPowerGuards() {
+        powerWatcher.stop()
+        thermalRecheckTimer?.invalidate()
+        thermalRecheckTimer = nil
+        thermalGuard = ThermalGuard()
+        batteryGuard = BatteryGuard(threshold: Self.batteryThreshold)
+    }
+
+    /// Avalia o limite de bateria e a temperatura; se for caso disso, desliga
+    /// sozinho. Chamado pelas notificações do sistema, pelo timer de 30 s e ao
+    /// mudar o limiar. Uma leitura desconhecida nunca desliga. Só no main.
+    func checkPowerGuards(reason: String) {
+        guard isActive else { return }
+
+        batteryGuard.threshold = Self.batteryThreshold
+        if batteryGuard.threshold > 0 {
+            let reading = PowerSource.currentBattery()
+            if batteryGuard.recordRead(succeeded: reading != nil) {
+                NSLog("Sleepy: sem leitura da bateria — o limite de bateria não se aplica")
+            }
+            if let reading, batteryGuard.shouldStop(percent: reading.percent, onBattery: reading.onBattery) {
+                NSLog("Sleepy: bateria a \(reading.percent) % (\(reason))")
+                stopAutomatically(.battery(percent: reading.percent))
+                return
+            }
+        }
+
+        let thermal = ProcessInfo.processInfo.thermalState
+        // A tampa só interessa a partir de `.serious`: abaixo disso nem se lê.
+        let closed = thermal.rawValue >= ProcessInfo.ThermalState.serious.rawValue
+            && LidMonitor.current().closedWithoutExternal
+        if thermalGuard.shouldStop(state: thermal, closedWithoutExternal: closed, at: Date()) {
+            NSLog("Sleepy: estado térmico \(thermal.rawValue) (\(reason))")
+            stopAutomatically(.thermal)
+            return
+        }
+        updateThermalRecheck()
+    }
+
+    /// O `.serious` precisa de 30 s seguidos, e o timer de 30 s pode escorregar
+    /// quase o dobro: enquanto conta, agenda-se uma reavaliação certa para o fim.
+    private func updateThermalRecheck() {
+        guard thermalGuard.isCounting else {
+            thermalRecheckTimer?.invalidate()
+            thermalRecheckTimer = nil
+            return
+        }
+        guard thermalRecheckTimer == nil else { return }
+        let timer = Timer(timeInterval: ThermalGuard.seriousHold + 0.5, repeats: false) { [weak self] _ in
+            self?.thermalRecheckTimer = nil
+            self?.checkPowerGuards(reason: "térmica")
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        thermalRecheckTimer = timer
     }
 
     // MARK: - Sleep imediato

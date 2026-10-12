@@ -38,6 +38,7 @@ public final class SleepyTool {
                 self?.onMenuBarImageChange?()
             }
         }
+        Notifier.shared.activate()
         SleepController.shared.restoreOnLaunch()
     }
 
@@ -129,6 +130,10 @@ public final class SleepyTool {
                 SleepController.autoOffMinutes = minutes
                 self?.refreshMenuModel()
             },
+            onChangeBatteryThreshold: { [weak self] percent in
+                SleepController.batteryThreshold = percent
+                self?.refreshMenuModel()
+            },
             onSettings: { dismiss(); openSettings() },
             onBack: back,
             onToggleOwnIcon: toggleOwnIcon))
@@ -146,6 +151,8 @@ public final class SleepyTool {
         menuModel.isActive = SleepController.shared.isActive
         menuModel.autoOffText = autoOffText()
         menuModel.autoOffMinutes = SleepController.autoOffMinutes
+        menuModel.batteryThreshold = SleepController.batteryThreshold
+        menuModel.stopReasonText = stopReasonText()
         menuModel.passwordlessInstalled = PrivilegedAccess.isInstalled
         menuModel.warning = SleepController.shared.lidWarning
         menuModel.showsOwnIcon = showsOwnMenuBarIcon
@@ -159,6 +166,14 @@ public final class SleepyTool {
         // Prazo passado com o Sleepy ainda ligado = o auto-desligar falhou.
         if off <= Date() { return "Não desligou às \(fmt.string(from: off)) — desliga à mão" }
         return "Desliga sozinho às \(fmt.string(from: off))"
+    }
+
+    /// Com o Sleepy desligado sozinho, o motivo e a hora para a linha de estado.
+    private func stopReasonText() -> String? {
+        guard !SleepController.shared.isActive, let stop = SleepController.shared.lastStop else { return nil }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+        return "Desligou-se às \(fmt.string(from: stop.at)) — \(stop.reason.panelReason)."
     }
 
     private func toggleSleep() {

@@ -29,7 +29,7 @@ Definições.
 |------------|-----------|
 | **Clippy** | Histórico do clipboard (o Win + V do Windows): um atalho (`⌥V` por omissão) abre um painel junto ao ponteiro com o que copiaste, texto e imagens, para voltares a colar. |
 | **Screenly** | Capturas de ecrã com atalhos globais — região, janela ou ecrã inteiro — com editor de anotação, galeria das capturas recentes e conta-gotas para tirar a cor de qualquer pixel. |
-| **Sleepy** | Mantém o ecrã aceso e impede o Mac de dormir, mesmo de tampa fechada (`pmset disablesleep` + power assertions, incluindo a do ecrã), com desligar sozinho ao fim de um tempo. |
+| **Sleepy** | Mantém o ecrã aceso e impede o Mac de dormir, mesmo de tampa fechada (`pmset disablesleep` + power assertions, incluindo a do ecrã), com desligar sozinho ao fim de um tempo, com a bateria no limite escolhido ou com o Mac a aquecer de tampa fechada (e uma notificação a dizer porquê). |
 
 **No menu ou com ícone próprio.** No menu do Hone, cada uma destas linhas tem uma
 seta `›` que abre o painel da ferramenta ali mesmo (a `‹` volta à lista). Se

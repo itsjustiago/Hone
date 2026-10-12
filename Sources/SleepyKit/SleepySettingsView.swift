@@ -5,10 +5,12 @@ import AppKit
 final class SettingsModel: ObservableObject {
     @Published var passwordless = PrivilegedAccess.isInstalled
     @Published var autoOffMinutes = SleepController.autoOffMinutes
+    @Published var batteryThreshold = SleepController.batteryThreshold
 
     func refresh() {
         passwordless = PrivilegedAccess.isInstalled
         autoOffMinutes = SleepController.autoOffMinutes
+        batteryThreshold = SleepController.batteryThreshold
     }
 }
 
@@ -38,6 +40,19 @@ struct SleepySettingsView: View {
                         get: { model.autoOffMinutes },
                         set: { model.autoOffMinutes = $0; SleepController.autoOffMinutes = $0 })) {
                         ForEach(SleepController.autoOffOptions) { Text($0.title).tag($0.minutes) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+                RowDivider()
+                SettingsRow(
+                    title: "Desligar com bateria a",
+                    subtitle: "Só em bateria. O Sleepy desliga-se e, com a tampa fechada, o Mac adormece."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { model.batteryThreshold },
+                        set: { model.batteryThreshold = $0; SleepController.batteryThreshold = $0 })) {
+                        ForEach(SleepController.batteryOptions) { Text($0.title).tag($0.percent) }
                     }
                     .labelsHidden()
                     .frame(width: 120)
