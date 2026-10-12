@@ -19,6 +19,9 @@ final class SleepMenuModel: ObservableObject {
     /// Mirrors `SleepyTool.showsOwnMenuBarIcon` so the detach/attach button
     /// swaps its glyph live.
     @Published var showsOwnIcon = true
+    /// Watts and battery under the status text ("Bateria 64 % · a gastar 7,2 W").
+    /// nil on a Mac without a battery: the line isn't drawn.
+    @Published var powerText: String?
 }
 
 /// The Sleepy panel, shown either from its own menu-bar icon or inside Hone's
@@ -37,6 +40,9 @@ struct MenuPanel: View {
     /// Non-nil when hosted inside Hone's popover: the header shows a back chevron.
     var onBack: (() -> Void)?
     var onToggleOwnIcon: () -> Void
+    /// The panel is on screen: the host starts and stops the power readout.
+    var onAppear: () -> Void = {}
+    var onDisappear: () -> Void = {}
 
     var body: some View {
         MenuPanelContent(
@@ -57,7 +63,10 @@ struct MenuPanel: View {
             onToggleOwnIcon: onToggleOwnIcon,
             sleepMode: model.sleepMode,
             onChangeSleepMode: onChangeSleepMode,
-            onExtend: onExtend)
+            onExtend: onExtend,
+            powerText: model.powerText)
+            .onAppear(perform: onAppear)
+            .onDisappear(perform: onDisappear)
     }
 }
 
@@ -83,6 +92,7 @@ struct MenuPanelContent: View {
     var sleepMode: SleepMode = .lidClosedAwake
     var onChangeSleepMode: (SleepMode) -> Void = { _ in }
     var onExtend: () -> Void = {}
+    var powerText: String?
 
     private var tint: Color { VibeToolColor.sleepy }
     private let blobHeight: CGFloat = 50
@@ -143,6 +153,13 @@ struct MenuPanelContent: View {
                     .foregroundStyle(VibeColor.text3)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
+                if let powerText {
+                    Text(powerText)
+                        .font(VibeFont.caption)
+                        .foregroundStyle(VibeColor.text3)
+                        .lineLimit(1)
+                        .monospacedDigit()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -278,6 +295,7 @@ public enum SleepyPreview {
                              batteryThreshold: Int = 20,
                              stopReasonText: String? = nil,
                              displayOnly: Bool = false,
+                             powerText: String? = nil,
                              back: (() -> Void)? = nil) -> AnyView {
         AnyView(MenuPanelContent(
             isActive: isActive,
@@ -290,7 +308,8 @@ public enum SleepyPreview {
             warning: warning,
             offscreen: true,
             onBack: back,
-            sleepMode: displayOnly ? .displayOnly : .lidClosedAwake))
+            sleepMode: displayOnly ? .displayOnly : .lidClosedAwake,
+            powerText: powerText))
     }
 
     /// The tool's page in Settings, with the stored values.

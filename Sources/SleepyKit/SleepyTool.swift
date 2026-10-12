@@ -19,6 +19,12 @@ public final class SleepyTool {
 
     public private(set) var isRunning = false
 
+    /// Refreshes the watts line while the panel is on screen, never otherwise.
+    private var powerTimer: Timer?
+    private var powerReadInFlight = false
+    private static let powerQueue = DispatchQueue(label: "sleepy.power", qos: .utility)
+    private static let powerInterval: TimeInterval = 2
+
     /// Called whenever `menuBarImage` changes (sleep block on/off).
     public var onMenuBarImageChange: (() -> Void)?
 
@@ -63,6 +69,9 @@ public final class SleepyTool {
         SleepController.shared.onStateChange = nil
         Notifier.shared.onAction = nil
         isRunning = false
+        stopPowerReadout()
+        // O LPM e o som repostos pelo `disable()` ainda podem estar na fila.
+        LidExtras.flush()
         refreshMenuModel()
         onMenuBarImageChange?()
     }
@@ -76,6 +85,8 @@ public final class SleepyTool {
         Notifier.shared.onAction = nil
         SleepController.shared.suspend()
         isRunning = false
+        stopPowerReadout()
+        LidExtras.flush()
         refreshMenuModel()
         onMenuBarImageChange?()
     }
@@ -120,6 +131,8 @@ public final class SleepyTool {
     public func panelWillShow() {
         SleepController.shared.reassert()
         refreshMenuModel()
+        // Already there on the first frame; the timer takes over once the panel appears.
+        menuModel.powerText = PowerReadout.currentText()
     }
 
     public func makeMenuPanel(back: (() -> Void)?,
@@ -150,13 +163,53 @@ public final class SleepyTool {
             onExtend: { SleepController.shared.extendSession() },
             onSettings: { dismiss(); openSettings() },
             onBack: back,
-            onToggleOwnIcon: toggleOwnIcon))
+            onToggleOwnIcon: toggleOwnIcon,
+            onAppear: { [weak self] in self?.startPowerReadout() },
+            onDisappear: { [weak self] in self?.stopPowerReadout() }))
     }
 
     // MARK: - Settings
 
     public func makeSettingsView() -> AnyView {
         AnyView(SleepySettingsView(model: settingsModel))
+    }
+
+    // MARK: - Power readout
+
+    /// Every 2 s while the panel is visible. Idempotent, so a repeated
+    /// `onAppear` doesn't stack timers.
+    private func startPowerReadout() {
+        guard powerTimer == nil else { return }
+        let timer = Timer(timeInterval: Self.powerInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updatePowerReadout() }
+        }
+        timer.tolerance = 0.5
+        // .common to keep ticking while a menu/popover is tracking.
+        RunLoop.main.add(timer, forMode: .common)
+        powerTimer = timer
+        updatePowerReadout()
+    }
+
+    private func stopPowerReadout() {
+        powerTimer?.invalidate()
+        powerTimer = nil
+    }
+
+    /// The IORegistry read happens off the main thread; a result that arrives
+    /// after the panel closed is dropped.
+    private func updatePowerReadout() {
+        guard !powerReadInFlight else { return }
+        powerReadInFlight = true
+        Self.powerQueue.async { [weak self] in
+            let text = PowerReadout.currentText()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.powerReadInFlight = false
+                    if self.powerTimer != nil, self.menuModel.powerText != text { self.menuModel.powerText = text }
+                }
+            }
+        }
     }
 
     // MARK: - Private

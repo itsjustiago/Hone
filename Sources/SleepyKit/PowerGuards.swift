@@ -15,16 +15,26 @@ enum PowerSource {
         return (min(100, Swift.max(0, percent)), state == kIOPSBatteryPowerValue)
     }
 
-    /// A bateria interna agora. `nil` num Mac sem bateria ou se a leitura falhar.
-    static func currentBattery() -> (percent: Int, onBattery: Bool)? {
+    /// Se a bateria está a carregar (`Is Charging`). `nil` se a chave faltar.
+    static func charging(from description: [String: Any]) -> Bool? {
+        description[kIOPSIsChargingKey] as? Bool
+    }
+
+    /// A descrição da bateria interna agora. `nil` num Mac sem bateria ou se a leitura falhar.
+    static func currentDescription() -> [String: Any]? {
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return nil }
         for source in list {
             guard let description = IOPSGetPowerSourceDescription(info, source)?
                 .takeUnretainedValue() as? [String: Any] else { continue }
-            if let reading = battery(from: description) { return reading }
+            if battery(from: description) != nil { return description }
         }
         return nil
+    }
+
+    /// A bateria interna agora. `nil` num Mac sem bateria ou se a leitura falhar.
+    static func currentBattery() -> (percent: Int, onBattery: Bool)? {
+        currentDescription().flatMap(battery(from:))
     }
 }
 

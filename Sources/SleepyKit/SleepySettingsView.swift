@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import HoneDesign
 
 /// Observable settings state, mirrored from the system each time the pane appears.
 final class SettingsModel: ObservableObject {
@@ -8,6 +9,11 @@ final class SettingsModel: ObservableObject {
     @Published var batteryThreshold = SleepController.batteryThreshold
     @Published var sleepMode = SleepController.sleepMode
     @Published var endAction = SleepController.endAction
+    @Published var lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
+    @Published var muteWhenLidClosed = LidExtras.muteWhenLidClosed
+    /// A regra sudoers instalada deixa ligar o Low Power Mode? `nil` = ainda não
+    /// se sabe (ou o toggle está desligado e não interessa).
+    @Published var lowPowerRuleAllowed: Bool?
 
     func refresh() {
         passwordless = PrivilegedAccess.isInstalled
@@ -15,6 +21,31 @@ final class SettingsModel: ObservableObject {
         batteryThreshold = SleepController.batteryThreshold
         sleepMode = SleepController.sleepMode
         endAction = SleepController.endAction
+        lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
+        muteWhenLidClosed = LidExtras.muteWhenLidClosed
+    }
+
+    /// Volta a ler a regra sudoers (`sudo -n -l`, fora do main). Só com o toggle
+    /// ligado: é aí que a falta dela importa.
+    func refreshLowPowerRule() {
+        guard lowPowerWhenLidClosed else {
+            lowPowerRuleAllowed = nil
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let allowed = PrivilegedAccess.allowsLowPowerMode()
+            DispatchQueue.main.async {
+                guard let self, self.lowPowerWhenLidClosed else { return }
+                self.lowPowerRuleAllowed = allowed
+            }
+        }
+    }
+
+    /// Instala a regra v2 (pede admin uma vez) e volta a verificar.
+    func updateRule() {
+        _ = PrivilegedAccess.install()
+        passwordless = PrivilegedAccess.isInstalled
+        refreshLowPowerRule()
     }
 }
 
@@ -45,13 +76,15 @@ struct SleepySettingsView: View {
                 RowDivider()
                 ToggleRow(
                     title: "Não pedir password",
-                    subtitle: "Instala uma regra restrita (só pmset disablesleep). Pede admin uma vez.",
+                    subtitle: "Instala uma regra restrita (só pmset disablesleep e lowpowermode). Pede admin uma vez.",
                     isOn: Binding(
                         get: { model.passwordless },
                         set: { on in
                             _ = on ? PrivilegedAccess.install() : PrivilegedAccess.uninstall()
                             model.passwordless = PrivilegedAccess.isInstalled
                         }))
+                RowDivider()
+                lidExtrasRows
                 RowDivider()
                 SettingsRow(
                     title: "Desligar sozinho",
@@ -93,6 +126,56 @@ struct SleepySettingsView: View {
                 }
             }
         }
-        .onAppear { model.refresh() }
+        .onAppear {
+            model.refresh()
+            model.refreshLowPowerRule()
+        }
+    }
+
+    // MARK: - Tampa fechada: extras
+
+    /// Só valem em "Fica acordado" com a tampa fechada sem ecrã externo: em
+    /// "Adormece" o Mac dorme e não há nada para poupar ou calar.
+    private var extrasDisabled: Bool { model.sleepMode == .displayOnly }
+
+    private static let extrasNote = "Só em «Fica acordado»: em «Adormece» o Mac dorme de tampa fechada."
+
+    @ViewBuilder
+    private var lidExtrasRows: some View {
+        ToggleRow(
+            title: "Low Power Mode com a tampa fechada",
+            subtitle: extrasDisabled ? Self.extrasNote : "Poupa bateria enquanto o Mac trabalha de tampa fechada.",
+            isOn: Binding(
+                get: { model.lowPowerWhenLidClosed },
+                set: { on in
+                    model.lowPowerWhenLidClosed = on
+                    LidExtras.lowPowerWhenLidClosed = on
+                    model.refreshLowPowerRule()
+                }))
+            .disabled(extrasDisabled)
+            .opacity(extrasDisabled ? 0.45 : 1)
+        if model.lowPowerWhenLidClosed, !extrasDisabled, model.lowPowerRuleAllowed == false {
+            RowDivider()
+            SettingsRow(
+                title: "Regra sem password por atualizar",
+                subtitle: "Falta o Low Power Mode na regra; sem ele, o Mac fica como está. Pede admin uma vez."
+            ) {
+                Button("Atualizar regra…") { model.updateRule() }
+                    .buttonStyle(VibeButtonStyle())
+                    .controlSize(.small)
+            }
+        }
+        RowDivider()
+        ToggleRow(
+            title: "Silenciar com a tampa fechada",
+            subtitle: extrasDisabled ? Self.extrasNote : "O som volta quando abres a tampa.",
+            isOn: Binding(
+                get: { model.muteWhenLidClosed },
+                set: { on in
+                    model.muteWhenLidClosed = on
+                    LidExtras.muteWhenLidClosed = on
+                }))
+            .disabled(extrasDisabled)
+            .opacity(extrasDisabled ? 0.45 : 1)
     }
 }

@@ -40,7 +40,9 @@ import IOKit.pwr_mgt
 ///
 /// Tampa fechada sem ecrã externo: o `disablesleep` deixa o painel interno
 /// aceso dentro da tampa. Aí largamos a assertion de ecrã e apagamos painel e
-/// teclado ([[LidDisplay]]); ao abrir a tampa ou ligar um externo, repomos.
+/// teclado ([[LidDisplay]]); ao abrir a tampa ou ligar um externo, repomos. Na
+/// mesma transição, e só se o utilizador o pediu, liga-se o Low Power Mode e
+/// silencia-se o som ([[LidExtras]]), repostos da mesma forma.
 ///
 /// Dois modos ([[SleepMode]]): `.lidClosedAwake` é tudo o que está acima;
 /// `.displayOnly` só segura o ecrã e o idle (nº 2 e nº 3), sem `disablesleep`,
@@ -706,6 +708,8 @@ final class SleepController {
             // fechada não se repõe aqui — o monitor volta a apagar ou repõe
             // (em `.displayOnly` não há monitor: o `startModeServices` repõe).
             if mode.usesDisableSleep, LidDisplay.dimmedByUs, !LidMonitor.current().lidClosed { LidDisplay.restore() }
+            // O mesmo para o LPM e o som. Tampa fechada: o monitor trata (e não repete o que já está feito).
+            if LidExtras.hasPending, !LidMonitor.current().lidClosed { LidExtras.restore() }
             startModeServices(for: mode)
             // Por último: com o prazo passado o auto-off dispara já (em silêncio),
             // e se der certo o `disable()` desfaz tudo o que ficou acima.
@@ -739,6 +743,8 @@ final class SleepController {
         lidMonitor.stop()
         let wasDimmed = lidDimmed
         lidDimmed = false
+        // Também cobre a troca para `.displayOnly` e o Sleepy a desligar-se.
+        LidExtras.restore()
         guard wasDimmed || LidDisplay.dimmedByUs else { return }
         LidDisplay.restore()
         NSLog("Sleepy: a largar a tampa — brilho do painel e do teclado repostos")
@@ -756,6 +762,7 @@ final class SleepController {
             lidDimmed = true
             releaseAssertion(ofType: kIOPMAssertionTypePreventUserIdleDisplaySleep)
             LidDisplay.dim()
+            LidExtras.apply()
             NSLog("Sleepy: tampa fechada sem ecrã externo — assertion de ecrã largada, painel e teclado a 0")
             return
         }
@@ -767,6 +774,8 @@ final class SleepController {
             let reason = state.lidClosed ? "ecrã externo ligado" : "tampa aberta"
             NSLog("Sleepy: \(reason) — assertion de ecrã reposta, painel e teclado repostos")
         }
+        // Tampa aberta ou ecrã externo: repõe o LPM e o som, também os de uma sessão anterior.
+        LidExtras.restore()
         // Também apanha um brilho que ficou a 0 de uma sessão anterior.
         if LidDisplay.dimmedByUs {
             LidDisplay.restore()
