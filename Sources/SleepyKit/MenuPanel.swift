@@ -24,6 +24,10 @@ final class SleepMenuModel: ObservableObject {
     @Published var powerText: String?
     /// "sessão SSH ativa" while a remote session keeps Sleepy on (nil = it's on by hand, or off).
     @Published var remoteSessionText: String?
+    /// "Até o Claude acabar" is armed (one-shot: any turn-off disarms it).
+    @Published var waitForClaude = false
+    /// The status line while it's armed ("… · 2 sessões a trabalhar"); nil otherwise.
+    @Published var claudeWaitText: String?
     /// Same preference as Settings' "Low Power Mode com a tampa fechada" (the tool
     /// mirrors the Settings model into this, so both stay in step).
     @Published var lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
@@ -45,6 +49,7 @@ struct MenuPanel: View {
     var onChangeSleepMode: (SleepMode) -> Void
     var onChangeLowPower: (Bool) -> Void
     var onUpdateRule: () -> Void
+    var onChangeWaitForClaude: (Bool) -> Void
     var onExtend: () -> Void
     var onSettings: () -> Void
     /// Non-nil when hosted inside Hone's popover: the header shows a back chevron.
@@ -79,7 +84,10 @@ struct MenuPanel: View {
             lowPowerWhenLidClosed: model.lowPowerWhenLidClosed,
             lowPowerRuleAllowed: model.lowPowerRuleAllowed,
             onChangeLowPower: onChangeLowPower,
-            onUpdateRule: onUpdateRule)
+            onUpdateRule: onUpdateRule,
+            waitForClaude: model.waitForClaude,
+            claudeWaitText: model.claudeWaitText,
+            onChangeWaitForClaude: onChangeWaitForClaude)
             .onAppear(perform: onAppear)
             .onDisappear(perform: onDisappear)
     }
@@ -114,6 +122,10 @@ struct MenuPanelContent: View {
     var lowPowerRuleAllowed: Bool?
     var onChangeLowPower: (Bool) -> Void = { _ in }
     var onUpdateRule: () -> Void = {}
+    /// "Até o Claude acabar" is armed: no deadline, the status line counts the sessions.
+    var waitForClaude = false
+    var claudeWaitText: String?
+    var onChangeWaitForClaude: (Bool) -> Void = { _ in }
 
     private var tint: Color { VibeToolColor.sleepy }
     private let blobHeight: CGFloat = 50
@@ -136,6 +148,7 @@ struct MenuPanelContent: View {
             VStack(alignment: .leading, spacing: 0) {
                 modeRow
                 autoOffRow
+                claudeRow
                 batteryRow
                 // Só no "fica acordado": em "adormece" o Mac dorme de tampa fechada.
                 if sleepMode.usesDisableSleep {
@@ -216,6 +229,7 @@ struct MenuPanelContent: View {
     private var statusLine: String {
         if !isActive { return stopReasonText ?? "O Mac dorme normalmente." }
         if let remoteSessionText { return "Acordado — \(remoteSessionText)" }
+        if let claudeWaitText { return claudeWaitText }
         if let autoOffText { return autoOffText }
         return sleepMode.usesDisableSleep
             ? "O ecrã não se apaga. De tampa fechada, o Mac continua acordado."
@@ -236,7 +250,8 @@ struct MenuPanelContent: View {
     private var autoOffRow: some View {
         pickerRow(symbol: "timer", title: "Desligar sozinho",
                   selection: autoOffMinutes, onChange: onChangeAutoOff, options: Self.autoOffChoices) {
-            if isActive, autoOffMinutes > 0, remoteSessionText == nil {
+            // A espera pelo Claude não tem prazo para adiar.
+            if isActive, autoOffMinutes > 0, remoteSessionText == nil, !waitForClaude {
                 Button("+1 h", action: onExtend)
                     .buttonStyle(VibeButtonStyle())
                     .controlSize(.small)
@@ -252,21 +267,24 @@ struct MenuPanelContent: View {
                   selection: batteryThreshold, onChange: onChangeBatteryThreshold, options: Self.batteryChoices)
     }
 
+    /// Uso único: liga o Sleepy (se estiver desligado) até nenhuma sessão do Claude
+    /// Code estar a trabalhar. Numa sessão do gatilho remoto não se arma.
+    private var claudeRow: some View {
+        let disabled = remoteSessionText != nil
+        return toggleRow(symbol: "sparkles", title: "Até o Claude acabar",
+                         label: "Até o Claude acabar",
+                         help: "Desliga o Sleepy quando nenhuma sessão do Claude Code estiver a trabalhar",
+                         isOn: waitForClaude, onChange: onChangeWaitForClaude)
+            .disabled(disabled)
+            .opacity(disabled ? 0.45 : 1)
+    }
+
     /// O mesmo valor das Definições: poupa bateria enquanto o Mac trabalha de tampa
     /// fechada, sem ir lá.
     private var lowPowerRow: some View {
-        HStack(spacing: 10) {
-            rowLabel(symbol: "leaf", title: "Low Power Mode ao fechar")
-            Spacer(minLength: 8)
-            Toggle(Self.lowPowerTitle, isOn: Binding(
-                get: { lowPowerWhenLidClosed },
-                set: { on in if on != lowPowerWhenLidClosed { onChangeLowPower(on) } }))
-                .toggleStyle(VibeToggleStyle(tint: tint))
-                .accessibilityLabel(Self.lowPowerTitle)
-        }
-        .help(Self.lowPowerTitle)
-        .padding(.horizontal, 8)
-        .frame(minHeight: 36)
+        toggleRow(symbol: "leaf", title: "Low Power Mode ao fechar",
+                  label: Self.lowPowerTitle, help: Self.lowPowerTitle,
+                  isOn: lowPowerWhenLidClosed, onChange: onChangeLowPower)
     }
 
     /// A regra sudoers não deixa ligar o Low Power Mode: "Atualizar" se há uma
@@ -302,6 +320,23 @@ struct MenuPanelContent: View {
                 .foregroundStyle(VibeColor.text2)
                 .lineLimit(1)
         }
+    }
+
+    /// Símbolo e título à esquerda, switch à direita. `label` é o nome acessível.
+    private func toggleRow(symbol: String, title: String, label: String, help: String,
+                           isOn: Bool, onChange: @escaping (Bool) -> Void) -> some View {
+        HStack(spacing: 10) {
+            rowLabel(symbol: symbol, title: title)
+            Spacer(minLength: 8)
+            Toggle(label, isOn: Binding(
+                get: { isOn },
+                set: { on in if on != isOn { onChange(on) } }))
+                .toggleStyle(VibeToggleStyle(tint: tint))
+                .accessibilityLabel(label)
+        }
+        .help(help)
+        .padding(.horizontal, 8)
+        .frame(minHeight: 36)
     }
 
     private func pickerRow<Value: Hashable, Accessory: View>(

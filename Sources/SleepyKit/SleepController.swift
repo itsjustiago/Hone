@@ -57,6 +57,11 @@ import IOKit.pwr_mgt
 /// bateria e a temperatura continuam a valer, e há um teto de 12 h. Desligado à
 /// mão (ou por segurança) a meio de uma sessão, o gatilho não volta a ligar até
 /// ela acabar (`remoteSuppressed`).
+///
+/// "Até o Claude acabar" é uma espera de uso único (`waitForClaudeSince`): com
+/// ela armada não há prazo, e o Sleepy desliga-se quando nenhuma sessão do
+/// Claude Code está a trabalhar ([[ClaudeActivityMonitor]]). A bateria e a
+/// temperatura continuam a valer, e há um teto de 12 h. Qualquer desligar a desarma.
 final class SleepController {
     static let shared = SleepController()
 
@@ -100,6 +105,11 @@ final class SleepController {
     /// O último estado estável entregue pelo monitor (ou lido no arranque).
     private(set) var remoteSessions: RemoteSessions?
 
+    // Espera "até o Claude acabar" (ver "Até o Claude acabar"). Só no main.
+    private let claudeMonitor = ClaudeActivityMonitor()
+    /// A última leitura entregue pelo monitor; `nil` até à primeira.
+    private(set) var claudeActivity: ClaudeActivity?
+
     // Bateria e temperatura (ver [[PowerGuards]]). Só enquanto o Sleepy está ligado.
     private let powerWatcher = PowerWatcher()
     private var batteryGuard = BatteryGuard(threshold: SleepController.batteryThreshold)
@@ -133,6 +143,7 @@ final class SleepController {
     private static let sessionModeKey = "sessionModeOverride"
     private static let remoteSuppressedKey = "remoteSuppressed"
     private static let autoOffWarnedKey = "autoOffWarnedSince"
+    private static let waitForClaudeKey = "waitForClaudeSince"
 
     /// Minutos até desligar sozinho. 0 = nunca. Antes disto a preferência era em
     /// horas — migra-se na primeira leitura para não perder a escolha do utilizador.
@@ -205,6 +216,21 @@ final class SleepController {
             }
         }
     }
+
+    /// Quando foi armada a espera "até o Claude acabar"; `nil` = não está. Em
+    /// disco, para sobreviver a um relançamento; limpa-se ao desligar.
+    private(set) var waitForClaudeSince: Date? {
+        get { SleepyDefaults.store.object(forKey: Self.waitForClaudeKey) as? Date }
+        set {
+            if let newValue {
+                SleepyDefaults.store.set(newValue, forKey: Self.waitForClaudeKey)
+            } else {
+                SleepyDefaults.store.removeObject(forKey: Self.waitForClaudeKey)
+            }
+        }
+    }
+
+    var waitsForClaude: Bool { waitForClaudeSince != nil }
 
     /// Ligar sozinho durante sessões SSH e de Partilha de Ecrã. Desligado por omissão.
     static var stayAwakeForRemoteSessions: Bool {
@@ -285,6 +311,13 @@ final class SleepController {
         /// A sessão do gatilho chegou ao teto (`remoteSessionCap`): pode ser uma
         /// entrada do utmpx que ficou, e o Mac não fica acordado sem fim.
         case remoteSessionCap
+        /// Com a espera "até o Claude acabar": o Claude trabalhou e parou.
+        case claudeFinished
+        /// O Claude parou mas o monitor nunca o viu a trabalhar desde que seguiu a
+        /// espera (armada com ele parado, ou retomada no arranque depois de acabar).
+        case claudeIdle
+        /// A espera pelo Claude chegou ao teto (`claudeWaitCap`).
+        case claudeCap
 
         /// Para a notificação: "Sleepy desligou-se — <isto>."
         var notificationReason: String {
@@ -295,6 +328,9 @@ final class SleepController {
                 return lidClosed ? "o Mac estava a aquecer com a tampa fechada" : "o Mac estava a aquecer"
             case .remoteSessionEnded: return "a sessão remota terminou"
             case .remoteSessionCap: return "a sessão remota durou mais de 12 h"
+            case .claudeFinished: return "o Claude acabou as tarefas"
+            case .claudeIdle: return "o Claude não estava a trabalhar"
+            case .claudeCap: return "passaram 12 h à espera do Claude"
             }
         }
 
@@ -305,12 +341,14 @@ final class SleepController {
             return notificationReason
         }
 
-        /// A ação escolhida para o fim só corre quando o Sleepy acaba por tempo
-        /// ou bateria; com o Mac quente o melhor é não mexer em mais nada.
+        /// A ação escolhida para o fim só corre quando o Sleepy acaba por tempo,
+        /// bateria ou o Claude acabar (um fim normal); com o Mac quente o melhor é
+        /// não mexer em mais nada. `.claudeIdle` também não: o Claude nunca chegou a
+        /// trabalhar, e pôr o Mac a dormir debaixo das mãos de quem está a usá-lo é pior.
         var runsEndAction: Bool {
             switch self {
-            case .autoOff, .battery: return true
-            case .thermal, .remoteSessionEnded, .remoteSessionCap: return false
+            case .autoOff, .battery, .claudeFinished, .claudeCap: return true
+            case .thermal, .remoteSessionEnded, .remoteSessionCap, .claudeIdle: return false
             }
         }
 
@@ -318,8 +356,12 @@ final class SleepController {
         var notifies: Bool { self != .remoteSessionEnded }
 
         /// Pode pedir admin ao desligar. Nunca numa sessão remota: o prompt seria
-        /// invisível e deixava a app à espera.
-        var allowsAdminPrompt: Bool { !endsTriggerSession }
+        /// invisível e deixava a app à espera. Nem no fim da espera pelo Claude: chega
+        /// a uma hora que ninguém escolheu, e o prompt congela o Hone até alguém responder.
+        var allowsAdminPrompt: Bool { !endsTriggerSession && !endsClaudeWait }
+
+        /// Acaba a espera "até o Claude acabar" (por ele ter parado ou pelo teto).
+        var endsClaudeWait: Bool { self == .claudeFinished || self == .claudeIdle || self == .claudeCap }
 
         /// Acaba com uma sessão do gatilho. Se o desligar falhar, a sessão passa a
         /// normal, com prazo, em vez de ficar ligada sem fim.
@@ -520,9 +562,12 @@ final class SleepController {
         CrashWatchdog.stop()
         isActive = false
         if startedByTrigger { NSLog("Sleepy: a desligar a sessão que o gatilho remoto tinha ligado") }
+        if waitsForClaude { NSLog("Sleepy: desligado — a espera pelo Claude fica desarmada") }
         clearPersisted()
         autoOffTimer?.invalidate()
         autoOffTimer = nil
+        // O `clearPersisted` já apagou a chave: isto larga o monitor e a última leitura.
+        disarmClaudeWait()
         onStateChange?()
     }
 
@@ -592,6 +637,9 @@ final class SleepController {
     /// fica vivo: se ninguém pegar nisto, é ele que larga o disablesleep.
     func suspend() {
         stopRemoteMonitor()
+        // A espera fica em disco: o próximo `restoreOnLaunch` volta a armar o monitor.
+        claudeMonitor.stop()
+        claudeActivity = nil
         setRestoreAllowed(false)
         stopLidMonitor()
         stopVerification()
@@ -696,6 +744,8 @@ final class SleepController {
             self?.checkPowerGuards(reason: "periódica")
             // Um fim de sessão remota que não pegou (o desligar falhou) tenta-se de novo.
             self?.reconcileRemoteSession()
+            // O teto da espera pelo Claude, e um "acabou" cujo desligar falhou.
+            self?.reconcileClaudeWait()
         }
         periodic.tolerance = 5
         // .common para continuar a correr enquanto um menu/popover está aberto.
@@ -812,7 +862,10 @@ final class SleepController {
         // O modo da sessão que ficou em disco (se o gatilho remoto a ligou), não o guardado.
         let mode = activeMode
         let persistedActive = SleepyDefaults.store.bool(forKey: activeKey)
+        // Uma espera pelo Claude que caducou (teto, ou o Mac reiniciou) conta como um
+        // prazo passado durante a paragem: reset calado, sem aviso nem ação no fim.
         let expired = autoOffExpired()
+            || Self.claudeWaitIsStale(armedSince: waitForClaudeSince, bootTime: Self.bootTime(), now: Date())
 
         var resetSucceeded = false
         var systemValue: Bool?
@@ -862,6 +915,7 @@ final class SleepController {
             releaseAssertion()
         }
         resumeRemoteTracking()
+        resumeClaudeWait()
         onStateChange?()
     }
 
@@ -1009,15 +1063,24 @@ final class SleepController {
     /// Momento em que o auto-off vai disparar, para mostrar no menu.
     var autoOffDate: Date? {
         // Uma sessão ligada pelo gatilho remoto não tem prazo: acaba com a sessão.
-        guard isActive, !startedByTrigger, let since = activeSince else { return nil }
+        // Com a espera pelo Claude também não: acaba com ele (ou no teto).
+        guard isActive, Self.hasDeadline(startedByTrigger: startedByTrigger, waitingForClaude: waitsForClaude),
+              let since = activeSince else { return nil }
         return Self.autoOffDate(since: since, minutes: Self.autoOffMinutes, extension: autoOffExtension)
     }
 
     private func autoOffExpired() -> Bool {
-        guard !startedByTrigger, let since = activeSince,
+        guard Self.hasDeadline(startedByTrigger: startedByTrigger, waitingForClaude: waitsForClaude),
+              let since = activeSince,
               let off = Self.autoOffDate(since: since, minutes: Self.autoOffMinutes, extension: autoOffExtension)
         else { return false }
         return Date() >= off
+    }
+
+    /// O prazo do "Desligar sozinho" aplica-se? Nem numa sessão do gatilho remoto
+    /// nem com a espera pelo Claude armada. Pura.
+    static func hasDeadline(startedByTrigger: Bool, waitingForClaude: Bool) -> Bool {
+        !startedByTrigger && !waitingForClaude
     }
 
     /// Adia o desligar sozinho (por omissão, 1 h). Só com o Sleepy ligado e com
@@ -1058,6 +1121,7 @@ final class SleepController {
         autoOffExtension = 0
         startedByTrigger = false
         sessionModeOverride = nil
+        waitForClaudeSince = nil
     }
 
     /// Verificação periódica em vez de um único timer para o prazo todo: um
@@ -1091,14 +1155,15 @@ final class SleepController {
     /// O prazo passou. Com uma sessão remota ativa (e o gatilho ligado e não
     /// travado), desligar cortava-a — o `sleepnow` ou a ação no fim deitam o SSH
     /// abaixo: passa a sessão do gatilho, que acaba com ela (ou no teto de 12 h).
-    private func autoOff(silent: Bool = false) {
+    /// O fim da espera pelo Claude (`reason`) segue a mesma regra.
+    private func autoOff(_ reason: StopReason = .autoOff, silent: Bool = false) {
         if Self.autoOffKeepsRemoteSession(preference: Self.stayAwakeForRemoteSessions,
                                           sessionsActive: remoteSessions?.isActive == true,
                                           suppressed: remoteSuppressed) {
-            convertToTriggerSession()
+            convertToTriggerSession(reason)
             return
         }
-        stopAutomatically(.autoOff, silent: silent)
+        stopAutomatically(reason, silent: silent)
     }
 
     /// Ver `autoOff()`. Pura.
@@ -1106,9 +1171,12 @@ final class SleepController {
         preference && sessionsActive && !suppressed
     }
 
-    private func convertToTriggerSession() {
+    private func convertToTriggerSession(_ reason: StopReason) {
         let label = remoteSessions.flatMap(RemoteSessionMonitor.label) ?? "sessão remota ativa"
-        NSLog("Sleepy: prazo do auto-desligar com \(label) — passa a sessão remota (acaba com ela, teto de 12 h)")
+        let what = reason == .autoOff ? "prazo do auto-desligar" : "fim da espera pelo Claude"
+        NSLog("Sleepy: \(what) com \(label) — passa a sessão remota (acaba com ela, teto de 12 h)")
+        // Uma sessão do gatilho não espera pelo Claude.
+        disarmClaudeWait()
         startedByTrigger = true
         // O teto conta a partir daqui.
         activeSince = Date()
@@ -1120,9 +1188,10 @@ final class SleepController {
     }
 
     /// Desliga o Sleepy sozinho e diz porquê. Único caminho do auto-desligar, do
-    /// limite de bateria, da proteção térmica e do fim da sessão remota (este
-    /// sem aviso, sem ação no fim e sem prompt de admin). `silent`: sem prompt
-    /// de admin desta vez (o disparo do arranque).
+    /// limite de bateria, da proteção térmica, do fim da sessão remota (este
+    /// sem aviso, sem ação no fim e sem prompt de admin) e da espera pelo Claude
+    /// (sem prompt de admin). `silent`: sem prompt de admin desta vez (o disparo
+    /// do arranque).
     func stopAutomatically(_ reason: StopReason, silent: Bool = false) {
         guard isActive else { return }
         // Tampa fechada com ecrã externo é um Mac em uso: há prompt (vê-se no
@@ -1135,6 +1204,9 @@ final class SleepController {
         case .thermal: NSLog("Sleepy: a desligar, o Mac está a aquecer (tampa \(lid))")
         case .remoteSessionEnded: NSLog("Sleepy: a sessão remota terminou — a desligar (tampa \(lid))")
         case .remoteSessionCap: NSLog("Sleepy: sessão remota ligada há mais de 12 h — a desligar (tampa \(lid))")
+        case .claudeFinished: NSLog("Sleepy: o Claude acabou as tarefas — a desligar (tampa \(lid))")
+        case .claudeIdle: NSLog("Sleepy: o Claude não estava a trabalhar — a desligar sem ação no fim (tampa \(lid))")
+        case .claudeCap: NSLog("Sleepy: 12 h à espera do Claude — a desligar (tampa \(lid))")
         }
         // Já marcado para o `disable()` publicar o motivo de uma vez; se falhar, desfaz-se.
         lastStop = (reason, Date())
@@ -1350,6 +1422,139 @@ final class SleepController {
         activeSince = Date()
         scheduleAutoOff()
         onStateChange?()
+    }
+
+    // MARK: - Até o Claude acabar
+
+    /// Teto da espera, a contar de quando foi armada: um transcript que fica a
+    /// parecer "a trabalhar" não deixa o Mac acordado sem fim.
+    static let claudeWaitCap: TimeInterval = 12 * 3600
+
+    /// Com a espera armada desde `armedSince`: desliga por isto, ou `nil` para
+    /// continuar. O teto ganha a tudo; sem leitura do monitor não desliga. Acabado
+    /// sem nunca ter visto trabalho é `.claudeIdle` (sem ação no fim). Pura.
+    static func claudeWaitStop(armedSince: Date, activity: ClaudeActivity?, now: Date) -> StopReason? {
+        if now.timeIntervalSince(armedSince) >= claudeWaitCap { return .claudeCap }
+        guard let activity, activity.finished else { return nil }
+        return activity.sawWork ? .claudeFinished : .claudeIdle
+    }
+
+    /// Uma espera que ficou em disco já não vale: passou o teto, ou o Mac arrancou
+    /// depois de ela ser armada (as tarefas do Claude não sobrevivem a um reinício).
+    /// Sem espera, não. Sem `bootTime` só conta o teto. Pura.
+    static func claudeWaitIsStale(armedSince: Date?, bootTime: Date?, now: Date) -> Bool {
+        guard let armedSince else { return false }
+        if now.timeIntervalSince(armedSince) >= claudeWaitCap { return true }
+        return bootTime.map { $0 > armedSince } ?? false
+    }
+
+    /// Quando o Mac arrancou (`kern.boottime`); `nil` se a leitura falhar.
+    static func bootTime() -> Date? {
+        var boot = timeval()
+        var size = MemoryLayout<timeval>.stride
+        guard sysctlbyname("kern.boottime", &boot, &size, nil, 0) == 0, boot.tv_sec > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(boot.tv_sec) + TimeInterval(boot.tv_usec) / 1_000_000)
+    }
+
+    /// O monitor só lê o disco com a espera armada, o Sleepy ligado e o tool a correr. Pura.
+    static func claudeMonitorShouldRun(waiting: Bool, isActive: Bool, toolRunning: Bool) -> Bool {
+        waiting && isActive && toolRunning
+    }
+
+    /// Para a linha de estado do painel. `nil` sem a espera armada.
+    var claudeWaitText: String? {
+        guard isActive, waitsForClaude else { return nil }
+        return ClaudeActivityMonitor.statusText(claudeActivity)
+    }
+
+    /// Arma ou desarma a espera. Armar com o Sleepy desligado liga-o primeiro
+    /// (`enable()` normal, pode pedir admin): se não ligar, nada fica armado e
+    /// devolve `false`. Nunca numa sessão do gatilho remoto. Desarmar com o
+    /// Sleepy ligado deixa-o ligado, e o prazo normal conta a partir de agora
+    /// (desde o `activeSince` podia disparar logo).
+    @discardableResult
+    func setWaitForClaude(_ on: Bool) -> Bool {
+        if on {
+            guard !waitsForClaude else { return true }
+            if !isActive { enable() }
+            guard isActive, !startedByTrigger else { return false }
+            waitForClaudeSince = Date()
+            claudeActivity = nil
+            NSLog("Sleepy: a esperar que o Claude acabe (sem prazo, teto de 12 h)")
+            // Sem prazo: larga o timer do auto-desligar.
+            scheduleAutoOff()
+            syncClaudeMonitor()
+        } else {
+            guard waitsForClaude else { return true }
+            disarmClaudeWait()
+            NSLog("Sleepy: espera pelo Claude desarmada")
+            if isActive {
+                activeSince = Date()
+                autoOffExtension = 0
+                autoOffWarned = false
+                scheduleAutoOff()
+            }
+        }
+        onStateChange?()
+        return true
+    }
+
+    /// Esquece a espera (também em disco) e larga o monitor. Idempotente.
+    private func disarmClaudeWait() {
+        waitForClaudeSince = nil
+        claudeActivity = nil
+        syncClaudeMonitor()
+    }
+
+    private func syncClaudeMonitor() {
+        if Self.claudeMonitorShouldRun(waiting: waitsForClaude, isActive: isActive, toolRunning: toolRunning) {
+            guard !claudeMonitor.isRunning else { return }
+            claudeMonitor.start { [weak self] activity in self?.claudeActivityChanged(activity) }
+        } else {
+            claudeMonitor.stop()
+        }
+    }
+
+    /// O monitor entrega só quando a leitura muda, no main.
+    private func claudeActivityChanged(_ activity: ClaudeActivity) {
+        guard isActive, waitsForClaude else { return }
+        claudeActivity = activity
+        if activity.finished { NSLog("Sleepy: nenhuma sessão do Claude a trabalhar há 2 min") }
+        reconcileClaudeWait()
+        // Continua ligado: o painel mostra o número novo.
+        if isActive { onStateChange?() }
+    }
+
+    /// Desliga quando o Claude acabou ou no teto. Chamado pelo monitor e de 30 em
+    /// 30 s (um desligar que falhou tenta-se de novo). Nunca pede admin (ver
+    /// `StopReason.allowsAdminPrompt`). Com uma sessão remota a seguir, passa a
+    /// sessão do gatilho, como o auto-desligar.
+    private func reconcileClaudeWait() {
+        guard isActive, let since = waitForClaudeSince,
+              let reason = Self.claudeWaitStop(armedSince: since, activity: claudeActivity, now: Date())
+        else { return }
+        autoOff(reason)
+    }
+
+    /// No arranque: a espera que ficou em disco volta a armar o monitor (a
+    /// leitura recomeça, com a confirmação de 2 min). Uma espera caducada já foi
+    /// tratada pelo `restoreOnLaunch` como prazo passado; só chega aqui se o
+    /// reset não pegou — larga a espera e deixa o prazo normal tentar de novo,
+    /// em silêncio, sem a ação no fim.
+    private func resumeClaudeWait() {
+        guard let since = waitForClaudeSince else { return }
+        guard isActive, !startedByTrigger else {
+            disarmClaudeWait()
+            return
+        }
+        if Self.claudeWaitIsStale(armedSince: since, bootTime: Self.bootTime(), now: Date()) {
+            NSLog("Sleepy: a espera pelo Claude caducou (teto ou reinício do Mac) — volta ao prazo normal")
+            disarmClaudeWait()
+            scheduleAutoOff(silent: true)
+            return
+        }
+        NSLog("Sleepy: a retomar a espera pelo Claude")
+        syncClaudeMonitor()
     }
 
     // MARK: - Bateria e temperatura
