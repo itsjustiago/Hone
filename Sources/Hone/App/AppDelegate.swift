@@ -153,6 +153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         lastPopoverClose = Date()
+        if let id = popoverNavigation.toolID,
+           let tool = manager.modules.first(where: { $0.id == id }) as? any MenuBarTool {
+            tool.panelDidClose()
+        }
         // Reopen on the home, not inside whichever tool was last shown.
         popoverNavigation.toolID = nil
     }

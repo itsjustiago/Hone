@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// What a tool is doing right now, beyond being switched on: Sleepy on but not
+/// blocking sleep is idle. Optional — tools whose switch says it all have none.
+struct ToolLiveState {
+    /// Doing its job at this moment (vs. on, but with nothing to do).
+    let isActive: Bool
+    /// The state in a few lowercase words, e.g. "sleep normal".
+    let text: String
+}
+
 /// A former standalone menu-bar app (Sleepy, Clippy, Screenly) living inside
 /// Hone. On top of a regular `HoneModule` it has a panel (the app's old
 /// dropdown), can optionally keep its own menu-bar icon, and has a "legacy
@@ -24,6 +33,10 @@ protocol MenuBarTool: HoneModule {
     /// Bumped whenever `menuBarImage` changes, so observers can re-read it.
     var menuBarImageRevision: Int { get }
 
+    /// What the tool is doing right now, or `nil` when "on" says it all.
+    /// Observable: reading it tracks `menuBarImageRevision`.
+    var liveState: ToolLiveState? { get }
+
     /// Call right before the panel appears.
     func panelWillShow()
 
@@ -32,6 +45,10 @@ protocol MenuBarTool: HoneModule {
     /// (Stats) opens on the one that was clicked and returns the part of the
     /// image it covers, for the popover to point at; the rest return nil.
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
+
+    /// Call once the popover showing the panel has closed. SwiftUI's
+    /// `onDisappear` isn't reliable inside an `NSPopover`.
+    func panelDidClose()
 
     /// Stops, but keeps persisted state (e.g. an armed sleep block) for whoever
     /// runs the tool next — Hone after a relaunch, or the legacy twin.
@@ -43,6 +60,10 @@ protocol MenuBarTool: HoneModule {
     /// The tool's dropdown. `back` is non-nil when shown inside Hone's popover.
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
+}
+
+extension MenuBarTool {
+    var liveState: ToolLiveState? { nil }
 }
 
 /// A system permission an embedded tool needs, granted to Hone (the process).
@@ -93,19 +114,25 @@ protocol ToolKit: AnyObject {
     var isRunning: Bool { get }
     var menuBarImage: NSImage { get }
     var onMenuBarImageChange: (() -> Void)? { get set }
+    var liveState: ToolLiveState? { get }
     var showsOwnMenuBarIcon: Bool { get set }
     func panelWillShow()
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
+    func panelDidClose()
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
     func makeSettingsView() -> AnyView
 }
 
 /// Kits with nothing to hand over just stop, and ignore the twin quitting; a
-/// Kit whose icon is one thing has no part of it to open on.
+/// Kit whose icon is one thing has no part of it to open on, and one that is
+/// simply on or off has no live state. It must change together with
+/// `onMenuBarImageChange`.
 extension ToolKit {
     func stopKeepingState() { stop() }
     func legacyTwinWillQuit() {}
+    var liveState: ToolLiveState? { nil }
+    func panelDidClose() {}
 
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? {
         panelWillShow()
@@ -187,6 +214,13 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
 
     var menuBarImage: NSImage { kit.menuBarImage }
 
+    /// The Kit's state isn't observable itself; the revision is what changes
+    /// with it, so reading that is what makes views follow it.
+    var liveState: ToolLiveState? {
+        _ = menuBarImageRevision
+        return kit.liveState
+    }
+
     /// Paused while the legacy twin runs: `ModuleManager` starts us again when
     /// it quits.
     func start() {
@@ -203,6 +237,8 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
     func panelWillShow() { kit.panelWillShow() }
 
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? { kit.panelWillShow(clickedAtX: x) }
+
+    func panelDidClose() { kit.panelDidClose() }
 
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView {

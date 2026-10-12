@@ -193,5 +193,6 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         lastPopoverClose = Date()
+        tool.panelDidClose()
     }
 }
