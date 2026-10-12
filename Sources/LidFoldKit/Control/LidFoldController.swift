@@ -65,7 +65,8 @@ public final class LidFoldController {
     private static let clearAngle = 105.0
     private static let stillnessDelay: TimeInterval = 2
     private static let perspective: Float = 0.7
-    private static let blur: Float = 0.65
+    // MacDuo's 0.65 smeared the whole screen as soon as the lid moved.
+    private static let blur: Float = 0.12
     private static let shadow: Float = 0.65
 
     // MARK: - Observed world
