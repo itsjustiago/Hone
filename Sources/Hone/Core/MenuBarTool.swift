@@ -46,6 +46,12 @@ protocol MenuBarTool: HoneModule {
     /// image it covers, for the popover to point at; the rest return nil.
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
 
+    /// Set by whoever shows the panel from the tool's own icon. Called when the
+    /// panel itself moves to another readout (Stats' tabs), with the part of the
+    /// image it covers, so the popover's arrow can follow. Tools whose icon is one
+    /// thing never call it.
+    var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)? { get set }
+
     /// Call once the popover showing the panel has closed. SwiftUI's
     /// `onDisappear` isn't reliable inside an `NSPopover`.
     func panelDidClose()
@@ -118,6 +124,7 @@ protocol ToolKit: AnyObject {
     var showsOwnMenuBarIcon: Bool { get set }
     func panelWillShow()
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>?
+    var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)? { get set }
     func panelDidClose()
     func makeMenuPanel(back: (() -> Void)?, dismiss: @escaping () -> Void,
                        openSettings: @escaping () -> Void, toggleOwnIcon: @escaping () -> Void) -> AnyView
@@ -137,6 +144,11 @@ extension ToolKit {
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? {
         panelWillShow()
         return nil
+    }
+
+    var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)? {
+        get { nil }
+        set {}
     }
 }
 
@@ -237,6 +249,11 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
     func panelWillShow() { kit.panelWillShow() }
 
     func panelWillShow(clickedAtX x: CGFloat) -> ClosedRange<CGFloat>? { kit.panelWillShow(clickedAtX: x) }
+
+    var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)? {
+        get { kit.onPanelPartChange }
+        set { kit.onPanelPartChange = newValue }
+    }
 
     func panelDidClose() { kit.panelDidClose() }
 
