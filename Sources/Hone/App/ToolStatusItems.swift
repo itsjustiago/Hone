@@ -67,8 +67,13 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var lastPopoverClose = Date.distantPast
+    /// From the moment the popover starts closing until it is gone.
+    private var isClosing = false
     /// The part of the icon image the popover was last opened from (see `togglePopover`).
     private var lastPart: ClosedRange<CGFloat>?
+    /// A click on another part of the icon while the popover was closing: where it
+    /// opens again once it is gone.
+    private var reopenAt: CGFloat?
 
     init(tool: any MenuBarTool, manager: ModuleManager, openSettings: @escaping (String) -> Void,
          dismissPanels: @escaping (String) -> Void) {
@@ -76,6 +81,8 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
         self.manager = manager
         self.openSettings = openSettings
         self.dismissPanels = dismissPanels
+        super.init()
+        tool.onPanelPartChange = { [weak self] part in self?.panelPartChanged(part) }
     }
 
     func closePopover() {
@@ -92,6 +99,7 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
     /// saved position, and re-showing it should land where the user left it.
     func hide() {
         guard let statusItem else { return }
+        reopenAt = nil
         if popover?.isShown == true { popover?.close() }
         statusItem.isVisible = false
     }
@@ -120,25 +128,35 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
     @objc private func togglePopover() {
         guard let button = statusItem?.button else { return }
         let popover = self.popover ?? makePopover()
-        if popover.isShown {
+        // Clicking the icon while open dismisses via the transient behaviour first
+        // (the icon is outside the popover), and the click only then reaches here:
+        // while the popover animates out, or just after.
+        let dismissedByThisClick = isClosing || Date().timeIntervalSince(lastPopoverClose) < 0.2
+        if popover.isShown, !isClosing {
             popover.performClose(nil)
             return
         }
         let click = clickInImage(of: button)
-        // Clicking the icon while open dismisses via the transient behaviour
-        // first; don't let the same click reopen it. A click on another part of
-        // the icon (Stats' FAN after its CPU) is a new one: that part opens.
-        let sameSpot = click.map { lastPart?.contains($0.x) ?? true } ?? true
-        if Date().timeIntervalSince(lastPopoverClose) < 0.2, sameSpot { return }
+        // The same click must not reopen it, but a click on another part of the
+        // icon (Stats' FAN after its CPU) is a new one: that part opens.
+        let sameSpot = click.map { lastPart?.contains($0) ?? true } ?? true
+        if dismissedByThisClick, sameSpot { return }
+        if isClosing {
+            // Can't show it again until it is gone.
+            reopenAt = click
+            return
+        }
+        show(popover, from: button, clickedAtX: click)
+    }
 
+    private func show(_ popover: NSPopover, from button: NSStatusBarButton, clickedAtX click: CGFloat?) {
         // The arrow points at the part that was clicked, when the tool has parts.
         var anchor = button.bounds
         lastPart = nil
         if let click {
-            if let part = tool.panelWillShow(clickedAtX: click.x) {
+            if let part = tool.panelWillShow(clickedAtX: click) {
                 lastPart = part
-                anchor = NSRect(x: click.originX + part.lowerBound, y: button.bounds.minY,
-                                width: part.upperBound - part.lowerBound, height: button.bounds.height)
+                anchor = anchorRect(for: part, in: button)
             }
         } else {
             tool.panelWillShow()
@@ -146,16 +164,33 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: anchor, of: button, preferredEdge: .minY)
     }
 
+    /// The panel went to another part of the icon (Stats' tabs): the arrow follows.
+    private func panelPartChanged(_ part: ClosedRange<CGFloat>?) {
+        guard let popover, popover.isShown, !isClosing, let part, let button = statusItem?.button else { return }
+        lastPart = part
+        popover.positioningRect = anchorRect(for: part, in: button)
+    }
+
+    /// Where the left edge of the icon image is in the button (it's centred).
+    private func imageOriginX(of button: NSStatusBarButton) -> CGFloat? {
+        button.image.map { (button.bounds.width - $0.size.width) / 2 }
+    }
+
+    /// The part of the icon image, as a rect in the button.
+    private func anchorRect(for part: ClosedRange<CGFloat>, in button: NSStatusBarButton) -> NSRect {
+        guard let originX = imageOriginX(of: button) else { return button.bounds }
+        return NSRect(x: originX + part.lowerBound, y: button.bounds.minY,
+                      width: part.upperBound - part.lowerBound, height: button.bounds.height)
+    }
+
     /// Where the mouse click that fired the button's action landed, as points from
-    /// the left edge of the icon image (`originX` is where that edge is in the
-    /// button). Nil for a press without a mouse (VoiceOver) or a button with no image.
-    private func clickInImage(of button: NSStatusBarButton) -> (x: CGFloat, originX: CGFloat)? {
+    /// the left edge of the icon image. Nil for a press without a mouse
+    /// (VoiceOver) or a button with no image.
+    private func clickInImage(of button: NSStatusBarButton) -> CGFloat? {
         let mouse: [NSEvent.EventType] = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp]
         guard let event = NSApp.currentEvent, mouse.contains(event.type),
-              let width = button.image?.size.width else { return nil }
-        // The image is centred in the button.
-        let originX = (button.bounds.width - width) / 2
-        return (button.convert(event.locationInWindow, from: nil).x - originX, originX)
+              let originX = imageOriginX(of: button) else { return nil }
+        return button.convert(event.locationInWindow, from: nil).x - originX
     }
 
     private func makePopover() -> NSPopover {
@@ -191,8 +226,17 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
         return pop
     }
 
+    func popoverWillClose(_ notification: Notification) {
+        isClosing = true
+    }
+
     func popoverDidClose(_ notification: Notification) {
+        isClosing = false
         lastPopoverClose = Date()
         tool.panelDidClose()
+        if let click = reopenAt, let popover, let button = statusItem?.button {
+            reopenAt = nil
+            show(popover, from: button, clickedAtX: click)
+        }
     }
 }

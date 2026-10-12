@@ -13,6 +13,7 @@ public final class StatsTool {
     let panelState = PanelState()
     private let processes = TopProcessesModel()
     private var cancellable: AnyCancellable?
+    private var selectionCancellable: AnyCancellable?
 
     private var currentSpec: MenuBarSpec
     private var currentImage: NSImage
@@ -22,6 +23,10 @@ public final class StatsTool {
     /// Called whenever what the menu bar image draws changes (rounded values,
     /// labels, colours) — not on every sample.
     public var onMenuBarImageChange: (() -> Void)?
+
+    /// Called when the panel switches tab: the part of the menu bar image that
+    /// readout covers, for the popover's arrow to follow.
+    public var onPanelPartChange: ((ClosedRange<CGFloat>?) -> Void)?
 
     public convenience init() {
         self.init(defaults: .standard)
@@ -40,6 +45,13 @@ public final class StatsTool {
         // Subscribed after the monitor's own sink, so it already has fresh samples.
         cancellable = settings.didChange.sink { [weak self] in
             MainActor.assumeIsolated { self?.refreshImage() }
+        }
+        selectionCancellable = panelState.$selected.removeDuplicates().dropFirst().sink { [weak self] metric in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let part = MenuBarRenderer.segments(for: self.currentSpec).first { $0.metric == metric }?.span
+                self.onPanelPartChange?(part)
+            }
         }
         refreshImage(notify: false)
     }

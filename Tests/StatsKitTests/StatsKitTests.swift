@@ -608,4 +608,17 @@ final class StatsToolTests: XCTestCase {
             XCTAssertEqual(tool.panelState.selected, segment.metric)
         }
     }
+
+    func testSwitchingTabInThePanelMovesThePopoverArrow() {
+        let tool = StatsTool(defaults: makeStore())
+        let spec = MenuBarSpec(items: Metric.allCases.map { .init(metric: $0, text: "–", tone: .normal) },
+                               showLabels: true, colorize: false)
+        _ = tool.panelWillShow(clickedAtX: MenuBarRenderer.segments(for: spec).last!.span.lowerBound)
+        var parts: [ClosedRange<CGFloat>?] = []
+        tool.onPanelPartChange = { parts.append($0) }
+        tool.panelState.selected = .cpu
+        tool.panelState.selected = .cpu  // no change, no call
+        XCTAssertEqual(parts.count, 1)
+        XCTAssertEqual(parts.first ?? nil, MenuBarRenderer.segments(for: spec).first?.span)
+    }
 }
