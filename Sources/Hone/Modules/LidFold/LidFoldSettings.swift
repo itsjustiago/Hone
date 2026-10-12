@@ -23,6 +23,11 @@ final class LidFoldSettings {
     static let effectKey = "lidFold.effect"
     static let captureKey = "lidFold.captureEnabled"
 
+    /// Fantasma: the screen tilts in perspective and stays sharp. Duo stretches
+    /// the picture upward, which did not read as a fold. Unknown or missing saved
+    /// values come back to this, not to the Kit's shader fallback.
+    static let defaultEffect = FoldEffect.ghost
+
     /// Same default as the Kit's controller. Capture still needs Screen Recording
     /// to be allowed: without it the controller falls back to the black fade.
     static let defaultCaptureEnabled = true
@@ -33,7 +38,7 @@ final class LidFoldSettings {
     /// controller. Not state: the pane must not redraw because of it.
     @ObservationIgnored var onChange: (() -> Void)?
 
-    /// Unknown or missing saved values come back as the Kit's fallback effect.
+    /// Unknown or missing saved values come back as `defaultEffect`.
     var effect: FoldEffect {
         didSet {
             guard oldValue != effect else { return }
@@ -53,7 +58,7 @@ final class LidFoldSettings {
 
     init(defaults: UserDefaults = .standard) {
         d = defaults
-        effect = FoldEffect.resolve(persisted: defaults.string(forKey: Self.effectKey))
+        effect = defaults.string(forKey: Self.effectKey).flatMap(FoldEffect.init(rawValue:)) ?? Self.defaultEffect
         captureEnabled = defaults.object(forKey: Self.captureKey) as? Bool ?? Self.defaultCaptureEnabled
     }
 }
