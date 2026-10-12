@@ -59,7 +59,7 @@ final class TopProcessesModel: ObservableObject {
                 rowsByMetric[metric] = usages.prefix(Self.rowCount).map {
                     ProcessRow(id: $0.pid,
                                name: ProcessNames.name(pid: $0.pid, fallback: $0.command),
-                               cpu: $0.cpu,
+                               cpu: Self.machineShare($0.cpu, cores: Self.cores),
                                memoryBytes: $0.memoryBytes)
                 }
                 fresh.insert(metric)
@@ -67,6 +67,14 @@ final class TopProcessesModel: ObservableObject {
             // The CPU run already takes ~1.2 s; memory is instantaneous.
             try? await Task.sleep(nanoseconds: metric == .cpu ? 300_000_000 : 2_000_000_000)
         }
+    }
+
+    private static let cores = CPUSampler.logicalCores()
+
+    /// `top` counts 100% per core, so a busy app reads 940%. Divided by the
+    /// cores it becomes a share of the whole machine, like the CPU total.
+    nonisolated static func machineShare(_ topPercent: Double, cores: Int) -> Double {
+        min(100, topPercent / Double(max(1, cores)))
     }
 
     /// GPU time per app: no `top`, just IOKit reads about once a second, off the

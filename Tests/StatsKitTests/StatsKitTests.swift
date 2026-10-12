@@ -147,6 +147,13 @@ final class TopParserTests: XCTestCase {
         XCTAssertEqual(rows[3].command, "Some App")
     }
 
+    func testCPUIsShareOfWholeMachine() {
+        XCTAssertEqual(TopProcessesModel.machineShare(940.2, cores: 12), 78.35, accuracy: 1e-9)
+        XCTAssertEqual(TopProcessesModel.machineShare(25.3, cores: 1), 25.3, accuracy: 1e-9)
+        XCTAssertEqual(TopProcessesModel.machineShare(1300, cores: 12), 100, accuracy: 1e-9)
+        XCTAssertEqual(TopProcessesModel.machineShare(50, cores: 0), 50, accuracy: 1e-9)
+    }
+
     func testMemoryUnits() {
         XCTAssertEqual(TopParser.parseMemory("0B"), 0)
         XCTAssertEqual(TopParser.parseMemory("12K-"), 12 * 1024)
