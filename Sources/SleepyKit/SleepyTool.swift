@@ -106,11 +106,22 @@ public final class SleepyTool {
     public var menuBarImage: NSImage {
         let active = SleepController.shared.isActive
         let symbol = active ? "sun.max.fill" : "moon.zzz"
-        let awake = SleepController.shared.activeMode == .lidClosedAwake ? "Mac e ecrã acordados" : "ecrã acordado"
-        let description = active ? "Sleepy — \(awake)" : "Sleepy — sleep normal"
+        let description = "Sleepy — \(liveStatus)"
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description) ?? NSImage()
         image.isTemplate = true
         return image
+    }
+
+    /// Se está a impedir o sleep agora. O switch do Hone só diz se a
+    /// ferramenta está ativa; o cabeçalho usa isto para o estado real.
+    /// Muda junto com `onMenuBarImageChange`.
+    public var isKeepingAwake: Bool { SleepController.shared.isActive }
+
+    /// O estado real numa expressão curta, em minúsculas: "sleep normal",
+    /// "Mac e ecrã acordados" ou "ecrã acordado".
+    public var liveStatus: String {
+        guard SleepController.shared.isActive else { return "sleep normal" }
+        return SleepController.shared.activeMode == .lidClosedAwake ? "Mac e ecrã acordados" : "ecrã acordado"
     }
 
     /// Whether the user wants Sleepy under its own menu-bar icon. Stored under
