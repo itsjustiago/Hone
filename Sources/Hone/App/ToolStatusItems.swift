@@ -82,7 +82,6 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
         self.openSettings = openSettings
         self.dismissPanels = dismissPanels
         super.init()
-        tool.onPanelPartChange = { [weak self] part in self?.panelPartChanged(part) }
     }
 
     func closePopover() {
@@ -150,7 +149,7 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
     }
 
     private func show(_ popover: NSPopover, from button: NSStatusBarButton, clickedAtX click: CGFloat?) {
-        // The arrow points at the part that was clicked, when the tool has parts.
+        // The popover sits under the part that was clicked, when the tool has parts.
         var anchor = button.bounds
         lastPart = nil
         if let click {
@@ -162,13 +161,6 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
             tool.panelWillShow()
         }
         popover.show(relativeTo: anchor, of: button, preferredEdge: .minY)
-    }
-
-    /// The panel went to another part of the icon (Stats' tabs): the arrow follows.
-    private func panelPartChanged(_ part: ClosedRange<CGFloat>?) {
-        guard let popover, popover.isShown, !isClosing, let part, let button = statusItem?.button else { return }
-        lastPart = part
-        popover.positioningRect = anchorRect(for: part, in: button)
     }
 
     /// Where the left edge of the icon image is in the button (it's centred).
@@ -220,10 +212,18 @@ private final class ToolStatusItem: NSObject, NSPopoverDelegate {
         pop.animates = true
         pop.delegate = self
         pop.contentViewController = hosting
+        if !tool.popoverShowsArrow { hideArrow(of: pop) }
         // Same dark look as Hone's own popover (see `AppDelegate.buildPopover`).
         pop.appearance = NSAppearance(named: .darkAqua)
         popover = pop
         return pop
+    }
+
+    /// AppKit has no public way to drop the arrow; this is the switch its own
+    /// popovers use. Where it's missing the arrow simply stays.
+    private func hideArrow(of popover: NSPopover) {
+        guard popover.responds(to: NSSelectorFromString("setShouldHideAnchor:")) else { return }
+        popover.setValue(true, forKey: "shouldHideAnchor")
     }
 
     func popoverWillClose(_ notification: Notification) {
