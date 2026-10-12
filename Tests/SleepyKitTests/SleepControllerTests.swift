@@ -10,6 +10,7 @@ final class SleepControllerTests: XCTestCase {
     private static let name = "Sleepy: impedir sleep"
 
     override func tearDown() {
+        SleepController.shared.lidDimmed = false
         SleepController.shared.releaseAssertion()
         super.tearDown()
     }
@@ -35,6 +36,49 @@ final class SleepControllerTests: XCTestCase {
 
         controller.releaseAssertion()
         XCTAssertTrue(ownAssertions().isEmpty)
+    }
+
+    /// Tampa fechada sem ecrã externo: só idle + system; a de ecrã é largada
+    /// e volta quando a tampa abre.
+    func testLidDimmedDropsOnlyTheDisplayAssertion() {
+        let controller = SleepController.shared
+        defer {
+            controller.lidDimmed = false
+            controller.releaseAssertion()
+        }
+        let display = kIOPMAssertionTypePreventUserIdleDisplaySleep
+
+        XCTAssertTrue(controller.ensureAssertions())
+        XCTAssertEqual(ownAssertions().count, 3)
+
+        controller.lidDimmed = true
+        XCTAssertTrue(controller.ensureAssertions())
+        let dimmed = ownAssertions()
+        XCTAssertEqual(dimmed.count, 2)
+        XCTAssertFalse(dimmed.contains { $0.type == display }, "a de ecrã tem de ser largada")
+        XCTAssertTrue(dimmed.contains { $0.type == kIOPMAssertionTypePreventUserIdleSystemSleep })
+        XCTAssertTrue(dimmed.contains { $0.type == kIOPMAssertionTypePreventSystemSleep })
+
+        XCTAssertTrue(controller.ensureAssertions())
+        XCTAssertEqual(ownAssertions().count, 2, "escurecido não recria a de ecrã")
+
+        controller.lidDimmed = false
+        XCTAssertTrue(controller.ensureAssertions())
+        let restored = ownAssertions()
+        XCTAssertEqual(restored.count, 3)
+        XCTAssertTrue(restored.contains { $0.type == display })
+    }
+
+    func testLidDimmedFromScratchCreatesOnlyIdleAndSystem() {
+        let controller = SleepController.shared
+        defer {
+            controller.lidDimmed = false
+            controller.releaseAssertion()
+        }
+        controller.lidDimmed = true
+        XCTAssertTrue(controller.ensureAssertions())
+        let types = Set(ownAssertions().map(\.type))
+        XCTAssertEqual(types, [kIOPMAssertionTypePreventUserIdleSystemSleep, kIOPMAssertionTypePreventSystemSleep])
     }
 
     /// The Sleepy assertions this process holds, as (type) records.

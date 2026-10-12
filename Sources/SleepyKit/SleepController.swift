@@ -25,8 +25,13 @@ import IOKit.pwr_mgt
 /// bateria e corrente. O estado é persistido: um crash, um rebuild ou o auto-updater
 /// relançam a app, e sem isso a proteção caía em silêncio a meio de uma tarefa
 /// longa. Para não deixar o Mac acordado por esquecimento, há auto-desligar ao
-/// fim de `autoOffMinutes` (default 8h) — e, se a tampa estiver fechada nessa
-/// altura, mandamos o Mac dormir logo, que é o que a tampa fechada quer dizer.
+/// fim de `autoOffMinutes` (default 8h) — e, se a tampa estiver fechada (sem
+/// ecrã externo) nessa altura, mandamos o Mac dormir logo, que é o que a tampa
+/// fechada quer dizer.
+///
+/// Tampa fechada sem ecrã externo: o `disablesleep` deixa o painel interno
+/// aceso dentro da tampa. Aí largamos a assertion de ecrã e apagamos painel e
+/// teclado ([[LidDisplay]]); ao abrir a tampa ou ligar um externo, repomos.
 final class SleepController {
     static let shared = SleepController()
 
@@ -43,6 +48,10 @@ final class SleepController {
     ]
     /// Por tipo, para recriar só a que faltar.
     private var assertionIDs: [String: IOPMAssertionID] = [:]
+    /// Tampa fechada sem ecrã externo: sem a assertion de ecrã e com o painel
+    /// apagado. Só o `lidStateChanged` mexe nisto (e os testes).
+    var lidDimmed = false
+    private let lidMonitor = LidMonitor()
     private var autoOffTimer: Timer?
     /// O prompt de admin do auto-desligar foi recusado: as tentativas seguintes
     /// são só em silêncio, para não o repetir a cada 15s.
@@ -118,13 +127,21 @@ final class SleepController {
 
     // MARK: - IOKit power assertions (ecrã + idle + system sleep)
 
-    /// Segura as três assertions (ecrã, idle, system). Sem privilégios.
-    /// Idempotente: cria só as que faltam, por isso uma falha parcial não fica
-    /// para sempre — a próxima chamada tenta de novo. De tampa fechada o painel
-    /// pode apagar-se na mesma; o que importa aí é o Mac não dormir.
+    /// As que devem estar seguras agora: com o painel apagado, sem a de ecrã.
+    private var wantedAssertionTypes: [String] {
+        guard lidDimmed else { return Self.assertionTypes }
+        return Self.assertionTypes.filter { $0 != kIOPMAssertionTypePreventUserIdleDisplaySleep }
+    }
+
+    /// Segura as três assertions (ecrã, idle, system) — só idle + system com
+    /// `lidDimmed`, e aí larga a de ecrã. Sem privilégios. Idempotente: cria só
+    /// as que faltam, por isso uma falha parcial não fica para sempre — a
+    /// próxima chamada tenta de novo.
     @discardableResult
     func ensureAssertions() -> Bool {
-        for type in Self.assertionTypes where assertionIDs[type] == nil {
+        if lidDimmed { releaseAssertion(ofType: kIOPMAssertionTypePreventUserIdleDisplaySleep) }
+        let wanted = wantedAssertionTypes
+        for type in wanted where assertionIDs[type] == nil {
             var id: IOPMAssertionID = 0
             let result = IOPMAssertionCreateWithName(
                 type as CFString,
@@ -137,12 +154,17 @@ final class SleepController {
                 NSLog("Sleepy: falha a criar a assertion \(type) (\(result))")
             }
         }
-        return assertionIDs.count == Self.assertionTypes.count
+        return wanted.allSatisfy { assertionIDs[$0] != nil }
     }
 
     func releaseAssertion() {
         for id in assertionIDs.values { IOPMAssertionRelease(id) }
         assertionIDs.removeAll()
+    }
+
+    func releaseAssertion(ofType type: String) {
+        guard let id = assertionIDs.removeValue(forKey: type) else { return }
+        IOPMAssertionRelease(id)
     }
 
     // MARK: - pmset disablesleep (lid-close)
@@ -182,6 +204,7 @@ final class SleepController {
         isActive = true
         activeSince = Date()
         SleepyDefaults.store.set(true, forKey: activeKey)
+        startLidMonitor()
         scheduleAutoOff()
         onStateChange?()
     }
@@ -189,6 +212,7 @@ final class SleepController {
     func disable(allowPrompt: Bool = true) {
         guard isActive else { return }
         guard setDisableSleep(false, allowPrompt: allowPrompt) else { return }
+        stopLidMonitor()
         releaseAssertion()
         isActive = false
         clearPersisted()
@@ -202,6 +226,7 @@ final class SleepController {
     /// whoever runs Sleepy next — Hone after a relaunch, or the old app — re-arms
     /// through `restoreOnLaunch`. Never prompts.
     func suspend() {
+        stopLidMonitor()
         releaseAssertion()
         autoOffTimer?.invalidate()
         autoOffTimer = nil
@@ -218,6 +243,7 @@ final class SleepController {
             _ = PrivilegedAccess.setDisableSleep(true)
             guard Self.systemSleepDisabled() else {
                 NSLog("Sleepy: disablesleep caiu por fora e não deu para repor — desligado")
+                stopLidMonitor()
                 releaseAssertion()
                 isActive = false
                 clearPersisted()
@@ -291,11 +317,69 @@ final class SleepController {
             }
             SleepyDefaults.store.set(true, forKey: activeKey)
             if activeSince == nil { activeSince = Date() }
+            // Crash a meio de uma tampa fechada: o brilho ficou a 0. De tampa
+            // fechada não se repõe aqui — o monitor volta a apagar ou repõe.
+            if LidDisplay.dimmedByUs, !LidMonitor.current().lidClosed { LidDisplay.restore() }
+            startLidMonitor()
             scheduleAutoOff()
         } else {
+            // Desligado não há ninguém para repor depois: repõe-se já.
+            stopLidMonitor()
             releaseAssertion()
         }
         onStateChange?()
+    }
+
+    // MARK: - Tampa fechada (painel interno)
+
+    private func startLidMonitor() {
+        if !LidMonitor.current().lidClosed, !lidDimmed { LidDisplay.sampleTrusted() }
+        lidMonitor.start(onPoll: { [weak self] state in
+            // Amostra de confiança: só de tampa aberta e sem nós a escurecer.
+            guard let self, !state.lidClosed, !self.lidDimmed else { return }
+            LidDisplay.sampleTrusted()
+        }, onChange: { [weak self] state in
+            self?.lidStateChanged(state)
+        })
+    }
+
+    /// Deixa de seguir a tampa e repõe painel e teclado se os apagámos (agora
+    /// ou numa sessão que crashou).
+    private func stopLidMonitor() {
+        lidMonitor.stop()
+        let wasDimmed = lidDimmed
+        lidDimmed = false
+        guard wasDimmed || LidDisplay.dimmedByUs else { return }
+        LidDisplay.restore()
+        NSLog("Sleepy: a largar a tampa — brilho do painel e do teclado repostos")
+    }
+
+    /// Único ponto de entrada das mudanças de tampa/ecrã externo (já estabilizadas).
+    func lidStateChanged(_ state: LidState) {
+        guard isActive else { return }
+        if LidMonitor.shouldDim(state) {
+            // Lote B: reler SleepDisabled aqui ao fechar a tampa
+            guard !lidDimmed else { return }
+            lidDimmed = true
+            releaseAssertion(ofType: kIOPMAssertionTypePreventUserIdleDisplaySleep)
+            LidDisplay.dim()
+            NSLog("Sleepy: tampa fechada sem ecrã externo — assertion de ecrã largada, painel e teclado a 0")
+            return
+        }
+        if lidDimmed {
+            lidDimmed = false
+            if !ensureAssertions() {
+                NSLog("Sleepy: falha a repor a assertion de ecrã — o ecrã pode adormecer")
+            }
+            let reason = state.lidClosed ? "ecrã externo ligado" : "tampa aberta"
+            NSLog("Sleepy: \(reason) — assertion de ecrã reposta, painel e teclado repostos")
+        }
+        // Também apanha um brilho que ficou a 0 de uma sessão anterior.
+        if LidDisplay.dimmedByUs {
+            LidDisplay.restore()
+        } else if !state.lidClosed {
+            LidDisplay.sampleTrusted()
+        }
     }
 
     // MARK: - Auto-desligar
@@ -343,10 +427,12 @@ final class SleepController {
 
     private func autoOff() {
         guard isActive else { return }
-        let closed = Self.lidClosed()
-        NSLog("Sleepy: auto-desligar ao fim de \(Self.autoOffMinutes) min (tampa \(closed ? "fechada" : "aberta"))")
-        // De tampa fechada não pode haver prompt de admin: era invisível e ficava
-        // a bloquear a app. Só o caminho sem password.
+        // Tampa fechada com ecrã externo é um Mac em uso: há prompt (vê-se no
+        // externo) e não se manda dormir.
+        let closed = LidMonitor.current().closedWithoutExternal
+        NSLog("Sleepy: auto-desligar ao fim de \(Self.autoOffMinutes) min (tampa \(closed ? "fechada sem ecrã externo" : "aberta ou com ecrã externo"))")
+        // De tampa fechada sem externo não pode haver prompt de admin: era
+        // invisível e ficava a bloquear a app. Só o caminho sem password.
         disable(allowPrompt: !closed && !autoOffPromptDeclined)
         guard !isActive else {
             NSLog("Sleepy: auto-desligar falhou — sem acesso sem password instalado")
@@ -363,32 +449,27 @@ final class SleepController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Self.sleepNow() }
     }
 
-    // MARK: - Tampa e sleep imediato
-
-    /// `AppleClamshellState = Yes` no IORegistry ⇒ tampa fechada.
-    static func lidClosed() -> Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
-        p.arguments = ["-r", "-k", "AppleClamshellState", "-d", "4"]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { return false }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        guard let out = String(data: data, encoding: .utf8) else { return false }
-        for line in out.split(separator: "\n") where line.contains("AppleClamshellState") {
-            return line.contains("Yes")
-        }
-        return false
-    }
+    // MARK: - Sleep imediato
 
     private static func sleepNow() {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        p.arguments = ["sleepnow"]
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { NSLog("Sleepy: pmset sleepnow falhou") }
+        runPmsetInBackground(["sleepnow"])
+    }
+
+    /// `pmset` sem privilégios (`sleepnow`, `displaysleepnow`), fora do main
+    /// para nunca o bloquear.
+    static func runPmsetInBackground(_ arguments: [String]) {
+        DispatchQueue.global(qos: .utility).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+            p.arguments = arguments
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            do {
+                try p.run()
+                p.waitUntilExit()
+            } catch {
+                NSLog("Sleepy: pmset \(arguments.joined(separator: " ")) falhou")
+            }
+        }
     }
 }
