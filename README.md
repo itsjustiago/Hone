@@ -18,6 +18,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
 | **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows — right away, or after a delay you pick (default 1 min), cancelled if you open a window again. Per-app lists; it only quits an app it can *prove* has no windows left, and the Finder and Steam are never touched. |
 | **Key Swap** | Karabiner-Elements | ✅ Working | Swaps ⌘ with ⌃ system-wide, both keys and both directions, so ⌃C / ⌃V / ⌃Z copy, paste and undo like on Windows. Tab is never swapped — ⌘Tab stays the app switcher, ⌃Tab keeps cycling tabs. ⌃+click stays the macOS right-click; per-app exception list. |
+| **Lid Fold** | — (adapted from MacDuo) | New (off by default) | Folds the built-in display as the lid moves, like the iPhone Duo: six effects (Duo, Ghost, Roll, Shutter, Flex, Iris) over the real desktop or a plain black fade. The real desktop needs Screen Recording and shows the recording indicator only while the lid moves; the fade captures nothing. Reads the lid-angle sensor (MacBook Air M2+, MacBook Pro 14"/16" M1 Pro+), has a "Testar" button for Macs without it, and never touches brightness or sleep: Sleepy keeps owning those. |
 
 ## Clippy, Screenly e Sleepy — agora dentro do Hone
 
@@ -150,7 +151,11 @@ Sources/Hone/
     │               CleanKeyboardOverlay(+View) · CleanKeyboardSettings(+View)
     ├── QuitOnClose/ QuitOnCloseModule · QuitOnCloseController · AppWindowWatcher ·
     │               QuitRules · WindowCensus · QuitOnCloseSettings(+View)
-    └── KeySwap/    KeySwapModule · KeySwapTap · KeySwapSettings(+View)
+    ├── KeySwap/    KeySwapModule · KeySwapTap · KeySwapSettings(+View)
+    └── LidFold/    LidFoldModule · LidFoldSettings(+View)
+
+Sources/LidFoldKit/ Motor da Dobra da tampa (só frameworks do sistema, sem Kits): LidSensor (ângulo da
+                    tampa, HID só de leitura) · LidFoldController · LidFoldPolicy · FoldEffect · overlay Metal
 
 Sources/StatsKit/   Kit à parte, como SleepyKit / ClippyKit / ScreenlyKit (só `StatsTool` é público)
                     StatsTool · SystemMonitor · CPUSampler · MemorySampler · GPUSampler ·

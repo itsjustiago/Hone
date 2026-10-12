@@ -1,6 +1,7 @@
 import SwiftUI
 import HoneDesign
 import ClippyKit
+import LidFoldKit
 import ScreenlyKit
 import SleepyKit
 import StatsKit
@@ -31,6 +32,13 @@ extension PreviewRenderer {
             }),
             ("settings-keyswap", window("keySwap", off: off) {
                 tool("keySwap", settings: AnyView(KeySwapSettingsView(module: KeySwapModule())))
+            }),
+            ("settings-lidfold", window("lidFold", off: off) {
+                tool("lidFold", settings: lidFoldSettings(status: .running, hasScreenAccess: true))
+            }),
+            // No lid sensor and no Screen Recording: the long status line and the grant button.
+            ("settings-lidfold-alert", window("lidFold", off: off) {
+                tool("lidFold", settings: lidFoldSettings(status: .unsupported, hasScreenAccess: false))
             }),
             ("settings-quitonclose", window("quitOnClose", off: off) {
                 tool("quitOnClose", mood: .asleep, enabled: false,
@@ -117,6 +125,15 @@ extension PreviewRenderer {
                     .toggleStyle(VibeToggleStyle(tint: spec.tint))
             }
         }
+    }
+
+    /// The Lid Fold pane from fake values: no controller, so nothing starts.
+    /// The scratch defaults suite is only read, never written.
+    private static func lidFoldSettings(status: LidFoldController.Status, hasScreenAccess: Bool) -> AnyView {
+        let defaults = UserDefaults(suiteName: "com.tiagof.hone.preview.lidfold") ?? .standard
+        return AnyView(LidFoldSettingsContent(
+            settings: LidFoldSettings(defaults: defaults), tint: VibeToolColor.lidFold, isEnabled: true,
+            status: status, hasScreenAccess: hasScreenAccess, test: {}, requestScreenAccess: {}))
     }
 
     private static func onboarding(_ accessibility: OnboardingAccessibility) -> AnyView {
