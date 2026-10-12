@@ -299,7 +299,11 @@ final class SleepController {
         }
 
         /// Para o painel: "Desligou-se às HH:mm — <isto>."
-        var panelReason: String { notificationReason }
+        var panelReason: String {
+            // Mais curto que na notificação: cabe nas duas linhas do painel.
+            if case .thermal = self { return "o Mac estava a aquecer" }
+            return notificationReason
+        }
 
         /// A ação escolhida para o fim só corre quando o Sleepy acaba por tempo
         /// ou bateria; com o Mac quente o melhor é não mexer em mais nada.

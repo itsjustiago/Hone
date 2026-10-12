@@ -285,8 +285,9 @@ final class PowerGuardsTests: XCTestCase {
         XCTAssertEqual(Reason.autoOff.notificationReason, "passou o tempo escolhido")
         XCTAssertEqual(Reason.thermal(lidClosed: true).notificationReason,
                        "o Mac estava a aquecer com a tampa fechada")
-        XCTAssertEqual(Reason.thermal(lidClosed: true).panelReason,
-                       "o Mac estava a aquecer com a tampa fechada")
+        // No painel, mais curto: cabe nas duas linhas do cartão.
+        XCTAssertEqual(Reason.thermal(lidClosed: true).panelReason, "o Mac estava a aquecer")
+        XCTAssertEqual(Reason.autoOff.panelReason, Reason.autoOff.notificationReason)
     }
 
     /// O `.critical` dispara de tampa aberta: o texto não pode dizer "tampa fechada".
