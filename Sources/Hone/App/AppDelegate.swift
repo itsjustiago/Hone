@@ -104,10 +104,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// With the icon hidden there's no click target left, so reopening Hone from
-    /// Launchpad/Finder is the way back in: show Settings.
+    /// Launchpad/Finder is the way back in: show Settings. Returns false so
+    /// SwiftUI doesn't also open its own (empty) Settings scene on top.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !MenuBarIcon.isVisible { showSettings() }
-        return true
+        return false
     }
 
     private func buildPopover() {
