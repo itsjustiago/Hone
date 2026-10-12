@@ -24,6 +24,72 @@ final class PrivilegedAccessTests: XCTestCase {
         }
     }
 
+    // MARK: - installScript (nunca corre)
+
+    func testInstallScriptStagesInsideSudoersDir() throws {
+        let script = try XCTUnwrap(PrivilegedAccess.installScript(user: "tiago"))
+        XCTAssertTrue(PrivilegedAccess.stagingPath.hasPrefix("/etc/sudoers.d/"))
+        // Com ponto no nome: o sudo ignora-o até ao `mv`.
+        XCTAssertTrue((PrivilegedAccess.stagingPath as NSString).lastPathComponent.contains("."))
+        XCTAssertTrue(script.contains("> '/etc/sudoers.d/.sleepy.new'"))
+        XCTAssertFalse(script.contains(NSTemporaryDirectory()))
+        XCTAssertFalse(script.contains("/tmp"))
+    }
+
+    /// Permissões e dono postos e validação com visudo, tudo antes do `mv`; se falhar, apaga.
+    func testInstallScriptValidatesBeforeMoving() throws {
+        let script = try XCTUnwrap(PrivilegedAccess.installScript(user: "tiago"))
+        let mv = try XCTUnwrap(script.range(of: "/bin/mv -f '/etc/sudoers.d/.sleepy.new' '/etc/sudoers.d/sleepy'"))
+        for step in ["/bin/chmod 0440 '/etc/sudoers.d/.sleepy.new'",
+                     "/usr/sbin/chown root:wheel '/etc/sudoers.d/.sleepy.new'",
+                     "/usr/sbin/visudo -cf '/etc/sudoers.d/.sleepy.new'"] {
+            let range = try XCTUnwrap(script.range(of: step), step)
+            XCTAssertLessThan(range.lowerBound, mv.lowerBound, "\(step) tem de vir antes do mv")
+        }
+        XCTAssertTrue(script.contains("else /bin/rm -f '/etc/sudoers.d/.sleepy.new'; exit 1; fi"))
+    }
+
+    /// O conteúdo escrito pelo root é a regra, linha a linha, entre plicas.
+    func testInstallScriptWritesTheRuleLines() throws {
+        let script = try XCTUnwrap(PrivilegedAccess.installScript(user: "tiago"))
+        for line in PrivilegedAccess.ruleContent(user: "tiago").split(separator: "\n") {
+            XCTAssertTrue(script.contains("'\(line)'"), "falta \(line)")
+        }
+    }
+
+    func testValidUsers() {
+        for user in ["tiago", "tiagof", "tiago.filipe", "t_f-2", "_mbsetupuser"] {
+            XCTAssertTrue(PrivilegedAccess.isValidUser(user), user)
+            XCTAssertNotNil(PrivilegedAccess.installScript(user: user), user)
+        }
+    }
+
+    /// Qualquer coisa que pudesse mudar a regra ou sair das plicas é recusada.
+    func testStrangeUsersAreRefused() {
+        let bad = ["", "ALL", "tiago ALL", "tiago'", "ti\"ago", "a;b", "a\nb", "%admin", "+net", "#0",
+                   "a,b", "a=b", "a*", "tiago\\", "$(id)", "`id`", "tiagó"]
+        for user in bad {
+            XCTAssertFalse(PrivilegedAccess.isValidUser(user), user)
+            XCTAssertNil(PrivilegedAccess.installScript(user: user), user)
+        }
+    }
+
+    func testShellQuoteEscapesSingleQuotes() {
+        XCTAssertEqual(PrivilegedAccess.shellQuote("a b"), "'a b'")
+        XCTAssertEqual(PrivilegedAccess.shellQuote("it's"), "'it'\\''s'")
+    }
+
+    /// Barras e aspas escapadas para a string do AppleScript; o `\n` do printf chega ao sh intacto.
+    func testAppleScriptEscaping() throws {
+        let source = PrivilegedAccess.elevatedAppleScript(#"printf '%s\n' "x""#)
+        XCTAssertEqual(source, #"do shell script "printf '%s\\n' \"x\"" with administrator privileges"#)
+        let script = try XCTUnwrap(PrivilegedAccess.installScript(user: "tiago"))
+        let full = PrivilegedAccess.elevatedAppleScript(script)
+        // Só as aspas de abertura e fecho ficam sem escape.
+        let body = full.dropFirst("do shell script \"".count).dropLast("\" with administrator privileges".count)
+        XCTAssertFalse(body.replacingOccurrences(of: "\\\\", with: "").replacingOccurrences(of: "\\\"", with: "").contains("\""))
+    }
+
     // MARK: - listingAllowsWithoutPassword
 
     private let lowPower = "/usr/bin/pmset -a lowpowermode 1"

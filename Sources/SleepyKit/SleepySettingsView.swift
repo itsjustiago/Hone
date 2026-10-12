@@ -7,7 +7,7 @@ final class SettingsModel: ObservableObject {
     @Published var passwordless = PrivilegedAccess.isInstalled
     @Published var autoOffMinutes = SleepController.autoOffMinutes
     @Published var batteryThreshold = SleepController.batteryThreshold
-    @Published var sleepMode = SleepController.sleepMode
+    @Published var sleepMode = SettingsModel.shownMode()
     @Published var endAction = SleepController.endAction
     @Published var lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
     @Published var muteWhenLidClosed = LidExtras.muteWhenLidClosed
@@ -20,11 +20,18 @@ final class SettingsModel: ObservableObject {
         passwordless = PrivilegedAccess.isInstalled
         autoOffMinutes = SleepController.autoOffMinutes
         batteryThreshold = SleepController.batteryThreshold
-        sleepMode = SleepController.sleepMode
+        sleepMode = Self.shownMode()
         endAction = SleepController.endAction
         lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
         muteWhenLidClosed = LidExtras.muteWhenLidClosed
         stayAwakeForRemoteSessions = SleepController.stayAwakeForRemoteSessions
+    }
+
+    /// Com o Sleepy ligado, o modo em uso (como o painel): numa sessão do gatilho
+    /// pode não ser o guardado. Escolher um grava a preferência e limpa esse modo
+    /// só da sessão (`setSleepMode`).
+    static func shownMode() -> SleepMode {
+        SleepController.shared.isActive ? SleepController.shared.activeMode : SleepController.sleepMode
     }
 
     /// Volta a ler a regra sudoers (`sudo -n -l`, fora do main). Só com o toggle
@@ -146,12 +153,13 @@ struct SleepySettingsView: View {
 
     // MARK: - Sessões remotas
 
-    private static let remoteNote = "Liga sozinho com SSH ou Partilha de Ecrã e desliga quando a sessão acaba."
+    private static let remoteNote = "Liga sozinho com um Terminal por SSH ou a Partilha de Ecrã e desliga quando a sessão acaba; scp, rsync e ssh host cmd não contam."
 
     /// Sem a regra sem password não há «Fica acordado» sem ninguém ao ecrã: a sessão
     /// só segura o ecrã (e a tampa fechada adormece o Mac). Diz-se, para não surpreender.
+    /// Conta o modo guardado: o picker pode estar a mostrar o só ecrã da sessão.
     private var remoteSubtitle: String {
-        guard model.stayAwakeForRemoteSessions, model.sleepMode.usesDisableSleep, !model.passwordless
+        guard model.stayAwakeForRemoteSessions, SleepController.sleepMode.usesDisableSleep, !model.passwordless
         else { return Self.remoteNote }
         return Self.remoteNote + " Sem «Não pedir password», só o ecrã fica acordado."
     }

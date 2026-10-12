@@ -100,18 +100,55 @@ enum PrivilegedAccess {
         return commands.map { "\(user) ALL=(root) NOPASSWD: \(pmset) -a \($0)\n" }.joined()
     }
 
+    /// Onde o script elevado escreve a regra antes de a validar. Dentro de
+    /// `/etc/sudoers.d/` (só root escreve lá) e com ponto no nome: o sudo ignora-o
+    /// até ao `mv`.
+    static let stagingPath = "/etc/sudoers.d/.sleepy.new"
+
+    /// Só nomes que não mudam o sentido da regra: letras, dígitos, `.`, `_`, `-`.
+    /// `ALL` daria a regra a toda a gente. Pura.
+    static func isValidUser(_ user: String) -> Bool {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        return !user.isEmpty && user != "ALL" && user.allSatisfy { allowed.contains($0) }
+    }
+
+    /// O shell que corre como root: escreve a regra ele próprio (nada passa por um
+    /// ficheiro que o utilizador possa trocar), põe 0440 root:wheel, valida com
+    /// `visudo -cf` e só então a põe no sítio. Falhou algo, apaga o temporário e
+    /// sai com erro. `nil` com um utilizador inválido. Pura.
+    static func installScript(user: String) -> String? {
+        guard isValidUser(user) else { return nil }
+        let lines = ruleContent(user: user).split(separator: "\n").map { shellQuote(String($0)) }
+        let tmp = shellQuote(stagingPath)
+        return "umask 0337; /bin/rm -f \(tmp) || exit 1; "
+            + "if /usr/bin/printf '%s\\n' \(lines.joined(separator: " ")) > \(tmp)"
+            + " && /bin/chmod 0440 \(tmp) && /usr/sbin/chown root:wheel \(tmp)"
+            + " && /usr/sbin/visudo -cf \(tmp); "
+            + "then /bin/mv -f \(tmp) \(shellQuote(sudoersPath)); "
+            + "else /bin/rm -f \(tmp); exit 1; fi"
+    }
+
+    /// Entre plicas para o `sh`. Pura.
+    static func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// O `do shell script … with administrator privileges` com o shell escapado
+    /// para string de AppleScript (barras e aspas). Pura.
+    static func elevatedAppleScript(_ shell: String) -> String {
+        let escaped = shell
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "do shell script \"\(escaped)\" with administrator privileges"
+    }
+
     /// Instala o drop-in sudoers. Mostra um prompt de admin nativo (uma vez).
     @discardableResult
     static func install() -> Bool {
-        let content = ruleContent(user: NSUserName())
-        let tmp = NSTemporaryDirectory() + "sleepy-sudoers-\(UUID().uuidString)"
-        do { try content.write(toFile: tmp, atomically: true, encoding: .utf8) }
-        catch { return false }
-        defer { try? FileManager.default.removeItem(atPath: tmp) }
-
-        // Valida com visudo antes de instalar — um ficheiro inválido nunca pode
-        // partir o sudo. Instala 0440 root:wheel (senão o sudo ignora-o).
-        let shell = "/usr/sbin/visudo -cf '\(tmp)' && /usr/bin/install -m 0440 -o root -g wheel '\(tmp)' '\(sudoersPath)'"
+        guard let shell = installScript(user: NSUserName()) else {
+            NSLog("Sleepy: nome de utilizador com caracteres inesperados — a regra sudoers não foi instalada")
+            return false
+        }
         let ok = runElevated(shell)
         if ok { isInstalled = true }
         return ok
@@ -120,13 +157,13 @@ enum PrivilegedAccess {
     /// Remove o drop-in sudoers. Mostra um prompt de admin nativo (uma vez).
     @discardableResult
     static func uninstall() -> Bool {
-        let ok = runElevated("/bin/rm -f '\(sudoersPath)'")
+        let ok = runElevated("/bin/rm -f \(shellQuote(sudoersPath))")
         if ok { isInstalled = false }
         return ok
     }
 
     private static func runElevated(_ shell: String) -> Bool {
-        let src = "do shell script \"\(shell)\" with administrator privileges"
+        let src = elevatedAppleScript(shell)
         var err: NSDictionary?
         NSAppleScript(source: src)?.executeAndReturnError(&err)
         if let err {

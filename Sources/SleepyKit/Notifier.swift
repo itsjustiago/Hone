@@ -17,9 +17,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let extendActionID = "extend1h"
 
     /// Recebe o identificador da ação carregada numa notificação (hoje, o
-    /// "Mais 1 h"). Corre no main. Inclui o clique no corpo da notificação
-    /// (`UNNotificationDefaultActionIdentifier`).
-    var onAction: ((String) -> Void)?
+    /// "Mais 1 h") e o `userInfo` dela. Corre no main. Inclui o clique no corpo
+    /// da notificação (`UNNotificationDefaultActionIdentifier`).
+    var onAction: ((String, [AnyHashable: Any]) -> Void)?
 
     private static let askedKey = "notificationsAsked"
     private var configured = false
@@ -59,8 +59,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Mostra já uma notificação. Sem autorização o sistema ignora-a em silêncio.
-    /// `category`: as ações que ela leva (ver `activate()`).
-    func notify(_ body: String, title: String = "Sleepy", category: String? = nil) {
+    /// `category`: as ações que ela leva (ver `activate()`). `userInfo` volta em `onAction`.
+    func notify(_ body: String, title: String = "Sleepy", category: String? = nil,
+                userInfo: [AnyHashable: Any] = [:]) {
         guard Self.isAvailable else { return }
         activate()
         let content = UNMutableNotificationContent()
@@ -68,6 +69,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         content.body = body
         content.sound = .default
         if let category { content.categoryIdentifier = category }
+        content.userInfo = userInfo
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
             if let error { NSLog("Sleepy: notificação falhou: \(error)") }
@@ -86,7 +88,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         let action = response.actionIdentifier
-        DispatchQueue.main.async { [weak self] in self?.onAction?(action) }
+        let userInfo = response.notification.request.content.userInfo
+        DispatchQueue.main.async { [weak self] in self?.onAction?(action, userInfo) }
         completionHandler()
     }
 }

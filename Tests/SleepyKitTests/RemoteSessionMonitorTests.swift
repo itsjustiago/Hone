@@ -6,9 +6,10 @@ import XCTest
 /// corre enable()/disable()/stopAutomatically() nem o Notifier real. As leituras
 /// do sistema só leem (utmpx e lista de processos).
 final class RemoteSessionMonitorTests: XCTestCase {
+    /// Entradas com o processo vivo, salvo indicação em contrário.
     private func sessions(utmp: [(type: Int32, host: String)] = [],
                           processes: [String] = []) -> RemoteSessions {
-        RemoteSessionMonitor.sessions(utmp: utmp, processNames: processes)
+        RemoteSessionMonitor.sessions(utmp: utmp.map { ($0.type, $0.host, true) }, processNames: processes)
     }
 
     // MARK: - sessions(utmp:processNames:)
@@ -58,6 +59,38 @@ final class RemoteSessionMonitorTests: XCTestCase {
             XCTAssertNotEqual(type, USER_PROCESS)
             XCTAssertEqual(sessions(utmp: [(type, "10.0.0.2")]).ssh, 0, "ut_type \(type) não conta")
         }
+    }
+
+    /// Uma sessão que morreu sem logout deixa a entrada no utmpx: sem processo vivo não conta.
+    func testStaleEntryWithDeadProcessDoesNotCount() {
+        let utmp: [(type: Int32, host: String, alive: Bool)] = [
+            (USER_PROCESS, "10.0.0.2", false),
+            (USER_PROCESS, "10.0.0.3", true),
+        ]
+        XCTAssertEqual(RemoteSessionMonitor.sessions(utmp: utmp, processNames: []).ssh, 1)
+        let onlyStale: [(type: Int32, host: String, alive: Bool)] = [(USER_PROCESS, "10.0.0.2", false)]
+        XCTAssertFalse(RemoteSessionMonitor.sessions(utmp: onlyStale, processNames: []).isActive)
+    }
+
+    /// `kill(pid, 0)`: 0 ou EPERM (processo de root) = vivo; ESRCH = morto; pid ≤ 0 nunca.
+    func testIsAlive() {
+        XCTAssertTrue(RemoteSessionMonitor.isAlive(pid: 500, killResult: 0, errno: 0))
+        XCTAssertTrue(RemoteSessionMonitor.isAlive(pid: 500, killResult: -1, errno: EPERM))
+        XCTAssertFalse(RemoteSessionMonitor.isAlive(pid: 500, killResult: -1, errno: ESRCH))
+        XCTAssertFalse(RemoteSessionMonitor.isAlive(pid: 0, killResult: 0, errno: 0))
+        XCTAssertFalse(RemoteSessionMonitor.isAlive(pid: -1, killResult: 0, errno: 0))
+    }
+
+    /// Só lê: este processo existe, o launchd (root) também (EPERM), um pid acabado não.
+    func testProcessExists() throws {
+        XCTAssertTrue(RemoteSessionMonitor.processExists(getpid()))
+        XCTAssertTrue(RemoteSessionMonitor.processExists(1))
+        XCTAssertFalse(RemoteSessionMonitor.processExists(0))
+        let done = Process()
+        done.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try done.run()
+        done.waitUntilExit()
+        XCTAssertFalse(RemoteSessionMonitor.processExists(done.processIdentifier))
     }
 
     /// Só o nome exato: um processo parecido não é a Partilha de Ecrã.

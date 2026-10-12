@@ -38,6 +38,7 @@ public final class SleepyTool {
     public func start() {
         guard !isRunning else { return }
         isRunning = true
+        SleepController.shared.toolRunning = true
         SleepController.shared.onStateChange = { [weak self] in
             MainActor.assumeIsolated {
                 self?.refreshMenuModel()
@@ -45,8 +46,9 @@ public final class SleepyTool {
             }
         }
         // "Mais 1 h" no aviso de 5 min antes do auto-desligar (já chega no main).
-        Notifier.shared.onAction = { action in
-            if action == Notifier.extendActionID { SleepController.shared.extendSession() }
+        // Só para a sessão que mandou o aviso.
+        Notifier.shared.onAction = { action, userInfo in
+            if action == Notifier.extendActionID { SleepController.shared.extendSession(fromNotification: userInfo) }
         }
         Notifier.shared.activate()
         SleepController.shared.restoreOnLaunch()
@@ -69,6 +71,7 @@ public final class SleepyTool {
         SleepController.shared.onStateChange = nil
         Notifier.shared.onAction = nil
         isRunning = false
+        SleepController.shared.toolRunning = false
         stopPowerReadout()
         SleepController.shared.stopRemoteMonitor()
         // O LPM e o som repostos pelo `disable()` ainda podem estar na fila.
@@ -86,6 +89,7 @@ public final class SleepyTool {
         Notifier.shared.onAction = nil
         SleepController.shared.suspend()
         isRunning = false
+        SleepController.shared.toolRunning = false
         stopPowerReadout()
         LidExtras.flush()
         refreshMenuModel()

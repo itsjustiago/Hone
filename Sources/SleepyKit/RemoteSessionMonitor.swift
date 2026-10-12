@@ -3,7 +3,7 @@ import Foundation
 
 /// As sessões remotas vivas num instante.
 struct RemoteSessions: Equatable {
-    /// Sessões SSH (entradas `USER_PROCESS` do utmpx com host).
+    /// Sessões SSH (entradas `USER_PROCESS` do utmpx com host e processo vivo).
     var ssh = 0
     /// Há um `screensharingd` vivo (a Partilha de Ecrã só o lança com um cliente ligado).
     var screenSharing = false
@@ -35,7 +35,7 @@ struct RemoteSessionDebounce {
 
 /// Segue as sessões SSH e de Partilha de Ecrã, sem processos nem privilégios:
 /// o utmpx para o SSH e a lista de processos (libproc) para o `screensharingd`.
-/// Só lê — nunca sinaliza nem mata nada.
+/// Só lê — nunca sinaliza nem mata nada (o `kill(pid, 0)` só pergunta se existe).
 ///
 /// Corre numa fila série utility (nunca no main) de 10 em 10 s, e só entre
 /// `start` e `stop`. `start`/`stop` chamam-se no main, e o callback chega lá.
@@ -80,11 +80,26 @@ final class RemoteSessionMonitor {
     // MARK: - Decisões (puras)
 
     /// Conta as sessões. O SSH é uma entrada `USER_PROCESS` com host: um Terminal
-    /// local também tem entradas `USER_PROCESS`, mas com o host vazio.
-    static func sessions(utmp: [(type: Int32, host: String)], processNames: [String]) -> RemoteSessions {
+    /// local também tem entradas `USER_PROCESS`, mas com o host vazio. Uma sessão
+    /// que morreu sem logout deixa a entrada até ao reboot: só conta com o
+    /// processo (`ut_pid`) vivo.
+    static func sessions(utmp: [(type: Int32, host: String, alive: Bool)], processNames: [String]) -> RemoteSessions {
         RemoteSessions(
-            ssh: utmp.filter { $0.type == USER_PROCESS && !$0.host.isEmpty }.count,
+            ssh: utmp.filter { $0.type == USER_PROCESS && !$0.host.isEmpty && $0.alive }.count,
             screenSharing: processNames.contains(screenSharingProcess))
+    }
+
+    /// O resultado de `kill(pid, 0)` diz que o processo existe? O sinal 0 não envia
+    /// nada, só verifica. `EPERM` = existe, mas é de outro utilizador (o `sshd` é de
+    /// root). Pid ≤ 0 nunca: o `kill` com 0 ou -1 fala com grupos de processos. Pura.
+    static func isAlive(pid: pid_t, killResult: Int32, errno: Int32) -> Bool {
+        pid > 0 && (killResult == 0 || errno == EPERM)
+    }
+
+    static func processExists(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        let result = kill(pid, 0)
+        return isAlive(pid: pid, killResult: result, errno: result == 0 ? 0 : Darwin.errno)
     }
 
     /// O que o painel diz. `nil` sem sessões.
@@ -108,14 +123,18 @@ final class RemoteSessionMonitor {
     /// O utmpx tem um cursor global: um varrimento de cada vez.
     private static let utmpLock = NSLock()
 
-    private static func readUtmp() -> [(type: Int32, host: String)] {
+    private static func readUtmp() -> [(type: Int32, host: String, alive: Bool)] {
         utmpLock.lock()
         defer { utmpLock.unlock() }
         setutxent()
         defer { endutxent() }
-        var entries: [(type: Int32, host: String)] = []
+        var entries: [(type: Int32, host: String, alive: Bool)] = []
         while let entry = getutxent() {
-            entries.append((Int32(entry.pointee.ut_type), string(fromCTuple: entry.pointee.ut_host)))
+            let type = Int32(entry.pointee.ut_type)
+            let host = string(fromCTuple: entry.pointee.ut_host)
+            // Só interessa (e só se verifica) o pid das entradas que podem contar.
+            let alive = type == USER_PROCESS && !host.isEmpty && processExists(entry.pointee.ut_pid)
+            entries.append((type, host, alive))
         }
         return entries
     }
