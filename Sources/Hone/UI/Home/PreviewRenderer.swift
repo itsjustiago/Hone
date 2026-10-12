@@ -22,6 +22,8 @@ enum PreviewRenderer {
                 Fixture.tools(off: ["windowPeek", "sleepy"],
                               alerts: ["clippy": .paused, "screenly": .missingPermission("Gravação de Ecrã")]),
                 notices: [.update(version: "1.6.0"), .accessibility])),
+            // Sleepy on but not blocking sleep: switch on, mascot asleep.
+            ("home-sleepy-idle", popover(Fixture.tools(off: ["windowPeek", "quitOnClose"], idle: ["sleepy"]))),
             ("home-off", popover(Fixture.tools(off: Set(Fixture.all.map(\.id))))),
             ("blobs", AnyView(blobSheet)),
             ("blobs-gaze", AnyView(gazeSheet)),
@@ -163,13 +165,14 @@ enum Fixture {
              icon: "keyboard.fill", tint: VibeToolColor.cleanKeyboard, momentary: true, actionLabel: "Limpar"),
     ]
 
-    static func tools(off: Set<String>, alerts: [String: HomeTool.Alert] = [:]) -> [HomeTool] {
+    static func tools(off: Set<String>, alerts: [String: HomeTool.Alert] = [:],
+                      idle: Set<String> = []) -> [HomeTool] {
         all.map { s in
             HomeTool(id: s.id, title: s.title, shortTitle: s.shortTitle, category: s.category,
                      tagline: s.tagline, iconSystemName: s.icon, tint: s.tint, isAvailable: true,
                      isMomentary: s.momentary, actionLabel: s.actionLabel,
                      isEnabled: !s.momentary && !off.contains(s.id), hasPanel: s.panel,
-                     alert: alerts[s.id])
+                     alert: alerts[s.id], isIdle: idle.contains(s.id))
         }
     }
 }

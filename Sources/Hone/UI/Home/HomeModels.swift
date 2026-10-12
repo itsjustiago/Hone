@@ -35,6 +35,9 @@ struct HomeTool: Identifiable {
     /// Has its own panel (an embedded Kit).
     let hasPanel: Bool
     let alert: Alert?
+    /// On and running, but with nothing to do right now (e.g. Sleepy not
+    /// blocking sleep). Only the mascot dozes; nothing else changes.
+    var isIdle = false
 
     /// A dedicated app (an embedded Kit, or a one-shot like Limpar Teclado)
     /// rather than a background tweak that is simply on or off.
@@ -54,7 +57,8 @@ struct HomeTool: Identifiable {
     var mood: Blob.Mood {
         if isMomentary { return .awake }
         if !isAvailable || !isEnabled { return .asleep }
-        return alert == nil ? .awake : .alert
+        if alert != nil { return .alert }
+        return isIdle ? .asleep : .awake
     }
 
     var alertText: String? {

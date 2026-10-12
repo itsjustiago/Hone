@@ -225,24 +225,29 @@ public struct VibeCornerButton: View {
 
 // MARK: - Status line & notice strip
 
-/// "● Text" — a coloured dot with a short grey status message.
+/// "● Text" — a coloured dot with a short grey status message. One line by
+/// default; `wraps` lets a longer message flow onto more, the dot staying on the first.
 public struct VibeStatusLine: View {
     let color: Color
     let text: String
+    let wraps: Bool
 
-    public init(_ text: String, color: Color) {
+    public init(_ text: String, color: Color, wraps: Bool = false) {
         self.text = text
         self.color = color
+        self.wraps = wraps
     }
 
     public var body: some View {
-        HStack(spacing: 7) {
+        HStack(alignment: wraps ? .firstTextBaseline : .center, spacing: 7) {
             VibeDot(color)
+                .alignmentGuide(.firstTextBaseline) { $0[.bottom] }
             Text(text)
                 .font(VibeFont.body)
                 .foregroundStyle(VibeColor.text3)
-                .lineLimit(1)
+                .lineLimit(wraps ? nil : 1)
                 .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: wraps)
         }
     }
 }

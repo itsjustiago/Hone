@@ -262,12 +262,13 @@ struct SettingsView: View {
 }
 
 private extension ModuleManager {
-    /// The tool's mascot mood, as on the home: asleep when off, alert when
-    /// something holds it back.
+    /// The tool's mascot mood, as on the home: asleep when off or idle (on, but
+    /// with nothing to do), alert when something holds it back.
     func mood(for module: any HoneModule) -> Blob.Mood {
         if module.isMomentary { return .awake }
         guard module.isAvailable, module.isEnabled else { return .asleep }
-        return isPaused(module) || isWaitingOnPermission(module) ? .alert : .awake
+        if isPaused(module) || isWaitingOnPermission(module) { return .alert }
+        return isIdle(module) ? .asleep : .awake
     }
 }
 
@@ -291,6 +292,18 @@ struct ToolPagePermission {
     let request: () -> Void
 }
 
+extension VibeHeaderStatus {
+    /// Switched off in Hone.
+    static let off = VibeHeaderStatus("Desligado no Hone", color: VibeColor.dotOff)
+
+    /// Switched on, and what it is doing: the tool's colour while it works, grey
+    /// while idle. Non-breaking spaces keep "agora: …" together if the line wraps.
+    static func on(_ live: ToolLiveState, tint: Color) -> VibeHeaderStatus {
+        let now = "agora: \(live.text)".replacingOccurrences(of: " ", with: "\u{00A0}")
+        return VibeHeaderStatus("Ativo no Hone · \(now)", color: live.isActive ? tint : VibeColor.dotOff)
+    }
+}
+
 /// A tool's page: header card, what needs attention, the tool's own settings and
 /// the shared sections. Plain values in, so the preview renderer can draw it
 /// offscreen; `ModuleDetailView` feeds it from the live module.
@@ -301,6 +314,8 @@ struct ToolPage<Control: View>: View {
     let mood: Blob.Mood
     /// A tweak's symbol, shown in place of the mascot (only apps have one).
     let symbol: String?
+    /// What the tool is doing now, under the title (only some tools have one).
+    let status: VibeHeaderStatus?
     let banners: [ToolPageBanner]
     /// Off tools keep their settings in view, but out of reach.
     let dimmed: Bool
@@ -311,6 +326,7 @@ struct ToolPage<Control: View>: View {
     let control: Control
 
     init(title: String, summary: String, tint: Color, mood: Blob.Mood, symbol: String? = nil,
+         status: VibeHeaderStatus? = nil,
          banners: [ToolPageBanner] = [], dimmed: Bool = false, settings: AnyView,
          permission: ToolPagePermission? = nil, ownIcon: Binding<Bool>? = nil,
          @ViewBuilder control: () -> Control) {
@@ -319,6 +335,7 @@ struct ToolPage<Control: View>: View {
         self.tint = tint
         self.mood = mood
         self.symbol = symbol
+        self.status = status
         self.banners = banners
         self.dimmed = dimmed
         self.settings = settings
@@ -329,7 +346,8 @@ struct ToolPage<Control: View>: View {
 
     var body: some View {
         SettingsPage {
-            VibePageHeader(title: title, subtitle: summary, color: tint, mood: mood, symbol: symbol) { control }
+            VibePageHeader(title: title, subtitle: summary, color: tint, mood: mood, symbol: symbol,
+                           status: status) { control }
         } content: {
             ForEach(banners) { banner in
                 VibeBanner(color: banner.color, title: banner.title, detail: banner.detail,
@@ -374,13 +392,23 @@ private struct ModuleDetailView: View {
         ToolPage(title: module.title, summary: module.summary, tint: module.tint,
                  mood: manager.mood(for: module),
                  symbol: module is any MenuBarTool || module.isMomentary ? nil : module.iconSystemName,
-                 banners: banners,
+                 status: status, banners: banners,
                  dimmed: module.isAvailable && !module.isMomentary && !module.isEnabled,
                  settings: module.makeSettingsView(), permission: permission, ownIcon: ownIcon) {
             control
         }
         // Screen Recording isn't polled; refresh so "Concedida" is current.
         .onAppear { permissions.refresh() }
+    }
+
+    /// "Ativo no Hone · agora: …" for a tool with a live state: the switch only
+    /// says it is on, this says whether it is doing anything. Left out while a
+    /// banner already says what holds it back.
+    private var status: VibeHeaderStatus? {
+        guard let tool = module as? any MenuBarTool, let live = tool.liveState else { return nil }
+        guard tool.isEnabled else { return .off }
+        guard !manager.isPaused(tool), !manager.isWaitingOnPermission(tool) else { return nil }
+        return .on(live, tint: tool.tint)
     }
 
     private var banners: [ToolPageBanner] {

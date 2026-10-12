@@ -142,6 +142,18 @@ public struct VibeToggleRow: View {
 
 // MARK: - Page header & banner
 
+/// What a page header says about the tool right now (e.g. "Ativo no Hone ·
+/// agora: sleep normal"), under the title with a coloured dot.
+public struct VibeHeaderStatus {
+    let text: String
+    let color: Color
+
+    public init(_ text: String, color: Color) {
+        self.text = text
+        self.color = color
+    }
+}
+
 /// Top of a settings page: the tool's mascot, its name and what it does, with
 /// the on/off switch (or a button) at the right. The home's hero card, as a page.
 public struct VibePageHeader<Trailing: View>: View {
@@ -150,19 +162,25 @@ public struct VibePageHeader<Trailing: View>: View {
     let color: Color
     let mood: Blob.Mood
     let symbol: String?
+    let status: VibeHeaderStatus?
     let trailing: Trailing
 
     private let blobHeight: CGFloat = 42
 
-    /// - Parameter symbol: an SF Symbol drawn in place of the mascot, for a
-    ///   tweak that belongs to Hone rather than being an app of its own.
+    /// - Parameters:
+    ///   - symbol: an SF Symbol drawn in place of the mascot, for a tweak that
+    ///     belongs to Hone rather than being an app of its own.
+    ///   - status: a live line under the title, for tools whose switch alone
+    ///     doesn't say whether they are doing anything.
     public init(title: String, subtitle: String, color: Color, mood: Blob.Mood = .awake,
-                symbol: String? = nil, @ViewBuilder trailing: () -> Trailing) {
+                symbol: String? = nil, status: VibeHeaderStatus? = nil,
+                @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.subtitle = subtitle
         self.color = color
         self.mood = mood
         self.symbol = symbol
+        self.status = status
         self.trailing = trailing()
     }
 
@@ -174,6 +192,9 @@ public struct VibePageHeader<Trailing: View>: View {
                 Text(title)
                     .font(VibeFont.pageTitle)
                     .foregroundStyle(VibeColor.text1)
+                if let status {
+                    VibeStatusLine(status.text, color: status.color, wraps: true)
+                }
                 Text(subtitle)
                     .font(VibeFont.body)
                     .foregroundStyle(VibeColor.text3)

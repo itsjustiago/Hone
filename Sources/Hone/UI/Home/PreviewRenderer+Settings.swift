@@ -54,7 +54,21 @@ extension PreviewRenderer {
                 tool("screenly", ownIcon: true, settings: ScreenlyPreview.settings())
             }),
             ("settings-sleepy-off", window("sleepy", off: off) {
-                tool("sleepy", mood: .asleep, enabled: false, ownIcon: false, settings: SleepyPreview.settings())
+                tool("sleepy", mood: .asleep, enabled: false,
+                     status: .off, ownIcon: false,
+                     settings: SleepyPreview.settings())
+            }),
+            // On in Hone, but not blocking sleep: the switch is on, the mascot dozes.
+            ("settings-sleepy-on", window("sleepy", off: off.subtracting(["sleepy"]), asleep: ["sleepy"]) {
+                tool("sleepy", mood: .asleep,
+                     status: .on(ToolLiveState(isActive: false, text: "sleep normal"), tint: VibeToolColor.sleepy),
+                     ownIcon: false, settings: SleepyPreview.settings())
+            }),
+            ("settings-sleepy-awake", window("sleepy", off: off.subtracting(["sleepy"])) {
+                tool("sleepy",
+                     status: .on(ToolLiveState(isActive: true, text: "Mac e ecrã acordados"),
+                                 tint: VibeToolColor.sleepy),
+                     ownIcon: false, settings: SleepyPreview.settings())
             }),
             ("settings-stats", window("stats", off: off) {
                 tool("stats", ownIcon: true, settings: StatsPreview.settings())
@@ -69,13 +83,15 @@ extension PreviewRenderer {
 
     /// The window: the sidebar as the live one builds it, `detail` on the right. Tall by
     /// default, with the pages laid out whole, so one image shows a page end to end.
-    private static func window<Detail: View>(_ selected: String, off: Set<String>, height: CGFloat = 900,
+    private static func window<Detail: View>(_ selected: String, off: Set<String>, asleep: Set<String> = [],
+                                             height: CGFloat = 900,
                                              @ViewBuilder detail: () -> Detail) -> AnyView {
         let entries = Fixture.all.map { spec -> SettingsEntry in
             let active = spec.momentary || !off.contains(spec.id)
             let isApp = spec.panel || spec.momentary
+            let mood: Blob.Mood = active && !asleep.contains(spec.id) ? .awake : .asleep
             return SettingsEntry(id: spec.id, title: spec.title,
-                                 leading: isApp ? .blob(spec.tint, active ? .awake : .asleep) : .tweak(spec.icon, spec.tint),
+                                 leading: isApp ? .blob(spec.tint, mood) : .tweak(spec.icon, spec.tint),
                                  isActive: active, isApp: isApp)
         }
         return AnyView(
@@ -84,12 +100,12 @@ extension PreviewRenderer {
     }
 
     private static func tool(_ id: String, mood: Blob.Mood = .awake, enabled: Bool = true,
-                             banners: [ToolPageBanner] = [], permission: ToolPagePermission? = nil,
+                             status: VibeHeaderStatus? = nil, banners: [ToolPageBanner] = [], permission: ToolPagePermission? = nil,
                              ownIcon: Bool? = nil, settings: AnyView) -> some View {
         let spec = Fixture.all.first { $0.id == id }!
         return ToolPage(title: spec.title, summary: spec.tagline, tint: spec.tint, mood: mood,
                         symbol: spec.panel || spec.momentary ? nil : spec.icon,
-                        banners: banners, dimmed: !enabled, settings: settings, permission: permission,
+                        status: status, banners: banners, dimmed: !enabled, settings: settings, permission: permission,
                         ownIcon: ownIcon.map { Binding.constant($0) }) {
             if spec.momentary {
                 Button(spec.actionLabel) {}

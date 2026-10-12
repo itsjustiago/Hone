@@ -2,7 +2,10 @@ import SwiftUI
 import HoneDesign
 import SleepyKit
 
-extension SleepyTool: ToolKit {}
+extension SleepyTool: ToolKit {
+    /// On is only "tool active"; this is whether Sleepy is really blocking sleep.
+    var liveState: ToolLiveState? { ToolLiveState(isActive: isKeepingAwake, text: liveStatus) }
+}
 
 /// Sleepy (keep the screen on and the Mac awake, even with the lid closed), formerly its own app.
 @MainActor
