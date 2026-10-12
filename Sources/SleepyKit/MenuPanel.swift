@@ -174,10 +174,13 @@ struct MenuPanelContent: View {
                 .padding(.trailing, VibeMetrics.cornerButton + cornerSpacing + VibeMetrics.toggle.width + 8)
                 VibeStatusLine(isActive ? awakeLine : "Sleep normal",
                                color: isActive ? tint : VibeColor.dotOff)
+                // Sempre duas linhas de altura, mesmo com uma só de texto: ligar e
+                // desligar não muda o tamanho do painel (nem do popover).
                 Text(statusLine)
                     .font(VibeFont.body)
                     .foregroundStyle(VibeColor.text3)
-                    .lineLimit(3)
+                    .lineLimit(2, reservesSpace: true)
+                    .minimumScaleFactor(0.85)
                     .fixedSize(horizontal: false, vertical: true)
                 if let powerText {
                     Text(powerText)
@@ -253,8 +256,7 @@ struct MenuPanelContent: View {
     /// fechada, sem ir lá.
     private var lowPowerRow: some View {
         HStack(spacing: 10) {
-            rowLabel(symbol: "leaf", title: Self.lowPowerTitle)
-                .minimumScaleFactor(0.85)
+            rowLabel(symbol: "leaf", title: "Low Power Mode ao fechar")
             Spacer(minLength: 8)
             Toggle(Self.lowPowerTitle, isOn: Binding(
                 get: { lowPowerWhenLidClosed },
@@ -262,6 +264,7 @@ struct MenuPanelContent: View {
                 .toggleStyle(VibeToggleStyle(tint: tint))
                 .accessibilityLabel(Self.lowPowerTitle)
         }
+        .help(Self.lowPowerTitle)
         .padding(.horizontal, 8)
         .frame(minHeight: 36)
     }

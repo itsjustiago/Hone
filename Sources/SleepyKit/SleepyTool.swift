@@ -120,15 +120,37 @@ public final class SleepyTool {
     // MARK: - Menu bar
 
     /// Sun while sleep is blocked, moon otherwise. Template, so it adapts to the
-    /// menu bar's appearance.
+    /// menu bar's appearance. Both symbols sit centred in the same box, so the
+    /// status item (and the popover pointing at it) doesn't move on a toggle.
     public var menuBarImage: NSImage {
-        let active = SleepController.shared.isActive
-        let symbol = active ? "sun.max.fill" : "moon.zzz"
-        let description = "Sleepy — \(liveStatus)"
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description) ?? NSImage()
+        let symbol = Self.symbolImage(SleepController.shared.isActive ? Self.awakeSymbol : Self.asleepSymbol)
+        let box = Self.menuBarImageSize
+        let image = NSImage(size: box, flipped: false) { rect in
+            let size = symbol.size
+            // Half points: pixel-aligned on Retina.
+            let x = ((rect.width - size.width) / 2 * 2).rounded() / 2
+            let y = ((rect.height - size.height) / 2 * 2).rounded() / 2
+            symbol.draw(in: NSRect(x: x, y: y, width: size.width, height: size.height))
+            return true
+        }
         image.isTemplate = true
+        image.accessibilityDescription = "Sleepy — \(liveStatus)"
         return image
     }
+
+    private static let awakeSymbol = "sun.max.fill"
+    private static let asleepSymbol = "moon.zzz"
+
+    private static func symbolImage(_ name: String) -> NSImage {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage()
+    }
+
+    /// The larger of the two symbols, in both dimensions.
+    private static let menuBarImageSize: NSSize = {
+        let sizes = [awakeSymbol, asleepSymbol].map { symbolImage($0).size }
+        return NSSize(width: (sizes.map(\.width).max() ?? 18).rounded(.up),
+                      height: (sizes.map(\.height).max() ?? 18).rounded(.up))
+    }()
 
     /// Se está a impedir o sleep agora. O switch do Hone só diz se a
     /// ferramenta está ativa; o cabeçalho usa isto para o estado real.
