@@ -106,8 +106,9 @@ public final class SleepyTool {
     // MARK: - Panel
 
     /// Mirror the live system state into the panel's model before it shows.
-    /// `reassert()` first: if the block dropped behind our back it fires
-    /// `onStateChange` (wired in `start()`), which also updates the icon.
+    /// `reassert()` first: it re-checks `SleepDisabled` off the main thread and,
+    /// if the block dropped behind our back, fires `onStateChange` (wired in
+    /// `start()`) once it knows, which also updates the icon and the warning.
     public func panelWillShow() {
         SleepController.shared.reassert()
         refreshMenuModel()
@@ -146,6 +147,7 @@ public final class SleepyTool {
         menuModel.autoOffText = autoOffText()
         menuModel.autoOffMinutes = SleepController.autoOffMinutes
         menuModel.passwordlessInstalled = PrivilegedAccess.isInstalled
+        menuModel.warning = SleepController.shared.lidWarning
         menuModel.showsOwnIcon = showsOwnMenuBarIcon
         settingsModel.refresh()
     }

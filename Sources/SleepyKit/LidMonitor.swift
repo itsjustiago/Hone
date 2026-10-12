@@ -18,7 +18,9 @@ struct LidState: Equatable {
 }
 
 /// Estabilização: uma mudança só passa depois de a leitura se manter igual
-/// durante `interval`, para não reagir a uma tampa a meio de fechar.
+/// durante `interval`, para não reagir a uma tampa a meio de fechar. É só no
+/// sentido de fechar: abrir a tampa (ou ligar um externo) entrega logo, senão o
+/// ecrã ficava 2 s a 0 com alguém já a olhar para ele.
 struct LidDebounce {
     let interval: TimeInterval
     private(set) var delivered: LidState?
@@ -31,6 +33,11 @@ struct LidDebounce {
     /// Regista uma leitura. Devolve o estado a entregar quando estabilizou.
     mutating func observe(_ state: LidState, at now: Date) -> LidState? {
         if state == delivered { candidate = nil; return nil }
+        if delivered?.closedWithoutExternal == true, !state.closedWithoutExternal {
+            delivered = state
+            candidate = nil
+            return state
+        }
         if candidate?.state != state { candidate = (state, now) }
         guard let since = candidate?.since, now.timeIntervalSince(since) >= interval else { return nil }
         delivered = state

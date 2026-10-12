@@ -67,4 +67,36 @@ final class LidMonitorTests: XCTestCase {
         XCTAssertNil(d.observe(closed, at: t0 + 6.5))
         XCTAssertEqual(d.observe(closed, at: t0 + 7), closed)
     }
+
+    func testDebounceDeliversOpeningAtOnce() {
+        var d = LidDebounce(interval: 2)
+        _ = d.observe(closed, at: t0)
+        XCTAssertEqual(d.observe(closed, at: t0 + 2), closed)
+        // Abrir a tampa não espera: o ecrã não pode ficar a 0 com alguém a olhar.
+        XCTAssertEqual(d.observe(open, at: t0 + 3), open)
+        XCTAssertFalse(d.isPending)
+        XCTAssertNil(d.observe(open, at: t0 + 3.1), "já entregue não se repete")
+        // Fechar volta a esperar.
+        XCTAssertNil(d.observe(closed, at: t0 + 4))
+        XCTAssertTrue(d.isPending)
+        XCTAssertEqual(d.observe(closed, at: t0 + 6), closed)
+    }
+
+    func testDebounceDeliversExternalDisplayWhileClosedAtOnce() {
+        var d = LidDebounce(interval: 2)
+        _ = d.observe(closed, at: t0)
+        XCTAssertEqual(d.observe(closed, at: t0 + 2), closed)
+        let clamshell = LidState(lidClosed: true, externalDisplay: true)
+        XCTAssertEqual(d.observe(clamshell, at: t0 + 3), clamshell,
+                       "ligar um externo com a tampa fechada também deixa de ser 'ninguém a ver'")
+    }
+
+    func testDebounceStillWaitsWhenClosingFromOpen() {
+        var d = LidDebounce(interval: 2)
+        _ = d.observe(open, at: t0)
+        XCTAssertEqual(d.observe(open, at: t0 + 2), open)
+        XCTAssertNil(d.observe(closed, at: t0 + 3))
+        XCTAssertNil(d.observe(closed, at: t0 + 4.9))
+        XCTAssertEqual(d.observe(closed, at: t0 + 5), closed)
+    }
 }

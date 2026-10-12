@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import IOKit.pwr_mgt
 
@@ -29,6 +30,10 @@ import IOKit.pwr_mgt
 /// ecrã externo) nessa altura, mandamos o Mac dormir logo, que é o que a tampa
 /// fechada quer dizer.
 ///
+/// O `disablesleep` é confirmado de forma contínua (`verifySleepDisabled`, o
+/// macOS pode repô-lo a 0 por fora) e, se o Hone morrer, um watchdog destacado
+/// larga-o ([[CrashWatchdog]]).
+///
 /// Tampa fechada sem ecrã externo: o `disablesleep` deixa o painel interno
 /// aceso dentro da tampa. Aí largamos a assertion de ecrã e apagamos painel e
 /// teclado ([[LidDisplay]]); ao abrir a tampa ou ligar um externo, repomos.
@@ -39,6 +44,11 @@ final class SleepController {
 
     /// Chamado quando o estado muda sem ser por clique (restore, auto-off).
     var onStateChange: (() -> Void)?
+
+    /// Aviso honesto quando o `SleepDisabled` caiu e a tampa fechada já não é
+    /// garantida (ver [[DisableSleepGuard]]). O Sleepy continua ligado: as
+    /// assertions seguram o Mac de tampa aberta.
+    private(set) var lidWarning: String?
 
     /// As três assertions IOKit que seguramos em conjunto (ecrã, bateria, corrente).
     static let assertionTypes = [
@@ -56,6 +66,21 @@ final class SleepController {
     /// O prompt de admin do auto-desligar foi recusado: as tentativas seguintes
     /// são só em silêncio, para não o repetir a cada 15s.
     private var autoOffPromptDeclined = false
+
+    // Verificação contínua do SleepDisabled (ver "Verificação contínua").
+    /// Fila serial para o `pmset -g` e o `sudo -n` do verificador: nunca no main.
+    private static let pmsetQueue = DispatchQueue(label: "sleepy.pmset", qos: .utility)
+    private var verifyInFlight = false
+    private var verifyKickoffTimer: Timer?
+    private var verifyTimer: Timer?
+    private var wakeObserver: NSObjectProtocol?
+    private var disableSleepGuard = DisableSleepGuard()
+    /// Única exceção ao "só no main": o verificador (fila `sleepy.pmset`) só pode
+    /// repor o disablesleep enquanto isto for true. Sem isto, um `disable()` a
+    /// meio de uma verificação podia ser desfeito logo a seguir, e o Mac ficava
+    /// acordado sem o Sleepy o saber.
+    private let restoreLock = NSLock()
+    private var restoreAllowed = false
 
     private let activeKey = "sleepActive"
     private let activeSinceKey = "activeSince"
@@ -107,22 +132,35 @@ final class SleepController {
 
     /// Lê o `SleepDisabled` do `pmset -g`. Não precisa de privilégios, e é a
     /// única fonte de verdade — o que julgamos ter feito pode não ter pegado.
-    static func systemSleepDisabled() -> Bool {
+    /// `nil` = leitura falhada: nunca conta como "desligado", nem desarma nada.
+    /// Bloqueia até o `pmset` acabar — fora do main, salvo no arranque.
+    static func systemSleepDisabled() -> Bool? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
         p.arguments = ["-g"]
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { return false }
+        do { try p.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        guard let out = String(data: data, encoding: .utf8) else { return false }
-        for line in out.split(separator: "\n") where line.contains("SleepDisabled") {
+        guard p.terminationStatus == 0, let out = String(data: data, encoding: .utf8) else { return nil }
+        return parseSleepDisabled(out)
+    }
+
+    /// A linha `SleepDisabled  <0|1>` do `pmset -g`. `nil` se não houver a linha
+    /// ou se o valor não for 0/1.
+    static func parseSleepDisabled(_ pmsetOutput: String) -> Bool? {
+        for line in pmsetOutput.split(whereSeparator: \.isNewline) {
             let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
-            return fields.last == "1"
+            guard fields.first == "SleepDisabled" else { continue }
+            switch fields.dropFirst().first {
+            case "1": return true
+            case "0": return false
+            default: return nil
+            }
         }
-        return false
+        return nil
     }
 
     // MARK: - IOKit power assertions (ecrã + idle + system sleep)
@@ -204,16 +242,26 @@ final class SleepController {
         isActive = true
         activeSince = Date()
         SleepyDefaults.store.set(true, forKey: activeKey)
+        setRestoreAllowed(true)
         startLidMonitor()
+        startVerification()
+        CrashWatchdog.start()
         scheduleAutoOff()
         onStateChange?()
     }
 
     func disable(allowPrompt: Bool = true) {
         guard isActive else { return }
-        guard setDisableSleep(false, allowPrompt: allowPrompt) else { return }
+        // Antes do pmset: uma verificação em curso não pode repor o 1 por cima.
+        setRestoreAllowed(false)
+        guard setDisableSleep(false, allowPrompt: allowPrompt) else {
+            setRestoreAllowed(true)
+            return
+        }
         stopLidMonitor()
         releaseAssertion()
+        stopVerification()
+        CrashWatchdog.stop()
         isActive = false
         clearPersisted()
         autoOffTimer?.invalidate()
@@ -224,38 +272,126 @@ final class SleepController {
     /// Lets go of what this process holds (power assertions, auto-off timer)
     /// but leaves `pmset disablesleep` and the persisted state untouched, so
     /// whoever runs Sleepy next — Hone after a relaunch, or the old app — re-arms
-    /// through `restoreOnLaunch`. Never prompts.
+    /// through `restoreOnLaunch`. Never prompts. O watchdog de crash também
+    /// fica vivo: se ninguém pegar nisto, é ele que larga o disablesleep.
     func suspend() {
+        setRestoreAllowed(false)
         stopLidMonitor()
+        stopVerification()
         releaseAssertion()
         autoOffTimer?.invalidate()
         autoOffTimer = nil
         isActive = false
     }
 
-    /// Confere o estado real antes de mostrar o painel. Se o `disablesleep` caiu
-    /// (alguém correu `pmset`, reset do sistema), tenta repô-lo em silêncio;
-    /// se não der, a proteção caiu mesmo e o estado passa a dizê-lo. Caso
-    /// contrário, recria as assertions que faltem. Nunca mostra prompt.
+    /// Confere o estado real quando o painel se abre, sem bloquear o main:
+    /// recria as assertions que faltem (sem privilégios) e deixa o verificador
+    /// ler o `SleepDisabled` em segundo plano. Nunca mostra prompt.
     func reassert() {
         guard isActive else { return }
-        if !Self.systemSleepDisabled() {
-            _ = PrivilegedAccess.setDisableSleep(true)
-            guard Self.systemSleepDisabled() else {
-                NSLog("Sleepy: disablesleep caiu por fora e não deu para repor — desligado")
-                stopLidMonitor()
-                releaseAssertion()
-                isActive = false
-                clearPersisted()
-                autoOffTimer?.invalidate()
-                autoOffTimer = nil
-                onStateChange?()
-                return
-            }
-        }
         if !ensureAssertions() {
             NSLog("Sleepy: falha a repor as power assertions — o ecrã ou o Mac podem adormecer")
         }
+        verifySleepDisabled(reason: "painel")
+    }
+
+    // MARK: - Verificação contínua do SleepDisabled
+
+    /// O macOS 26 pode repor `SleepDisabled` a 0 por fora, e aí o Mac adormece
+    /// ao fechar a tampa com o ícone a dizer "ligado". Por isso confirma-se: 5 s
+    /// depois de ligar, de 30 em 30 s, ao acordar, ao fechar a tampa e ao abrir o
+    /// painel. A 0, repõe-se em silêncio (só o caminho sem password); se não
+    /// der, o Sleepy fica ligado — as assertions seguram o Mac de tampa aberta —
+    /// e o aviso diz a verdade. Uma leitura falhada nunca desarma nada.
+    func verifySleepDisabled(reason: String) {
+        guard isActive, !verifyInFlight else { return }
+        verifyInFlight = true
+        Self.pmsetQueue.async { [self] in
+            let outcome = readAndRestore()
+            DispatchQueue.main.async { self.finishVerification(outcome, reason: reason) }
+        }
+    }
+
+    private enum VerifyOutcome { case unreadable, ok, skipped, restored, notRestored }
+
+    /// Corre na fila `sleepy.pmset`, nunca no main.
+    private func readAndRestore() -> VerifyOutcome {
+        switch Self.systemSleepDisabled() {
+        case nil: return .unreadable
+        case true?: return .ok
+        case false?:
+            restoreLock.lock()
+            defer { restoreLock.unlock() }
+            guard restoreAllowed else { return .skipped }
+            let set = PrivilegedAccess.setDisableSleep(true)
+            let after = Self.systemSleepDisabled() ?? set
+            return after ? .restored : .notRestored
+        }
+    }
+
+    private func setRestoreAllowed(_ allowed: Bool) {
+        restoreLock.lock()
+        restoreAllowed = allowed
+        restoreLock.unlock()
+    }
+
+    private func finishVerification(_ outcome: VerifyOutcome, reason: String) {
+        verifyInFlight = false
+        guard isActive else { return }
+        let now = Date()
+        switch outcome {
+        case .unreadable, .skipped:
+            break
+        case .ok:
+            disableSleepGuard.recordOK(at: now)
+        case .restored:
+            NSLog("Sleepy: SleepDisabled caiu (\(reason)) — reposto")
+            disableSleepGuard.recordRestored(at: now)
+        case .notRestored:
+            NSLog("Sleepy: SleepDisabled caiu (\(reason)) — não deu para repor")
+            disableSleepGuard.recordFailure(at: now)
+        }
+        publishWarning(disableSleepGuard.warning)
+    }
+
+    private func publishWarning(_ warning: String?) {
+        guard warning != lidWarning else { return }
+        lidWarning = warning
+        onStateChange?()
+    }
+
+    private func startVerification() {
+        stopVerification()
+        // Pouco depois de ligar: apanha um pmset que não pegou.
+        let kickoff = Timer(timeInterval: 5, repeats: false) { [weak self] _ in
+            self?.verifyKickoffTimer = nil
+            self?.verifySleepDisabled(reason: "após ligar")
+        }
+        let periodic = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            self?.verifySleepDisabled(reason: "periódica")
+        }
+        periodic.tolerance = 5
+        // .common para continuar a correr enquanto um menu/popover está aberto.
+        RunLoop.main.add(kickoff, forMode: .common)
+        RunLoop.main.add(periodic, forMode: .common)
+        verifyKickoffTimer = kickoff
+        verifyTimer = periodic
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.verifySleepDisabled(reason: "ao acordar")
+        }
+    }
+
+    private func stopVerification() {
+        verifyKickoffTimer?.invalidate()
+        verifyKickoffTimer = nil
+        verifyTimer?.invalidate()
+        verifyTimer = nil
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        wakeObserver = nil
+        disableSleepGuard = DisableSleepGuard()
+        lidWarning = nil
     }
 
     // MARK: - Hand-off from the standalone app
@@ -293,38 +429,87 @@ final class SleepController {
 
     // MARK: - Arranque
 
+    /// O que o arranque faz com o estado guardado e o que o sistema diz.
+    struct RestoreDecision: Equatable {
+        /// O Sleepy fica ligado (assertions, monitor da tampa, auto-off).
+        var active: Bool
+        /// Apaga `sleepActive` e `activeSince`.
+        var clearPersisted: Bool
+        /// Mantém o `activeSince` guardado em vez de começar um período novo.
+        var keepActiveSince: Bool
+    }
+
+    /// Decisão pura do `restoreOnLaunch`. `resetSucceeded` é o resultado do
+    /// reset defensivo (só corre quando não era para ficar ligado);
+    /// `systemValue` é o `SleepDisabled` lido depois, `nil` se a leitura falhou.
+    static func restoreDecision(persistedActive: Bool, expired: Bool,
+                                resetSucceeded: Bool, systemValue: Bool?) -> RestoreDecision {
+        if persistedActive && !expired {
+            // Era para estar ligado. Só uma leitura 0 confirmada diz que o rearme
+            // não pegou — aí não deixa `sleepActive` pendurado. Leitura falhada:
+            // confia-se na intenção e o verificador (5 s) confirma.
+            if systemValue == false { return .init(active: false, clearPersisted: true, keepActiveSince: false) }
+            return .init(active: true, clearPersisted: false, keepActiveSince: true)
+        }
+        // Não era para ficar ligado (nunca esteve, ou o prazo passou): reset defensivo.
+        if resetSucceeded || systemValue == false {
+            return .init(active: false, clearPersisted: true, keepActiveSince: false)
+        }
+        // O reset não pegou. Prazo passado e o sistema continua a 1: o período
+        // original fica, para o menu dizer "não desligou às HH:mm" e o auto-off
+        // voltar a tentar — apagá-lo dava um período novo inteiro.
+        if persistedActive { return .init(active: true, clearPersisted: false, keepActiveSince: true) }
+        // Nada guardado: o ícone segue o sistema, que é melhor do que mentir.
+        if systemValue == true { return .init(active: true, clearPersisted: false, keepActiveSince: false) }
+        return .init(active: false, clearPersisted: true, keepActiveSince: false)
+    }
+
     /// Re-arma se a app foi relançada (crash, rebuild, auto-update) enquanto
     /// estava ligada; caso contrário faz o reset defensivo. Nunca mostra prompt
     /// no arranque — só usa o caminho sem password.
     func restoreOnLaunch() {
         restoreHandoff()
-        let shouldBeActive = SleepyDefaults.store.bool(forKey: activeKey) && !autoOffExpired()
+        // O watchdog de uma sessão anterior já não faz falta: há Hone a correr.
+        CrashWatchdog.stop()
+        let persistedActive = SleepyDefaults.store.bool(forKey: activeKey)
+        let expired = autoOffExpired()
 
-        if shouldBeActive {
+        var resetSucceeded = false
+        if persistedActive && !expired {
             _ = PrivilegedAccess.setDisableSleep(true)
         } else {
-            _ = PrivilegedAccess.setDisableSleep(false)
-            clearPersisted()
+            resetSucceeded = PrivilegedAccess.setDisableSleep(false)
         }
 
         // O ícone segue o que o sistema diz, não o que julgamos ter feito. Sem
         // acesso sem password não conseguimos mexer no disablesleep em silêncio,
         // e mentir sobre o estado seria pior do que mostrá-lo.
-        isActive = Self.systemSleepDisabled()
+        let decision = Self.restoreDecision(
+            persistedActive: persistedActive, expired: expired,
+            resetSucceeded: resetSucceeded, systemValue: Self.systemSleepDisabled())
+        if decision.clearPersisted { clearPersisted() }
+        isActive = decision.active
         if isActive {
             if !ensureAssertions() {
                 NSLog("Sleepy: falha a criar as power assertions no arranque — o ecrã ou o Mac podem adormecer")
             }
             SleepyDefaults.store.set(true, forKey: activeKey)
-            if activeSince == nil { activeSince = Date() }
+            if !decision.keepActiveSince || activeSince == nil { activeSince = Date() }
             // Crash a meio de uma tampa fechada: o brilho ficou a 0. De tampa
             // fechada não se repõe aqui — o monitor volta a apagar ou repõe.
             if LidDisplay.dimmedByUs, !LidMonitor.current().lidClosed { LidDisplay.restore() }
+            setRestoreAllowed(true)
             startLidMonitor()
-            scheduleAutoOff()
+            startVerification()
+            CrashWatchdog.start()
+            // Por último: com o prazo passado o auto-off dispara já (em silêncio),
+            // e se der certo o `disable()` desfaz tudo o que ficou acima.
+            scheduleAutoOff(silent: true)
         } else {
             // Desligado não há ninguém para repor depois: repõe-se já.
+            setRestoreAllowed(false)
             stopLidMonitor()
+            stopVerification()
             releaseAssertion()
         }
         onStateChange?()
@@ -358,7 +543,9 @@ final class SleepController {
     func lidStateChanged(_ state: LidState) {
         guard isActive else { return }
         if LidMonitor.shouldDim(state) {
-            // Lote B: reler SleepDisabled aqui ao fechar a tampa
+            // O sleep da tampa chega uns 5–8 s depois de fechar: dá tempo de
+            // confirmar o SleepDisabled e, se caiu, repô-lo.
+            verifySleepDisabled(reason: "tampa fechada")
             guard !lidDimmed else { return }
             lidDimmed = true
             releaseAssertion(ofType: kIOPMAssertionTypePreventUserIdleDisplaySleep)
@@ -408,13 +595,16 @@ final class SleepController {
     /// Verificação periódica em vez de um único timer para o prazo todo: um
     /// timer longo escorrega se a máquina chegar a dormir ou a entrar em dark
     /// wake, e o prazo passaria despercebido. Comparar contra o relógio de
-    /// parede a cada 15s custa nada e não pode escorregar.
-    private func scheduleAutoOff() {
+    /// parede a cada 15s custa nada e não pode escorregar. Com o prazo já
+    /// passado dispara logo, mas o timer fica a tentar de novo se não der.
+    /// `silent`: o primeiro disparo nunca pede admin (arranque).
+    private func scheduleAutoOff(silent: Bool = false) {
         autoOffTimer?.invalidate()
         autoOffTimer = nil
-        autoOffPromptDeclined = false
+        autoOffPromptDeclined = silent
         guard isActive, autoOffDate != nil else { return }
-        if autoOffExpired() { autoOff(); return }
+        if autoOffExpired() { autoOff() }
+        guard isActive else { return }
         let timer = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
             guard let self, self.autoOffExpired() else { return }
             self.autoOff()

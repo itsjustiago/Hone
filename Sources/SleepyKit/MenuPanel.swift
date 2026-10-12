@@ -9,6 +9,8 @@ final class SleepMenuModel: ObservableObject {
     @Published var autoOffText: String?
     @Published var autoOffMinutes = SleepController.autoOffMinutes
     @Published var passwordlessInstalled = PrivilegedAccess.isInstalled
+    /// Honest warning when the lid-closed guarantee is gone (see `DisableSleepGuard`).
+    @Published var warning: String?
     /// Mirrors `SleepyTool.showsOwnMenuBarIcon` so the detach/attach button
     /// swaps its glyph live.
     @Published var showsOwnIcon = true
@@ -35,6 +37,7 @@ struct MenuPanel: View {
             autoOffMinutes: model.autoOffMinutes,
             passwordlessInstalled: model.passwordlessInstalled,
             showsOwnIcon: model.showsOwnIcon,
+            warning: model.warning,
             onBack: onBack,
             onToggleSleep: onToggleSleep,
             onEnablePasswordless: onEnablePasswordless,
@@ -51,6 +54,7 @@ struct MenuPanelContent: View {
     let autoOffMinutes: Int
     let passwordlessInstalled: Bool
     let showsOwnIcon: Bool
+    let warning: String?
     /// Offscreen renders can't draw AppKit views, which the auto-off menu is anchored to.
     var offscreen = false
     var onBack: (() -> Void)?
@@ -68,6 +72,8 @@ struct MenuPanelContent: View {
     var body: some View {
         VStack(spacing: VibeSpacing.cardGap) {
             heroCard
+
+            if let warning { WarningStrip(text: warning) }
 
             if !passwordlessInstalled {
                 VibeNoticeStrip("Ligar sem password", color: VibeColor.warning,
@@ -168,12 +174,38 @@ struct MenuPanelContent: View {
     }
 }
 
+/// A notice with no action, wrapping to as many lines as it needs. HoneDesign's
+/// `VibeNoticeStrip` always has a button and clips to one line, so this wears the
+/// same strip look from the same tokens.
+private struct WarningStrip: View {
+    let text: String
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: VibeRadius.strip, style: .continuous)
+        HStack(alignment: .top, spacing: 8) {
+            VibeDot(VibeColor.warning).padding(.top, 5)
+            Text(text)
+                .font(VibeFont.body)
+                .foregroundStyle(VibeColor.text2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(VibeColor.card, in: shape)
+        .overlay(shape.strokeBorder(VibeColor.cardBorder, lineWidth: 0.5))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 // MARK: - Preview fixtures
 
 /// Entry point for Hone's offscreen preview renders (fake values, no pmset).
 public enum SleepyPreview {
     @MainActor
     public static func panel(isActive: Bool, passwordlessInstalled: Bool = true,
+                             warning: String? = nil,
                              back: (() -> Void)? = nil) -> AnyView {
         AnyView(MenuPanelContent(
             isActive: isActive,
@@ -181,6 +213,7 @@ public enum SleepyPreview {
             autoOffMinutes: 60,
             passwordlessInstalled: passwordlessInstalled,
             showsOwnIcon: true,
+            warning: warning,
             offscreen: true,
             onBack: back))
     }
