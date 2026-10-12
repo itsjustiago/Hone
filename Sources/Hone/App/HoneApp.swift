@@ -1,47 +1,36 @@
 import AppKit
 import SwiftUI
+import os
 
 struct HoneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
         // The menu-bar dropdown is an NSPopover and the Settings window is
-        // AppKit's (`SettingsWindowController`), both owned by AppDelegate.
-        // SwiftUI still wants a scene, so this one only hands over: its own
-        // window came up as a second, smaller "Hone Settings" that clipped the
-        // fixed-size layout on both sides.
+        // AppKit's (`SettingsWindowController`), both owned by AppDelegate and
+        // opened only by a click (popover, gears, reopen with the icon hidden).
+        // SwiftUI still wants a scene; its own window must never show.
         Settings {
-            SettingsHandoff { appDelegate.showSettings() }
+            SettingsWindowSuppressor()
         }
         .commands {
-            // ⌘, works whenever Hone is frontmost (e.g. right after a Screenly
-            // capture), so route it straight to the real window.
-            CommandGroup(replacing: .appSettings) {
-                Button("Definições…") { appDelegate.showSettings() }
-                    .keyboardShortcut(",")
-            }
+            // No ⌘,: Hone stays frontmost after a Screenly capture, and with the
+            // capture on ⌘. a slip onto the comma popped Settings up mid-print.
+            CommandGroup(replacing: .appSettings) {}
         }
     }
 }
 
 /// Fills SwiftUI's own Settings window, should anything still show it (window
-/// restoration, a stray `showSettingsWindow:`): closes it and opens the real one.
-private struct SettingsHandoff: NSViewRepresentable {
-    let open: () -> Void
-
-    func makeNSView(context: Context) -> NSView { HandoffView(open: open) }
+/// restoration, a stray `showSettingsWindow:`): closes it straight away. It came
+/// up as a second, smaller "Hone Settings" that clipped the fixed-size layout.
+private struct SettingsWindowSuppressor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { SuppressorView() }
     func updateNSView(_ nsView: NSView, context: Context) {}
 
-    final class HandoffView: NSView {
-        private let open: () -> Void
+    final class SuppressorView: NSView {
+        private static let journal = Logger(subsystem: "com.tiagof.hone", category: "settings")
         private var observer: NSObjectProtocol?
-
-        init(open: @escaping () -> Void) {
-            self.open = open
-            super.init(frame: .zero)
-        }
-
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -53,15 +42,16 @@ private struct SettingsHandoff: NSViewRepresentable {
             observer = NotificationCenter.default.addObserver(
                 forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.handOver() }
+                MainActor.assumeIsolated { self?.closeIfShown() }
             }
-            DispatchQueue.main.async { [weak self] in self?.handOver() }
+            DispatchQueue.main.async { [weak self] in self?.closeIfShown() }
         }
 
-        private func handOver() {
+        private func closeIfShown() {
             guard let window, window.isVisible else { return }
+            let event = NSApp.currentEvent.map { String(describing: $0) } ?? "none"
+            Self.journal.notice("SwiftUI Settings window shown and closed; event: \(event, privacy: .public)")
             window.close()
-            open()
         }
     }
 }

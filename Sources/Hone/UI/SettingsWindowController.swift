@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import HoneDesign
+import os
 
 /// Which page the Settings sidebar shows. Lives outside `SettingsView` so the
 /// popover can pick a tool's page even though the window is built once and
@@ -19,6 +20,7 @@ final class SettingsNavigation {
 /// `activate` + `makeKeyAndOrderFront` brings it up reliably every time.
 @MainActor
 final class SettingsWindowController {
+    private static let journal = Logger(subsystem: "com.tiagof.hone", category: "settings")
     private var window: NSWindow?
     private let navigation = SettingsNavigation()
     private let manager: ModuleManager
@@ -32,6 +34,9 @@ final class SettingsWindowController {
     /// Shows the window; `moduleID` jumps to that tool's page, `nil` keeps the
     /// page the user was on.
     func show(selecting moduleID: String? = nil) {
+        // What opened it, in case it ever pops up uninvited again.
+        let event = NSApp.currentEvent.map { String(describing: $0) } ?? "none"
+        Self.journal.notice("Settings opened (\(moduleID ?? "-", privacy: .public)); event: \(event, privacy: .public)")
         if let moduleID { navigation.selection = moduleID }
         if window == nil { build() }
         // Defer to the next run-loop tick: this is called as the popover is
