@@ -22,6 +22,8 @@ final class SleepMenuModel: ObservableObject {
     /// Watts and battery under the status text ("Bateria 64 % · a gastar 7,2 W").
     /// nil on a Mac without a battery: the line isn't drawn.
     @Published var powerText: String?
+    /// "sessão SSH ativa" while a remote session keeps Sleepy on (nil = it's on by hand, or off).
+    @Published var remoteSessionText: String?
 }
 
 /// The Sleepy panel, shown either from its own menu-bar icon or inside Hone's
@@ -64,7 +66,8 @@ struct MenuPanel: View {
             sleepMode: model.sleepMode,
             onChangeSleepMode: onChangeSleepMode,
             onExtend: onExtend,
-            powerText: model.powerText)
+            powerText: model.powerText,
+            remoteSessionText: model.remoteSessionText)
             .onAppear(perform: onAppear)
             .onDisappear(perform: onDisappear)
     }
@@ -93,6 +96,8 @@ struct MenuPanelContent: View {
     var onChangeSleepMode: (SleepMode) -> Void = { _ in }
     var onExtend: () -> Void = {}
     var powerText: String?
+    /// Sleepy was turned on by a remote session: no deadline, the status line says which one.
+    var remoteSessionText: String?
 
     private var tint: Color { VibeToolColor.sleepy }
     private let blobHeight: CGFloat = 50
@@ -186,6 +191,7 @@ struct MenuPanelContent: View {
 
     private var statusLine: String {
         if !isActive { return stopReasonText ?? "O Mac dorme normalmente." }
+        if let remoteSessionText { return "Acordado — \(remoteSessionText)" }
         if let autoOffText { return autoOffText }
         return sleepMode.usesDisableSleep
             ? "O ecrã não se apaga. De tampa fechada, o Mac continua acordado."
@@ -206,7 +212,7 @@ struct MenuPanelContent: View {
     private var autoOffRow: some View {
         pickerRow(symbol: "timer", title: "Desligar sozinho",
                   selection: autoOffMinutes, onChange: onChangeAutoOff, options: Self.autoOffChoices) {
-            if isActive, autoOffMinutes > 0 {
+            if isActive, autoOffMinutes > 0, remoteSessionText == nil {
                 Button("+1 h", action: onExtend)
                     .buttonStyle(VibeButtonStyle())
                     .controlSize(.small)
@@ -296,10 +302,11 @@ public enum SleepyPreview {
                              stopReasonText: String? = nil,
                              displayOnly: Bool = false,
                              powerText: String? = nil,
+                             remoteSessionText: String? = nil,
                              back: (() -> Void)? = nil) -> AnyView {
         AnyView(MenuPanelContent(
             isActive: isActive,
-            autoOffText: isActive ? "Desliga sozinho às 23:40" : nil,
+            autoOffText: isActive && remoteSessionText == nil ? "Desliga sozinho às 23:40" : nil,
             autoOffMinutes: 60,
             batteryThreshold: batteryThreshold,
             stopReasonText: stopReasonText,
@@ -309,7 +316,8 @@ public enum SleepyPreview {
             offscreen: true,
             onBack: back,
             sleepMode: displayOnly ? .displayOnly : .lidClosedAwake,
-            powerText: powerText))
+            powerText: powerText,
+            remoteSessionText: remoteSessionText))
     }
 
     /// The tool's page in Settings, with the stored values.

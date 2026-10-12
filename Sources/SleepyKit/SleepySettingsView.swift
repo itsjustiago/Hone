@@ -11,6 +11,7 @@ final class SettingsModel: ObservableObject {
     @Published var endAction = SleepController.endAction
     @Published var lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
     @Published var muteWhenLidClosed = LidExtras.muteWhenLidClosed
+    @Published var stayAwakeForRemoteSessions = SleepController.stayAwakeForRemoteSessions
     /// A regra sudoers instalada deixa ligar o Low Power Mode? `nil` = ainda não
     /// se sabe (ou o toggle está desligado e não interessa).
     @Published var lowPowerRuleAllowed: Bool?
@@ -23,6 +24,7 @@ final class SettingsModel: ObservableObject {
         endAction = SleepController.endAction
         lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
         muteWhenLidClosed = LidExtras.muteWhenLidClosed
+        stayAwakeForRemoteSessions = SleepController.stayAwakeForRemoteSessions
     }
 
     /// Volta a ler a regra sudoers (`sudo -n -l`, fora do main). Só com o toggle
@@ -86,6 +88,16 @@ struct SleepySettingsView: View {
                 RowDivider()
                 lidExtrasRows
                 RowDivider()
+                ToggleRow(
+                    title: "Ficar acordado durante sessões remotas",
+                    subtitle: remoteSubtitle,
+                    isOn: Binding(
+                        get: { model.stayAwakeForRemoteSessions },
+                        set: { on in
+                            model.stayAwakeForRemoteSessions = on
+                            SleepController.stayAwakeForRemoteSessions = on
+                        }))
+                RowDivider()
                 SettingsRow(
                     title: "Desligar sozinho",
                     subtitle: "O ecrã e o Mac voltam ao normal ao fim deste tempo. De tampa fechada, adormece logo."
@@ -130,6 +142,18 @@ struct SleepySettingsView: View {
             model.refresh()
             model.refreshLowPowerRule()
         }
+    }
+
+    // MARK: - Sessões remotas
+
+    private static let remoteNote = "Liga sozinho com SSH ou Partilha de Ecrã e desliga quando a sessão acaba."
+
+    /// Sem a regra sem password não há «Fica acordado» sem ninguém ao ecrã: a sessão
+    /// só segura o ecrã (e a tampa fechada adormece o Mac). Diz-se, para não surpreender.
+    private var remoteSubtitle: String {
+        guard model.stayAwakeForRemoteSessions, model.sleepMode.usesDisableSleep, !model.passwordless
+        else { return Self.remoteNote }
+        return Self.remoteNote + " Sem «Não pedir password», só o ecrã fica acordado."
     }
 
     // MARK: - Tampa fechada: extras

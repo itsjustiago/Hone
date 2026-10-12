@@ -70,6 +70,7 @@ public final class SleepyTool {
         Notifier.shared.onAction = nil
         isRunning = false
         stopPowerReadout()
+        SleepController.shared.stopRemoteMonitor()
         // O LPM e o som repostos pelo `disable()` ainda podem estar na fila.
         LidExtras.flush()
         refreshMenuModel()
@@ -105,7 +106,7 @@ public final class SleepyTool {
     public var menuBarImage: NSImage {
         let active = SleepController.shared.isActive
         let symbol = active ? "sun.max.fill" : "moon.zzz"
-        let awake = SleepController.sleepMode == .lidClosedAwake ? "Mac e ecrã acordados" : "ecrã acordado"
+        let awake = SleepController.shared.activeMode == .lidClosedAwake ? "Mac e ecrã acordados" : "ecrã acordado"
         let description = active ? "Sleepy — \(awake)" : "Sleepy — sleep normal"
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description) ?? NSImage()
         image.isTemplate = true
@@ -219,7 +220,9 @@ public final class SleepyTool {
         menuModel.autoOffText = autoOffText()
         menuModel.autoOffMinutes = SleepController.autoOffMinutes
         menuModel.batteryThreshold = SleepController.batteryThreshold
-        menuModel.sleepMode = SleepController.sleepMode
+        // O modo em uso: numa sessão do gatilho remoto pode não ser o guardado.
+        menuModel.sleepMode = SleepController.shared.activeMode
+        menuModel.remoteSessionText = SleepController.shared.remoteSessionLabel
         menuModel.stopReasonText = stopReasonText()
         menuModel.passwordlessInstalled = PrivilegedAccess.isInstalled
         menuModel.warning = SleepController.shared.lidWarning
