@@ -26,13 +26,12 @@ import Testing
     #expect(Set(FoldEffect.allCases.map(\.title)).count == FoldEffect.allCases.count)
 }
 
-@Test func everyEffectIsPresentableAndFlatEffectsKeepTheSharpPath() {
+@Test func everyEffectIsPresentable() {
     #expect(FoldEffect.allCases.count == 6)
     for effect in FoldEffect.allCases {
         #expect(!effect.title.isEmpty)
         #expect(!effect.symbol.isEmpty)
         #expect(effect.summary.hasSuffix("."))
-        #expect(effect.needsPrefilteredSource == (effect != .duo))
     }
 }
 

@@ -404,9 +404,9 @@ public final class FoldRenderer: NSObject, MTKViewDelegate {
         var uniforms = uniforms
         if texture == nil { uniforms.fadeOnly = FoldUniforms.fadeSourceless }
         let moving = uniforms.progress > 0.00001 && uniforms.progress < 1 && uniforms.fadeOnly < 0.5
-        // Duo skips the pyramid at zero Softness. Geometrically minified effects,
-        // including Ghost, still need it to keep fine source pixels stable.
-        let needsBlur = moving && (uniforms.blur > 0 || uniforms.selectedEffect.needsPrefilteredSource)
+        // Every effect minifies or defocuses the source, so each needs the pyramid
+        // to keep fine pixels stable, even at zero Softness.
+        let needsBlur = moving
         let source = try texture ?? placeholderTexture()
         let blurred = needsBlur ? try prepareBlur(command: command, input: source, revision:sourceRevision) : source
         let pipeline = try pipelines.render(for: pass.colorAttachments[0].texture?.pixelFormat ?? .bgra8Unorm)
