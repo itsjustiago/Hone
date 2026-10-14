@@ -60,7 +60,7 @@ public enum FoldEffect: String, CaseIterable, Sendable, Identifiable {
 
     public var summary: String {
         switch self {
-        case .duo: return "Como no iPhone Duo: a imagem fica parada atrás do ecrã, como vidro fosco — nítida junto à dobradiça, desfocada e mais escura na ponta."
+        case .duo: return "Como no iPhone Duo: a imagem fica parada e a ponta da tampa vai-a cortando, como vidro fosco — nítida junto à dobradiça, desfocada e mais escura na ponta."
         case .ghost: return "O ecrã mantém o plano de repouso enquanto a tampa inclina e desfoca-se suavemente."
         case .roll: return "O ecrã enrola-se num rolo que desce até à dobradiça."
         case .shutter: return "Quatro painéis rígidos encaixam-se uns atrás dos outros até à dobradiça."
