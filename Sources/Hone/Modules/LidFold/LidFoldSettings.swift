@@ -23,10 +23,9 @@ final class LidFoldSettings {
     static let effectKey = "lidFold.effect"
     static let captureKey = "lidFold.captureEnabled"
 
-    /// Fantasma: the screen tilts in perspective and stays sharp. Duo stretches
-    /// the picture upward, which did not read as a fold. Unknown or missing saved
-    /// values come back to this, not to the Kit's shader fallback.
-    static let defaultEffect = FoldEffect.ghost
+    /// Duo: the iPhone Duo's frosted-glass fold (Fantasma is the sharp variant).
+    /// Unknown or missing saved values come back to this.
+    static let defaultEffect = FoldEffect.duo
 
     /// Same default as the Kit's controller. Capture still needs Screen Recording
     /// to be allowed: without it the controller falls back to the black fade.

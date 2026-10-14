@@ -23,10 +23,10 @@ final class LidFoldSettingsTests: XCTestCase {
 
     // MARK: Defaults and persistence
 
-    func testDefaultsAreGhostAndCaptureOn() {
+    func testDefaultsAreDuoAndCaptureOn() {
         let settings = LidFoldSettings(defaults: defaults)
         XCTAssertEqual(settings.effect, LidFoldSettings.defaultEffect)
-        XCTAssertEqual(settings.effect, .ghost)
+        XCTAssertEqual(settings.effect, .duo)
         XCTAssertTrue(settings.captureEnabled)
         XCTAssertTrue(LidFoldSettings.defaultCaptureEnabled)
     }
@@ -61,10 +61,10 @@ final class LidFoldSettingsTests: XCTestCase {
     func testAnUnknownSavedEffectFallsBackToTheDefault() {
         for junk in ["", "Duo", "wobble", " duo", "3"] {
             defaults.set(junk, forKey: "lidFold.effect")
-            XCTAssertEqual(LidFoldSettings(defaults: defaults).effect, .ghost, "saved \"\(junk)\"")
+            XCTAssertEqual(LidFoldSettings(defaults: defaults).effect, .duo, "saved \"\(junk)\"")
         }
         defaults.set(42, forKey: "lidFold.effect")
-        XCTAssertEqual(LidFoldSettings(defaults: defaults).effect, .ghost)
+        XCTAssertEqual(LidFoldSettings(defaults: defaults).effect, .duo)
     }
 
     func testAnUnreadableCaptureFlagFallsBackToTheDefault() {
@@ -81,7 +81,7 @@ final class LidFoldSettingsTests: XCTestCase {
         var calls = 0
         settings.onChange = { calls += 1 }
 
-        settings.effect = .ghost // already the default
+        settings.effect = .duo // already the default
         settings.captureEnabled = true // already on
         XCTAssertEqual(calls, 0)
 

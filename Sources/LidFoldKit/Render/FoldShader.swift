@@ -52,13 +52,14 @@ enum FoldShader {
         return pyramid.sample(s,uv,level(lod)).rgb;
     }
 
-    // ---------------------------------------------------------------- Ghost
+    // ------------------------------------------------------- Anchored plane
     // Intersect a stationary viewer's ray through the moving panel with the
     // original desktop plane. The hinge stays fixed; panel pixels compensate
     // for tilt so the desktop appears anchored behind the physical display.
     // Fix the viewer relative to the keyboard, not to each new resting screen.
-    static float4 foldGhost(float2 uv, texture2d<float> desktop, texture2d<float> pyramid,
-                            sampler s, constant Uniforms& u, float p) {
+    // Shared by Ghost and Duo; `angle` and `rayScale` come back for their depth cues.
+    static float2 foldAnchoredUV(float2 uv, constant Uniforms& u, float p,
+                                 thread float& angle, thread float& rayScale) {
         float height = 1.0f-uv.y;
         float perspective = clamp(u.perspective,0.0f,1.0f);
         float viewerDistance = mix(2.6f,1.6f,perspective);
@@ -67,15 +68,35 @@ enum FoldShader {
         float reference = clamp(u.referenceAngle,90.0f,140.0f)*M_PI_F/180.0f;
         float eyeY = 1.6f*sin(reference)+viewerDistance*cos(reference);
         float eyeZ = viewerDistance*sin(reference)-1.6f*cos(reference);
-        float angle = clamp(u.tilt >= 0 ? u.tilt : p*M_PI_F*0.5f,0.0f,85.0f*M_PI_F/180.0f);
+        angle = clamp(u.tilt >= 0 ? u.tilt : p*M_PI_F*0.5f,0.0f,85.0f*M_PI_F/180.0f);
         float depth = height*sin(angle);
-        float rayScale = eyeZ/(eyeZ-depth);
+        rayScale = eyeZ/(eyeZ-depth);
         float2 sourceUV = float2(0.5f+(uv.x-0.5f)*rayScale,
                                 1.0f-(eyeY+(height*cos(angle)-eyeY)*rayScale));
         // Ease the first 1.7 degrees without a pixel jump from exact passthrough.
         float onset = clamp(angle/0.03f,0.0f,1.0f);
         onset = onset*onset*onset*(onset*(onset*6.0f-15.0f)+10.0f);
-        sourceUV = mix(uv,sourceUV,onset);
+        return mix(uv,sourceUV,onset);
+    }
+
+    // Soften the exposed sides along with the content, instead of cutting
+    // a sharp trapezoid out of an already blurred image. At zero tilt the
+    // exact-passthrough branch retains every original edge pixel.
+    static float foldAnchoredEdge(float2 sourceUV, constant Uniforms& u, float sigmaUV, float angle) {
+        float aspect = max(u.size.x,1.0f)/max(u.size.y,1.0f);
+        float2 feather = max(float2(3.0f*sigmaUV/aspect,3.0f*sigmaUV),fwidth(sourceUV));
+        float2 border = smoothstep(-feather,feather,sourceUV)
+                       *(1.0f-smoothstep(1.0f-feather,1.0f+feather,sourceUV));
+        return mix(1.0f,border.x*border.y,smoothstep(0.0f,0.025f,angle));
+    }
+
+    // ---------------------------------------------------------------- Ghost
+    // The anchored plane, kept sharp: only a gentle defocus away from the hinge.
+    static float4 foldGhost(float2 uv, texture2d<float> desktop, texture2d<float> pyramid,
+                            sampler s, constant Uniforms& u, float p) {
+        float height = 1.0f-uv.y;
+        float angle, rayScale;
+        float2 sourceUV = foldAnchoredUV(uv,u,p,angle,rayScale);
         float focus = u.defocus >= 0 ? pow(clamp(u.defocus,0.0f,1.0f),1.25f) : p*p;
         // Defocus measures distance from the hinge, while the onset remains
         // gentle for the first few degrees, independent of the resting angle.
@@ -84,14 +105,7 @@ enum FoldShader {
         // Tilt slightly minifies fine content even with user defocus off.
         sigmaUV = max(sigmaUV,0.5f*max(0.0f,rayScale-1.0f)/float(desktop.get_height()));
         float3 color = foldSample(desktop,pyramid,s,sourceUV,sigmaUV);
-        // Soften the exposed sides along with the content, instead of cutting
-        // a sharp trapezoid out of an already blurred image. At zero tilt the
-        // exact-passthrough branch retains every original edge pixel.
-        float aspect = max(u.size.x,1.0f)/max(u.size.y,1.0f);
-        float2 feather = max(float2(3.0f*sigmaUV/aspect,3.0f*sigmaUV),fwidth(sourceUV));
-        float2 border = smoothstep(-feather,feather,sourceUV)
-                       *(1.0f-smoothstep(1.0f-feather,1.0f+feather,sourceUV));
-        float edgeCoverage = mix(1.0f,border.x*border.y,smoothstep(0.0f,0.025f,angle));
+        float edgeCoverage = foldAnchoredEdge(sourceUV,u,sigmaUV,angle);
         float shade = 1.0f-clamp(u.shadow,0.0f,1.0f)*0.10f*focus*height;
         float disappear = 1.0f-smoothstep(0.86f,1.0f,p);
         return float4(color*shade*edgeCoverage*disappear,1);
@@ -281,6 +295,36 @@ enum FoldShader {
         return float4(min(mix(color,blade,smoothstep(0.0f,aa,outside)),float3(1.0f)),1);
     }
 
+    // ----------------------------------------------------------------- Duo
+    // The iPhone Duo's own model, after the calibrated reconstruction in
+    // empirical.health's "iPhone Duo comparison" notes: the picture stays on a
+    // fixed plane behind the screen (the anchored map above) and the moving
+    // panel is frosted glass over it. Blur grows with the gap between glass and
+    // picture: sin(fold) times the cube of the distance from the hinge, so the
+    // hinge and the lower half stay readable while the free edge softens. The
+    // panel then darkens with the fold, more towards its free edge. Blur and
+    // tone depend on the angle only, never on the direction of travel.
+    static float4 foldDuo(float2 uv, texture2d<float> desktop, texture2d<float> pyramid,
+                          sampler s, constant Uniforms& u, float p) {
+        float d = 1.0f-uv.y;
+        float angle, rayScale;
+        float2 sourceUV = foldAnchoredUV(uv,u,p,angle,rayScale);
+        // The reference peaks at 96 source pixels at 90 degrees on a panel about
+        // 1350 pixels wide: 0.07 of the hinge-to-edge span, here the screen height.
+        float bend = sin(angle);
+        float sigmaUV = 0.07f*bend*d*d*d;
+        // Tilt slightly minifies fine content even where the glass is clear.
+        sigmaUV = max(sigmaUV,0.5f*max(0.0f,rayScale-1.0f)/float(desktop.get_height()));
+        float3 color = foldSample(desktop,pyramid,s,sourceUV,sigmaUV);
+        // Tone after blur, as in the reference: the rotating panel's gain is
+        // 0.5+0.5cos of the fold (tilt stops at 85 degrees, short of the
+        // reference's flatter curve past 90), times the free-edge falloff.
+        float gain = (0.5f+0.5f*cos(angle))*(1.0f-0.5f*bend*d);
+        float edgeCoverage = foldAnchoredEdge(sourceUV,u,sigmaUV,angle);
+        float disappear = 1.0f-smoothstep(0.86f,1.0f,p);
+        return float4(color*gain*edgeCoverage*disappear,1);
+    }
+
     static float4 foldEffectPixel(float2 screenUV, texture2d<float> desktop,
         texture2d<float> pyramid, constant Uniforms& u) {
         constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear, mip_filter::linear);
@@ -303,36 +347,7 @@ enum FoldShader {
             }
             return result;
         }
-
-        // The physical lid already supplies the camera's trapezoid. Expand the
-        // image around its bottom-centre hinge so icons swell and upper content
-        // leaves through the top. A bounded map avoids singularities at closure.
-        float height = 1.0f-screenUV.y;
-        float expansion = 1.0f+p*(0.12f+mix(0.30f,0.66f,clamp(u.perspective,0.0f,1.0f))*height);
-        float2 uv = float2(0.5f+(screenUV.x-0.5f)/expansion,1.0f-height/expansion);
-
-        // Sigma is measured as a fraction of image height, matching the preview
-        // and Retina desktop. The hinge stays more focused, but not pin-sharp.
-        float focus = u.defocus >= 0 ? u.defocus : pow(p,0.7f);
-        float spread = 0.12f+0.88f*pow(height,1.15f);
-        float sigmaUV = clamp(u.blur,0.0f,1.0f)*0.052f*focus*spread;
-        float sigma = sigmaUV*float(desktop.get_height());
-        // Each 2x level contributes 1.25 source-pixel variance per axis.
-        float lod = 0.5f*log2(1.0f+sigma*sigma*2.4f);
-        lod = min(lod,float(pyramid.get_num_mip_levels()-1));
-        float3 color = pyramid.sample(s,uv,level(lod)).rgb;
-        // Feather in display coordinates: zooming the source beyond its borders
-        // must not remove the dark surround. Side widths use height units to keep
-        // the same optical width on different display aspect ratios.
-        float softness = clamp(u.blur,0.0f,1.0f);
-        float topWidth = p*(0.075f+0.15f*softness)+1.5f*sigmaUV;
-        float sideWidth = (p*(0.055f+0.12f*softness)+1.5f*sigmaUV)*u.size.y/u.size.x;
-        float bottomWidth = p*(0.012f+0.025f*softness)+0.5f*sigmaUV;
-        float mask = smoothstep(0.0f,topWidth,screenUV.y)*smoothstep(0.0f,bottomWidth,height)
-                   * smoothstep(0.0f,sideWidth,screenUV.x)*smoothstep(0.0f,sideWidth,1.0f-screenUV.x);
-        float shade = 1.0f-clamp(u.shadow,0.0f,1.0f)*0.12f*p*p*height;
-        float disappear = 1.0f-smoothstep(0.86f,1.0f,p);
-        return float4(color*mask*shade*disappear,1);
+        return foldDuo(screenUV,desktop,pyramid,s,u,p);
     }
     fragment float4 foldFragment(Varying v [[stage_in]],
         texture2d<float> desktop [[texture(0)]], texture2d<float> pyramid [[texture(1)]],
