@@ -10,12 +10,39 @@ final class UpdateChecker {
     var status: String = ""
 
     @ObservationIgnored private let controller = UpdateController()
+    @ObservationIgnored private var lastBackgroundCheck: Date?
+    @ObservationIgnored private var periodicTimer: Timer?
 
-    /// Silent check on launch; only surfaces a banner when something newer exists.
+    /// Silent check; only surfaces a banner when something newer exists.
     func checkInBackground() {
-        guard Updater.autoCheckEnabled else { return }
+        guard Updater.autoCheckEnabled,
+              UpdateSchedule.isDue(lastCheck: lastBackgroundCheck, now: Date()) else { return }
+        lastBackgroundCheck = Date()
         Updater.check { [weak self] info in
+            // A failed request (offline, rate limit) returns nil: keep any banner
+            // already showing instead of hiding it until the next check.
+            guard let info else { return }
             Task { @MainActor in self?.availableUpdate = info }
+        }
+    }
+
+    /// Checks on launch, then every few hours and after the Mac wakes, so a
+    /// release published while Hone is running shows up without a relaunch.
+    func startPeriodicChecks() {
+        checkInBackground()
+        let timer = Timer(timeInterval: UpdateSchedule.period, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkInBackground() }
+        }
+        timer.tolerance = UpdateSchedule.period / 10
+        RunLoop.main.add(timer, forMode: .common)
+        periodicTimer = timer
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // The network is rarely back the instant the lid opens.
+            DispatchQueue.main.asyncAfter(deadline: .now() + UpdateSchedule.wakeDelay) {
+                MainActor.assumeIsolated { self?.checkInBackground() }
+            }
         }
     }
 
@@ -36,6 +63,19 @@ final class UpdateChecker {
     func install() {
         guard let availableUpdate else { return }
         controller.start(availableUpdate)
+    }
+}
+
+/// When the silent background checks run. Every wake from sleep asks too, so
+/// the gap keeps a Mac that naps often from hitting the GitHub API each time.
+enum UpdateSchedule {
+    static let period: TimeInterval = 6 * 60 * 60
+    static let minimumGap: TimeInterval = 60 * 60
+    static let wakeDelay: TimeInterval = 30
+
+    static func isDue(lastCheck: Date?, now: Date) -> Bool {
+        guard let lastCheck else { return true }
+        return now.timeIntervalSince(lastCheck) >= minimumGap
     }
 }
 
