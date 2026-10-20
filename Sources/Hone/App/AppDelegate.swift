@@ -42,8 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             MainActor.assumeIsolated { self?.menuBarIconChanged() }
         }
 
-        // Check GitHub for a newer release in the background.
-        updateChecker.checkInBackground()
+        // Check GitHub for a newer release in the background, now and periodically.
+        updateChecker.startPeriodicChecks()
 
         // Welcome window on first launch.
         if !UserDefaults.standard.bool(forKey: "didOnboard") {
