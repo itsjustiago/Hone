@@ -30,6 +30,12 @@ public final class SleepyTool {
     private static let powerQueue = DispatchQueue(label: "sleepy.power", qos: .utility)
     private static let powerInterval: TimeInterval = 2
 
+    /// Refreshes the countdown next to the icon while there is one to show.
+    private var countdownTimer: Timer?
+    /// The countdown the host was last told about, so a tick only notifies on a change.
+    private var lastCountdownText: String?
+    private static let countdownInterval: TimeInterval = 15
+
     /// Called whenever `menuBarImage` changes (sleep block on/off).
     public var onMenuBarImageChange: (() -> Void)?
 
@@ -44,6 +50,13 @@ public final class SleepyTool {
         settingsModel.$lowPowerRuleAllowed
             .sink { [menuModel] in menuModel.lowPowerRuleAllowed = $0 }
             .store(in: &cancellables)
+        // A cor e a contagem mudam o desenho do ícone, e a contagem também o timer.
+        settingsModel.onIconChange = { [weak self] in
+            MainActor.assumeIsolated {
+                self?.refreshMenuModel()
+                self?.onMenuBarImageChange?()
+            }
+        }
     }
 
     // MARK: - Lifecycle
@@ -87,6 +100,7 @@ public final class SleepyTool {
         isRunning = false
         SleepController.shared.toolRunning = false
         stopPowerReadout()
+        stopCountdownTimer()
         SleepController.shared.stopRemoteMonitor()
         // O LPM e o som repostos pelo `disable()` ainda podem estar na fila.
         LidExtras.flush()
@@ -105,6 +119,7 @@ public final class SleepyTool {
         isRunning = false
         SleepController.shared.toolRunning = false
         stopPowerReadout()
+        stopCountdownTimer()
         LidExtras.flush()
         refreshMenuModel()
         onMenuBarImageChange?()
@@ -119,22 +134,21 @@ public final class SleepyTool {
 
     // MARK: - Menu bar
 
-    /// Sun while sleep is blocked, moon otherwise. Template, so it adapts to the
-    /// menu bar's appearance. Both symbols sit centred in the same box, so the
-    /// status item (and the popover pointing at it) doesn't move on a toggle.
+    /// Sun while sleep is blocked, moon otherwise. Template (adapts to the menu bar's
+    /// appearance) unless an accent colour is on and Sleepy is running; then the
+    /// sun is painted in it. Both symbols sit centred in the same box, so the
+    /// status item (and the popover pointing at it) doesn't move on a toggle. The
+    /// optional countdown goes to the right of that box.
     public var menuBarImage: NSImage {
-        let symbol = Self.symbolImage(SleepController.shared.isActive ? Self.awakeSymbol : Self.asleepSymbol)
-        let box = Self.menuBarImageSize
-        let image = NSImage(size: box, flipped: false) { rect in
-            let size = symbol.size
-            // Half points: pixel-aligned on Retina.
-            let x = ((rect.width - size.width) / 2 * 2).rounded() / 2
-            let y = ((rect.height - size.height) / 2 * 2).rounded() / 2
-            symbol.draw(in: NSRect(x: x, y: y, width: size.width, height: size.height))
-            return true
-        }
-        image.isTemplate = true
-        image.accessibilityDescription = "Sleepy — \(liveStatus)"
+        let active = SleepController.shared.isActive
+        let countdown = countdownText()
+        let image = MenuBarIcon.image(
+            symbol: Self.symbolImage(active ? Self.awakeSymbol : Self.asleepSymbol),
+            box: Self.menuBarImageSize,
+            accent: MenuBarIcon.accentColor(MenuBarIconSettings.accent, isActive: active),
+            countdown: countdown)
+        let remaining = countdown.map { ", desliga dentro de \($0)" } ?? ""
+        image.accessibilityDescription = "Sleepy — \(liveStatus)\(remaining)"
         return image
     }
 
@@ -171,6 +185,7 @@ public final class SleepyTool {
         set {
             SleepyDefaults.store.set(newValue, forKey: Self.showIconKey)
             menuModel.showsOwnIcon = newValue
+            syncCountdownTimer()
         }
     }
 
@@ -296,6 +311,50 @@ public final class SleepyTool {
         }
     }
 
+    // MARK: - Countdown
+
+    /// O que o ícone mostra ao lado do símbolo: só com a opção ligada e um prazo
+    /// (`autoOffDate` é nil com o Sleepy desligado e sem prazo).
+    private func countdownText() -> String? {
+        guard MenuBarIconSettings.showsCountdown else { return nil }
+        return MenuBarIcon.countdownText(until: SleepController.shared.autoOffDate, now: Date())
+    }
+
+    /// Liga ou desliga o timer da contagem conforme haja algo para contar e alguém
+    /// a ver o ícone, e acerta já o texto (um prazo novo ou a opção desligada não
+    /// esperam pelo próximo tick). Idempotente, para chamar em qualquer mudança.
+    private func syncCountdownTimer() {
+        let wanted = isRunning && SleepController.shared.isActive && MenuBarIconSettings.showsCountdown
+            && showsOwnMenuBarIcon && SleepController.shared.autoOffDate != nil
+        if wanted {
+            if countdownTimer == nil {
+                let timer = Timer(timeInterval: Self.countdownInterval, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.refreshCountdownImage() }
+                }
+                timer.tolerance = 5
+                // .common to keep ticking while a menu/popover is tracking.
+                RunLoop.main.add(timer, forMode: .common)
+                countdownTimer = timer
+            }
+        } else {
+            stopCountdownTimer()
+        }
+        refreshCountdownImage()
+    }
+
+    private func stopCountdownTimer() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+    }
+
+    /// Quase todos os ticks (15 s) caem no mesmo minuto: só avisa o host se o texto mudou.
+    private func refreshCountdownImage() {
+        let text = countdownText()
+        guard text != lastCountdownText else { return }
+        lastCountdownText = text
+        onMenuBarImageChange?()
+    }
+
     // MARK: - Private
 
     private func refreshMenuModel() {
@@ -313,6 +372,7 @@ public final class SleepyTool {
         menuModel.warning = SleepController.shared.lidWarning
         menuModel.showsOwnIcon = showsOwnMenuBarIcon
         settingsModel.refresh()
+        syncCountdownTimer()
     }
 
     private func autoOffText() -> String? {

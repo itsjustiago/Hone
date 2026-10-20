@@ -12,6 +12,10 @@ final class SettingsModel: ObservableObject {
     @Published var lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
     @Published var muteWhenLidClosed = LidExtras.muteWhenLidClosed
     @Published var stayAwakeForRemoteSessions = SleepController.stayAwakeForRemoteSessions
+    @Published var accent = MenuBarIconSettings.accent
+    @Published var showsCountdown = MenuBarIconSettings.showsCountdown
+    /// O ícone da barra tem de se redesenhar (cor ou contagem mudaram). Ligado pelo `SleepyTool`.
+    var onIconChange: (() -> Void)?
     /// A regra sudoers instalada deixa ligar o Low Power Mode? `nil` = ainda não
     /// se sabe (ou o toggle está desligado e não interessa).
     @Published var lowPowerRuleAllowed: Bool?
@@ -25,6 +29,20 @@ final class SettingsModel: ObservableObject {
         lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
         muteWhenLidClosed = LidExtras.muteWhenLidClosed
         stayAwakeForRemoteSessions = SleepController.stayAwakeForRemoteSessions
+        accent = MenuBarIconSettings.accent
+        showsCountdown = MenuBarIconSettings.showsCountdown
+    }
+
+    func setAccent(_ value: IconAccent) {
+        accent = value
+        MenuBarIconSettings.accent = value
+        onIconChange?()
+    }
+
+    func setShowsCountdown(_ on: Bool) {
+        showsCountdown = on
+        MenuBarIconSettings.showsCountdown = on
+        onIconChange?()
     }
 
     /// Com o Sleepy ligado, o modo em uso (como o painel): numa sessão do gatilho
@@ -111,7 +129,12 @@ struct SleepySettingsView: View {
                 ) {
                     Picker("", selection: Binding(
                         get: { model.autoOffMinutes },
-                        set: { model.autoOffMinutes = $0; SleepController.autoOffMinutes = $0 })) {
+                        set: {
+                            model.autoOffMinutes = $0
+                            SleepController.autoOffMinutes = $0
+                            // O prazo novo (ou a falta dele) muda a contagem do ícone.
+                            model.onIconChange?()
+                        })) {
                         ForEach(SleepController.autoOffOptions) { Text($0.title).tag($0.minutes) }
                     }
                     .labelsHidden()
@@ -143,6 +166,30 @@ struct SleepySettingsView: View {
                     .labelsHidden()
                     .frame(width: 140)
                 }
+            }
+            SettingsSection(title: "Ícone da barra de menus") {
+                SettingsRow(
+                    title: "Cor com o Sleepy ligado",
+                    subtitle: "Só no ícone próprio do Sleepy. «Nenhuma» segue a cor da barra."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { model.accent },
+                        set: { model.setAccent($0) })) {
+                        ForEach(IconAccent.allCases) { accent in
+                            Label { Text(accent.title) } icon: { Image(nsImage: accent.swatch) }
+                                .tag(accent)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+                RowDivider()
+                ToggleRow(
+                    title: "Contagem decrescente",
+                    subtitle: "Mostra ao lado do ícone quanto falta para desligar sozinho, quando há prazo.",
+                    isOn: Binding(
+                        get: { model.showsCountdown },
+                        set: { model.setShowsCountdown($0) }))
             }
         }
         .onAppear {
