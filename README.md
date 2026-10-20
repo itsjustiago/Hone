@@ -62,13 +62,15 @@ autorização da app antiga não passa). As miniaturas do Window Peek passaram a
 opt-in (desligadas por omissão), para que o indicador de gravação não acenda a
 cada hover no Dock.
 
-## Stats — CPU, memória, GPU e ventoinhas
+## Stats — CPU, memória, GPU, ventoinhas, temperatura, energia e rede
 
-O Stats mostra **CPU, memória, GPU e ventoinhas (rpm)** em direto na barra de menus,
+O Stats mostra **CPU, memória, GPU, ventoinhas (rpm), temperatura do chip, consumo
+de energia (W) e rede (↑/↓ por segundo)** em direto na barra de menus,
 como widgets pequenos lado a lado (etiqueta por cima do valor, ou um símbolo antes
 do valor) num único ícone. Clicar abre um painel com o detalhe de cada um —
 histórico, utilizador/sistema/inativo e núcleos, pressão e swap da memória, GPU por
-componente, rpm de cada ventoinha — e os 5 que mais gastam: "Processos
+componente, rpm de cada ventoinha, temperatura do CPU/GPU/bateria, média e pico do
+consumo, receção e envio — e os 5 que mais gastam: "Processos
 principais" nos separadores CPU e Memória, e "Apps a usar a GPU" no separador GPU,
 com a percentagem de tempo de GPU de cada app (várias janelas e processos auxiliares
 da mesma app, como os "Helper" do Chrome, contam numa só linha).
@@ -80,19 +82,21 @@ partilhados com ela: as preferências do Stats vivem nas definições do própri
 (`stats.*`) e o ícone próprio é independente.
 
 Nas Definições escolhes que métricas aparecem, se levam etiquetas, se as cores
-seguem a carga (laranja a partir de 60%, vermelho a partir de 85%) e de quanto em
-quanto tempo atualiza (1, 2, 5 ou 10 s). Só mede enquanto alguém vê: com o ícone
+seguem a carga (laranja a partir de 60%, vermelho a partir de 85%; na temperatura
+aos 85 °C e 95 °C) e de quanto em
+quanto tempo atualiza (1, 2, 5 ou 10 s). Temperatura, energia e rede começam
+desligadas. Só mede enquanto alguém vê: com o ícone
 próprio visível ou com o painel aberto.
 
 Está escrito de raiz com APIs do sistema — `host_statistics` e `sysctl` para CPU e
 memória, IOKit para a GPU, o SMC (não documentado, **só leitura**) para as
-ventoinhas e `/usr/bin/top` para os processos de CPU e memória. O tempo de GPU por
+ventoinhas, a temperatura e o consumo, `sysctl` para os contadores de rede e `/usr/bin/top` para os processos de CPU e memória. O tempo de GPU por
 app vem dos clientes do acelerador no IOKit (`AppUsage.accumulatedGPUTime`, o mesmo
 valor da coluna "Tempo de GPU" do Monitor de Atividade), sem root. Não pede permissões nem captura o
-ecrã. As ventoinhas nunca são controladas, e a métrica aparece desligada em Macs
-sem ventoinhas.
+ecrã. As ventoinhas nunca são controladas, e uma métrica que o Mac não expõe (sem
+ventoinhas, sem sensores) aparece desativada nas Definições.
 
-**Fora de âmbito:** disco, rede, bateria e sensores (temperaturas).
+**Fora de âmbito:** disco e bateria.
 
 ## Requirements
 

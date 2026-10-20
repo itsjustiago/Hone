@@ -46,6 +46,11 @@ enum SMCValue {
         text.utf8.prefix(4).reduce(0) { ($0 << 8) | UInt32($1) }
     }
 
+    /// Inverse of `fourCC`: the four ASCII characters of a big-endian code.
+    static func text(_ code: UInt32) -> String {
+        String((0..<4).map { Character(UnicodeScalar(UInt8(truncatingIfNeeded: code >> UInt32(24 - 8 * $0)))) })
+    }
+
     static func decode(type: UInt32, bytes: [UInt8]) -> Double? {
         switch type {
         case fourCC("flt "):
@@ -64,6 +69,10 @@ enum SMCValue {
         case fourCC("fpe2"):
             guard bytes.count >= 2 else { return nil }
             return Double(UInt16(bytes[0]) << 8 | UInt16(bytes[1])) / 4
+        case fourCC("sp78"):
+            // Signed 8.8 fixed point (classic temperature type).
+            guard bytes.count >= 2 else { return nil }
+            return Double(Int16(bitPattern: UInt16(bytes[0]) << 8 | UInt16(bytes[1]))) / 256
         default:
             return nil
         }
@@ -117,10 +126,19 @@ enum SMCRead: Equatable {
     case failure
 }
 
-/// What `FanSampler` needs from the SMC, so tests can inject a fake.
+/// What the SMC samplers need, so tests can inject a fake.
 protocol SMCReader: AnyObject {
     func readValue(_ key: String) -> SMCRead
+    /// Number of keys the SMC holds (`#KEY`).
+    func keyCount() -> Int?
+    /// The key at an index; the SMC keeps them sorted.
+    func key(at index: Int) -> String?
     func close()
+}
+
+extension SMCReader {
+    func keyCount() -> Int? { nil }
+    func key(at index: Int) -> String? { nil }
 }
 
 /// Open connection to the AppleSMC user client.
@@ -194,6 +212,21 @@ final class SMCConnection: SMCReader {
             // An unsupported type is reported like any other unreadable key.
             return SMCValue.decode(type: type, bytes: bytes).map(SMCRead.value) ?? .failure
         }
+    }
+
+    func keyCount() -> Int? {
+        guard case .value(let count) = readValue("#KEY"), count >= 0, count <= Double(UInt32.max) else { return nil }
+        return Int(count)
+    }
+
+    /// Read-only: command 8 gives the key stored at an index.
+    func key(at index: Int) -> String? {
+        guard index >= 0, index <= Int(UInt32.max) else { return nil }
+        var request = SMCKeyData()
+        request.data8 = 8
+        request.data32 = UInt32(index)
+        guard let reply = call(&request), reply.ok else { return nil }
+        return SMCValue.text(reply.output.key)
     }
 }
 

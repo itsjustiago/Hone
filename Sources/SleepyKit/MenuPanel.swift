@@ -8,6 +8,8 @@ final class SleepMenuModel: ObservableObject {
     @Published var isActive = false
     @Published var autoOffText: String?
     @Published var autoOffMinutes = SleepController.autoOffMinutes
+    /// The "Até às" time, in minutes since midnight (it's in the option's text).
+    @Published var autoOffUntilClock = SleepController.autoOffUntilClock
     @Published var batteryThreshold = SleepController.batteryThreshold
     /// What happens when the lid closes; the picker snaps back if a change is refused.
     @Published var sleepMode = SleepController.sleepMode
@@ -64,6 +66,7 @@ struct MenuPanel: View {
             isActive: model.isActive,
             autoOffText: model.autoOffText,
             autoOffMinutes: model.autoOffMinutes,
+            autoOffUntilClock: model.autoOffUntilClock,
             batteryThreshold: model.batteryThreshold,
             stopReasonText: model.stopReasonText,
             passwordlessInstalled: model.passwordlessInstalled,
@@ -98,6 +101,7 @@ struct MenuPanelContent: View {
     let isActive: Bool
     let autoOffText: String?
     let autoOffMinutes: Int
+    let autoOffUntilClock: Int
     let batteryThreshold: Int
     let stopReasonText: String?
     let passwordlessInstalled: Bool
@@ -249,9 +253,9 @@ struct MenuPanelContent: View {
     /// Com prazo a correr, o "+1 h" adia-o sem abrir o picker.
     private var autoOffRow: some View {
         pickerRow(symbol: "timer", title: "Desligar sozinho",
-                  selection: autoOffMinutes, onChange: onChangeAutoOff, options: Self.autoOffChoices) {
+                  selection: autoOffMinutes, onChange: onChangeAutoOff, options: autoOffChoices) {
             // A espera pelo Claude não tem prazo para adiar.
-            if isActive, autoOffMinutes > 0, remoteSessionText == nil, !waitForClaude {
+            if isActive, autoOffMinutes != 0, remoteSessionText == nil, !waitForClaude {
                 Button("+1 h", action: onExtend)
                     .buttonStyle(VibeButtonStyle())
                     .controlSize(.small)
@@ -362,8 +366,11 @@ struct MenuPanelContent: View {
         VibeMenuPicker<SleepMode>.Option($0, title: $0.title, label: $0.short)
     }
 
-    private static let autoOffChoices = SleepController.autoOffOptions.map {
-        VibeMenuPicker<Int>.Option($0.minutes, title: $0.title, label: $0.short)
+    /// Muda com a hora do "Até às", que vai no texto da opção.
+    private var autoOffChoices: [VibeMenuPicker<Int>.Option] {
+        SleepController.autoOffOptions(untilClock: autoOffUntilClock).map {
+            VibeMenuPicker<Int>.Option($0.minutes, title: $0.title, label: $0.short)
+        }
     }
 
     private static let batteryChoices = SleepController.batteryOptions.map {
@@ -415,6 +422,7 @@ public enum SleepyPreview {
             isActive: isActive,
             autoOffText: isActive && remoteSessionText == nil ? "Desliga sozinho às 23:40" : nil,
             autoOffMinutes: 60,
+            autoOffUntilClock: 18 * 60,
             batteryThreshold: batteryThreshold,
             stopReasonText: stopReasonText,
             passwordlessInstalled: passwordlessInstalled,

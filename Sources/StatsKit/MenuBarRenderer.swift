@@ -9,6 +9,11 @@ enum LoadTone: Hashable {
         fraction >= 0.85 ? .critical : fraction >= 0.60 ? .warning : .normal
     }
 
+    /// Chip temperature in °C: orange from 85, red from 95.
+    static func forTemperature(_ celsius: Double) -> LoadTone {
+        celsius >= 95 ? .critical : celsius >= 85 ? .warning : .normal
+    }
+
     /// Memory follows the system's own pressure level instead of the used share.
     static func forPressure(_ pressure: MemoryPressure) -> LoadTone {
         switch pressure {
@@ -27,6 +32,9 @@ struct MenuBarSpec: Hashable {
         var metric: Metric
         var text: String
         var tone: LoadTone
+        /// Second line of the network readout: `text` is the upload (top line),
+        /// this the download (bottom line). Nil for every other metric.
+        var secondary: String? = nil
     }
 
     var items: [Item]
@@ -40,13 +48,18 @@ struct MenuBarSpec: Hashable {
     var accessibilityText: String {
         guard !items.isEmpty else { return "Stats" }
         return items.map { item in
-            item.metric == .fan ? "\(item.metric.spokenName) \(item.text) rpm" : "\(item.metric.spokenName) \(item.text)"
+            switch item.metric {
+            case .fan: return "\(item.metric.spokenName) \(item.text) rpm"
+            case .network: return "\(item.metric.spokenName), envio \(item.text), receção \(item.secondary ?? "–")"
+            default: return "\(item.metric.spokenName) \(item.text)"
+            }
         }.joined(separator: ", ")
     }
 }
 
 /// Draws the menu bar item: small mini widgets side by side, label above value
-/// (or, without labels, a small glyph before the value). Template
+/// (or, without labels, a small glyph before the value); the network one is two
+/// lines of throughput, up and down. Template
 /// (system-tinted) unless something is in alert with "colour by load" on.
 enum MenuBarRenderer {
     static let spacing: CGFloat = 6
@@ -66,6 +79,20 @@ enum MenuBarRenderer {
     private static func width(of string: String, attributes: [NSAttributedString.Key: Any]) -> CGFloat {
         NSAttributedString(string: string, attributes: attributes).size().width
     }
+
+    /// The network readout's two lines (upload above, download below), in a font
+    /// small enough to stack. Identical with and without labels: the arrows say what it is.
+    private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+    private static let rateArrows = ("↑", "↓")
+    private static let rateLineGap: CGFloat = 2
+
+    private static let rateArrowWidth: CGFloat = {
+        let attributes: [NSAttributedString.Key: Any] = [.font: rateFont]
+        return ceil(max(width(of: rateArrows.0, attributes: attributes), width(of: rateArrows.1, attributes: attributes)))
+    }()
+
+    private static let networkWidth: CGFloat =
+        rateArrowWidth + glyphGap + ceil(width(of: Metric.network.widthSample, attributes: [.font: rateFont]))
 
     /// 9 pt template glyph per metric (nil when no candidate symbol exists).
     private static let glyphs: [Metric: NSImage] = {
@@ -97,6 +124,7 @@ enum MenuBarRenderer {
     /// Fixed per metric and label setting, measured with the widest text it can
     /// show, so the item never changes width from one tick to the next.
     static func widgetWidth(metric: Metric, showLabels: Bool) -> CGFloat {
+        if metric == .network { return networkWidth }
         let value = valueBoxWidth(metric, showLabels: showLabels)
         if showLabels {
             return max(value, ceil(width(of: metric.shortLabel, attributes: labelAttributes(color: .black))))
@@ -188,6 +216,11 @@ enum MenuBarRenderer {
             labelColor = NSColor.labelColor.withAlphaComponent(labelAlpha)
         }
 
+        if item.metric == .network {
+            drawNetwork(item, in: rect, valueColor: valueColor, labelColor: labelColor)
+            return
+        }
+
         let font = valueFont(showLabels: spec.showLabels, weight: item.tone == .critical && !template ? .semibold : .medium)
         let value = NSAttributedString(string: item.text, attributes: [.font: font, .foregroundColor: valueColor])
         let valueWidth = value.size().width
@@ -226,6 +259,22 @@ enum MenuBarRenderer {
         if let unit = item.metric.unit {
             let text = NSAttributedString(string: unit, attributes: [.font: labelFont, .foregroundColor: labelColor])
             text.draw(at: NSPoint(x: x + box + glyphGap, y: baseline + labelFont.descender))
+        }
+    }
+
+    /// Upload on the top line, download below, values right-aligned so the units
+    /// line up. Baselines come from cap heights, as in the labelled layout.
+    private static func drawNetwork(_ item: MenuBarSpec.Item, in rect: NSRect, valueColor: NSColor, labelColor: NSColor) {
+        let font = rateFont
+        let block = 2 * font.capHeight + rateLineGap
+        let lower = ((rect.height - block) / 2).rounded(.down)
+        let lines = [(arrow: rateArrows.0, text: item.text, baseline: lower + font.capHeight + rateLineGap),
+                     (arrow: rateArrows.1, text: item.secondary ?? "", baseline: lower)]
+        for line in lines {
+            let arrow = NSAttributedString(string: line.arrow, attributes: [.font: font, .foregroundColor: labelColor])
+            arrow.draw(at: NSPoint(x: rect.minX + (rateArrowWidth - arrow.size().width) / 2, y: line.baseline + font.descender))
+            let value = NSAttributedString(string: line.text, attributes: [.font: font, .foregroundColor: valueColor])
+            value.draw(at: NSPoint(x: rect.maxX - value.size().width, y: line.baseline + font.descender))
         }
     }
 }
