@@ -126,6 +126,14 @@ public final class SoundlyMixer: ObservableObject {
         userChanged(SoundlyLevel(volume: current.volume, isMuted: muted), for: appID)
     }
 
+    /// Puts every app back at 100 % and unmuted — the ones not playing now too,
+    /// whose saved level would otherwise come back with them.
+    public func resetAll() {
+        store.clear()
+        failures.removeAll()
+        reconcileAll()
+    }
+
     /// Asks for the audio permission now (for a "grant access" button). Only
     /// prompts when macOS never asked; refused stays refused (see `openPermissionSettings`).
     public func requestPermission() {

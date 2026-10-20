@@ -115,6 +115,11 @@ final class SoundlyStore {
         defaults.set(all, forKey: Self.levelsKey)
     }
 
+    /// Forgets every saved level, apps that aren't running included.
+    func clear() {
+        defaults.removeObject(forKey: Self.levelsKey)
+    }
+
     private var levels: [String: Any] {
         defaults.dictionary(forKey: Self.levelsKey) ?? [:]
     }

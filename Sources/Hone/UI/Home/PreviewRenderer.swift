@@ -120,7 +120,7 @@ enum PreviewRenderer {
     }
 }
 
-/// The eleven tools as fake values (mirrors the modules' metadata).
+/// The twelve tools as fake values (mirrors the modules' metadata).
 enum Fixture {
     struct Spec {
         let id, title, shortTitle, category, tagline, icon: String
@@ -161,6 +161,9 @@ enum Fixture {
         Spec(id: "stats", title: "Stats", shortTitle: "Stats", category: "Sistema",
              tagline: "CPU, memória, GPU e ventoinhas em direto na barra de menus.",
              icon: "cpu", tint: VibeToolColor.stats, panel: true),
+        Spec(id: "soundly", title: "Soundly", shortTitle: "Soundly", category: "Som",
+             tagline: "O volume de cada app à parte: baixa ou silencia uma sem mexer nas outras.",
+             icon: "speaker.wave.2", tint: VibeToolColor.soundly, panel: true),
         Spec(id: "cleanKeyboard", title: "Limpar Teclado", shortTitle: "Limpar Teclado", category: "Teclado",
              tagline: "Bloqueia o teclado uns segundos para o limpares à vontade.",
              icon: "keyboard.fill", tint: VibeToolColor.cleanKeyboard, momentary: true, actionLabel: "Limpar"),

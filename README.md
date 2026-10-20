@@ -160,6 +160,9 @@ Sources/LidFoldKit/ Motor da Dobra da tampa (só frameworks do sistema, sem Kits
 Sources/StatsKit/   Kit à parte, como SleepyKit / ClippyKit / ScreenlyKit (só `StatsTool` é público)
                     StatsTool · SystemMonitor · CPUSampler · MemorySampler · GPUSampler ·
                     FanSampler (SMC, só leitura) · TopProcesses · MenuBarRenderer · MenuPanel
+
+Sources/SoundlyKit/ Volume por app (taps do Core Audio, sem driver; só `SoundlyTool` é público)
+                    SoundlyTool · SoundlyMixer · AppTap · MenuPanel · PanelModel · SoundlySettingsView
 ```
 
 Most tools are on/off **toggles**, but a module can instead be **momentary** —
