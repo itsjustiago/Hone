@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// Stats (CPU, memory, GPU and fans live in the menu bar) packaged as a tool a
+/// Stats (CPU, memory, GPU, fans, temperature, power and network live in the menu bar) packaged as a tool a
 /// host app (Hone) can embed. Owns no status item or window: the host decides
 /// where the icon, the panel and the settings are shown.
 @MainActor
@@ -98,6 +98,16 @@ public final class StatsTool {
                 let fastest = FanMath.fastest(s.fans)
                 return .init(metric: metric, text: fastest.map { Format.rpm($0.rpm) } ?? noData,
                              tone: tone(.forLoad(fastest?.loadFraction ?? 0)))
+            case .temperature:
+                let cpu = s.temperature?.cpu
+                return .init(metric: metric, text: cpu.map(Format.degrees) ?? noData,
+                             tone: tone(.forTemperature(cpu ?? 0)))
+            case .power:
+                return .init(metric: metric, text: s.power.map(Format.watts) ?? noData, tone: .normal)
+            case .network:
+                // Two lines: upload on top, download below.
+                return .init(metric: metric, text: s.network.map { Format.rate($0.upload) } ?? noData, tone: .normal,
+                             secondary: s.network.map { Format.rate($0.download) } ?? noData)
             }
         }
         return MenuBarSpec(items: items, showLabels: settings.showLabels, colorize: colorize)

@@ -76,13 +76,21 @@ struct StatsPanel: View {
 
     // MARK: Tiles
 
+    /// Up to four tiles share one row; more wrap into two (5 → 3 + 2, 7 → 4 + 3).
+    static func tileColumns(count: Int) -> Int {
+        count <= 4 ? max(1, count) : (count + 1) / 2
+    }
+
     private var tiles: some View {
-        HStack(spacing: VibeSpacing.s) {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: VibeSpacing.s),
+                            count: Self.tileColumns(count: visible.count))
+        return LazyVGrid(columns: columns, spacing: VibeSpacing.s) {
             ForEach(visible) { metric in
+                let reading = tileReading(for: metric)
                 MetricTile(title: metric.title,
-                           value: text(for: metric),
-                           unit: metric.unit,
-                           help: metric == .fan ? "Ventoinha mais rápida" : nil,
+                           value: reading.value,
+                           unit: reading.unit,
+                           help: tileHelp(for: metric),
                            values: monitor.values(for: metric),
                            historyHelp: historyHelp,
                            selected: selection == metric) {
@@ -96,7 +104,7 @@ struct StatsPanel: View {
 
     private var emptyState: some View {
         VStack(spacing: 10) {
-            Text("Nenhuma métrica ligada. Liga o CPU, a memória, a GPU ou as ventoinhas para as veres na barra de menus.")
+            Text("Nenhuma métrica ligada. Liga pelo menos uma nas Definições para a veres na barra de menus.")
                 .font(VibeFont.caption)
                 .foregroundStyle(VibeColor.text3)
                 .multilineTextAlignment(.center)
@@ -107,14 +115,29 @@ struct StatsPanel: View {
         .vibeCard(padding: 16)
     }
 
-    /// Value shown in a tile.
-    private func text(for metric: Metric) -> String {
+    /// Value, and small unit after it, shown in a tile.
+    private func tileReading(for metric: Metric) -> (value: String, unit: String?) {
         let s = monitor.snapshot
         switch metric {
-        case .cpu: return s.cpu.map { Format.percent($0.total) } ?? Format.noData
-        case .memory: return s.memory.map { Format.percent($0.usedFraction) } ?? Format.noData
-        case .gpu: return s.gpu.map { Format.percent($0.device) } ?? Format.noData
-        case .fan: return FanMath.fastest(s.fans).map { Format.rpm($0.rpm) } ?? Format.noData
+        case .cpu: return (s.cpu.map { Format.percent($0.total) } ?? Format.noData, nil)
+        case .memory: return (s.memory.map { Format.percent($0.usedFraction) } ?? Format.noData, nil)
+        case .gpu: return (s.gpu.map { Format.percent($0.device) } ?? Format.noData, nil)
+        case .fan: return (FanMath.fastest(s.fans).map { Format.rpm($0.rpm) } ?? Format.noData, metric.unit)
+        case .temperature: return (s.temperature.map { Format.degrees($0.cpu) } ?? Format.noData, nil)
+        case .power: return (s.power.map(Format.wattsNumber) ?? Format.noData, "W")
+        case .network:
+            guard let network = s.network else { return (Format.noData, nil) }
+            let parts = Format.rateParts(network.download)
+            return (parts.value, parts.unit)
+        }
+    }
+
+    private func tileHelp(for metric: Metric) -> String? {
+        switch metric {
+        case .fan: return "Ventoinha mais rápida"
+        case .temperature: return "Média do CPU"
+        case .network: return "Receção por segundo"
+        case .cpu, .memory, .gpu, .power: return nil
         }
     }
 
@@ -138,6 +161,9 @@ struct StatsPanel: View {
         case .memory: memoryDetail
         case .gpu: gpuDetail
         case .fan: fanDetail
+        case .temperature: temperatureDetail
+        case .power: powerDetail
+        case .network: networkDetail
         }
     }
 
@@ -234,6 +260,71 @@ struct StatsPanel: View {
         }
     }
 
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(VibeFont.caption)
+            .foregroundStyle(VibeColor.text3)
+    }
+
+    private var temperatureDetail: some View {
+        let temperature = monitor.snapshot.temperature
+        return VStack(alignment: .leading, spacing: 8) {
+            sparkline(.temperature)
+            VStack(spacing: 0) {
+                InfoRow(title: "CPU", value: temperature.map { Format.celsius($0.cpu) } ?? Format.noData)
+                if monitor.temperatureSensors.gpu {
+                    InfoRow(title: "GPU", value: temperature?.gpu.map(Format.celsius) ?? Format.noData)
+                }
+                if monitor.temperatureSensors.battery {
+                    InfoRow(title: "Bateria", value: temperature?.battery.map(Format.celsius) ?? Format.noData)
+                }
+            }
+            caption("Média de vários sensores do chip.")
+        }
+    }
+
+    private var powerDetail: some View {
+        let snapshot = monitor.snapshot
+        let raw = monitor.rawValues(for: .power)
+        let window = SystemMonitor.historyLength * monitor.intervalSeconds
+        let average = raw.isEmpty ? nil : raw.reduce(0, +) / Double(raw.count)
+        return VStack(alignment: .leading, spacing: 8) {
+            sparkline(.power)
+            VStack(spacing: 0) {
+                InfoRow(title: "Agora", value: snapshot.power.map(Format.watts) ?? Format.noData)
+                InfoRow(title: "Média (\(window) s)", value: average.map(Format.watts) ?? Format.noData)
+                InfoRow(title: "Pico (\(window) s)", value: raw.max().map(Format.watts) ?? Format.noData)
+                InfoRow(title: "Alimentação", value: snapshot.powerSource?.title ?? Format.noData)
+            }
+            caption("Consumo total do sistema.")
+        }
+    }
+
+    private var networkDetail: some View {
+        let network = monitor.snapshot.network
+        return VStack(alignment: .leading, spacing: 8) {
+            networkBlock(title: "↓ Receção", rate: network?.download, values: monitor.values(for: .network))
+            networkBlock(title: "↑ Envio", rate: network?.upload, values: monitor.uploadValues())
+            caption("Soma do Wi-Fi e da Ethernet.")
+        }
+    }
+
+    private func networkBlock(title: String, rate: Double?, values: [Double]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 12))
+                    .foregroundStyle(VibeColor.text2)
+                Spacer(minLength: 8)
+                Text(rate.map(Format.rate) ?? Format.noData)
+                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(VibeColor.text1)
+            }
+            Sparkline(values: values, help: historyHelp).frame(height: 40)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private func fanRow(_ fan: FanReading?, index: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -275,14 +366,27 @@ struct TopAnchoredLayout: Layout {
 
 /// Entry point for Hone's offscreen preview renders: fake readings, nothing samples.
 public enum StatsPreview {
-    public enum Tab: Sendable { case cpu, memory, gpu, fan }
+    public enum Tab: Sendable { case cpu, memory, gpu, fan, temperature, power, network }
 
     @MainActor
     public static func panel(_ tab: Tab = .cpu, back: (() -> Void)? = nil) -> AnyView {
         let suite = "pt.hone.stats-preview"
         let defaults = UserDefaults(suiteName: suite) ?? .standard
         defaults.removePersistentDomain(forName: suite)
-        let monitor = SystemMonitor(settings: StatsSettings(store: defaults))
+        let settings = StatsSettings(store: defaults)
+        // The newer metrics start off: switch on the one being previewed.
+        let selected: Metric
+        switch tab {
+        case .cpu: selected = .cpu
+        case .memory: selected = .memory
+        case .gpu: selected = .gpu
+        case .fan: selected = .fan
+        case .temperature: selected = .temperature
+        case .power: selected = .power
+        case .network: selected = .network
+        }
+        settings.setEnabled(selected, true)
+        let monitor = SystemMonitor(settings: settings)
 
         var snapshot = StatsSnapshot()
         snapshot.cpu = CPUUsage(total: 0.37, user: 0.24, system: 0.13, idle: 0.63,
@@ -296,24 +400,39 @@ public enum StatsPreview {
         snapshot.gpu = GPUReading(device: 0.18, renderer: 0.16, tiler: 0.07, inUseMemory: 1 << 30,
                                   name: "Apple GPU", cores: 20)
         snapshot.fans = [FanReading(name: "Ventoinha 1", rpm: 3417, minRPM: 2317, maxRPM: 7826)]
+        snapshot.temperature = TemperatureReading(cpu: 58, gpu: 47, battery: 31)
+        snapshot.power = 14.2
+        snapshot.powerSource = .battery
+        snapshot.network = NetworkRates(download: 1.34 * 1_048_576, upload: 86 * 1024)
         monitor.snapshot = snapshot
         monitor.fanCount = 1
+        monitor.temperatureSensors = TemperatureSensors(gpu: true, battery: true)
         monitor.unavailable = [:]
+        // A wave in 0…1; the newer metrics store raw values, so it is scaled to
+        // a plausible °C, W and B/s range.
+        func wave(_ i: Int, _ index: Int) -> Double {
+            0.3 + 0.22 * sin(Double(i) / 4 + Double(index)) + 0.08 * sin(Double(i) * 1.7)
+        }
         for (index, metric) in Metric.allCases.enumerated() {
             var buffer = RingBuffer(capacity: SystemMonitor.historyLength)
             for i in 0..<SystemMonitor.historyLength {
-                buffer.append(0.3 + 0.22 * sin(Double(i) / 4 + Double(index)) + 0.08 * sin(Double(i) * 1.7))
+                let f = wave(i, index)
+                switch metric {
+                case .temperature: buffer.append(45 + 20 * f)
+                case .power: buffer.append(30 * f)
+                case .network: buffer.append(3_000_000 * f)
+                case .cpu, .memory, .gpu, .fan: buffer.append(f)
+                }
             }
             monitor.history[metric] = buffer
         }
+        var upload = RingBuffer(capacity: SystemMonitor.historyLength)
+        let networkIndex = Metric.allCases.firstIndex(of: .network) ?? 0
+        for i in 0..<SystemMonitor.historyLength { upload.append(400_000 * wave(i, networkIndex)) }
+        monitor.uploadHistory = upload
 
         let state = PanelState()
-        switch tab {
-        case .cpu: state.selected = .cpu
-        case .memory: state.selected = .memory
-        case .gpu: state.selected = .gpu
-        case .fan: state.selected = .fan
-        }
+        state.selected = selected
 
         let processes = TopProcessesModel()
         let names = ["Safari", "Xcode", "WindowServer", "Slack", "Finder"]

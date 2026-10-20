@@ -120,7 +120,7 @@ enum PreviewRenderer {
     }
 }
 
-/// The eleven tools as fake values (mirrors the modules' metadata).
+/// The twelve tools as fake values (mirrors the modules' metadata).
 enum Fixture {
     struct Spec {
         let id, title, shortTitle, category, tagline, icon: String
@@ -146,6 +146,9 @@ enum Fixture {
         Spec(id: "keySwap", title: "Comando ⇄ Controlo", shortTitle: "⌘ ⇄ ⌃", category: "Teclado",
              tagline: "Troca ⌘ com ⌃ para copiares e colares como no Windows.",
              icon: "command.square.fill", tint: VibeToolColor.keySwap),
+        Spec(id: "windowsShortcuts", title: "Atalhos do Windows", shortTitle: "Atalhos", category: "Teclado",
+             tagline: "Cortar e colar ficheiros, F2, botões laterais e ⌘Q a segurar, como no Windows.",
+             icon: "square.grid.2x2.fill", tint: VibeToolColor.windowsShortcuts),
         Spec(id: "lidFold", title: "Dobra da tampa", shortTitle: "Tampa", category: "Ecrã",
              tagline: "O ecrã dobra-se quando fechas ou abres a tampa.",
              icon: "laptopcomputer", tint: VibeToolColor.lidFold),
@@ -159,7 +162,7 @@ enum Fixture {
              tagline: "Mantém o ecrã aceso e o Mac acordado, mesmo de tampa fechada.",
              icon: "moon.zzz", tint: VibeToolColor.sleepy, panel: true),
         Spec(id: "stats", title: "Stats", shortTitle: "Stats", category: "Sistema",
-             tagline: "CPU, memória, GPU e ventoinhas em direto na barra de menus.",
+             tagline: "CPU, memória, GPU, temperatura e rede em direto na barra de menus.",
              icon: "cpu", tint: VibeToolColor.stats, panel: true),
         Spec(id: "cleanKeyboard", title: "Limpar Teclado", shortTitle: "Limpar Teclado", category: "Teclado",
              tagline: "Bloqueia o teclado uns segundos para o limpares à vontade.",

@@ -4,14 +4,14 @@ import StatsKit
 
 extension StatsTool: ToolKit {}
 
-/// Stats (CPU, memory, GPU and fans live in the menu bar), replacing the Stats app by exelban.
+/// Stats (CPU, memory, GPU, temperature and network live in the menu bar), replacing the Stats app by exelban.
 @MainActor
 enum StatsModule {
     static func make() -> EmbeddedToolModule<StatsTool> {
         EmbeddedToolModule(
             id: "stats",
             title: "Stats",
-            summary: "CPU, memória, GPU e ventoinhas em direto na barra de menus.",
+            summary: "CPU, memória, GPU, temperatura e rede em direto na barra de menus.",
             category: "Sistema",
             iconSystemName: "cpu",
             tint: VibeToolColor.stats,

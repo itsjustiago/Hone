@@ -204,7 +204,7 @@ final class SMCTests: XCTestCase {
     }
 
     func testUnknownTypeOrShortBytesGiveNil() {
-        XCTAssertNil(SMCValue.decode(type: SMCValue.fourCC("sp78"), bytes: [1, 2]))
+        XCTAssertNil(SMCValue.decode(type: SMCValue.fourCC("ioft"), bytes: [1, 2]))
         XCTAssertNil(SMCValue.decode(type: SMCValue.fourCC("flt "), bytes: [1, 2]))
         XCTAssertNil(SMCValue.decode(type: SMCValue.fourCC("flt "), bytes: [0, 0, 0xC0, 0x7F]))  // NaN
     }
@@ -298,12 +298,14 @@ final class PresentationTests: XCTestCase {
     }
 
     func testAClickLandsOnTheReadoutUnderIt() {
-        let spec = fullSpec(labels: true)
-        for segment in MenuBarRenderer.segments(for: spec) {
-            let middle = (segment.span.lowerBound + segment.span.upperBound) / 2
-            XCTAssertEqual(MenuBarRenderer.segment(atX: segment.span.lowerBound, in: spec), segment)
-            XCTAssertEqual(MenuBarRenderer.segment(atX: middle, in: spec), segment)
-            XCTAssertEqual(MenuBarRenderer.segment(atX: segment.span.upperBound, in: spec), segment)
+        for labels in [true, false] {
+            let spec = fullSpec(labels: labels)
+            for segment in MenuBarRenderer.segments(for: spec) {
+                let middle = (segment.span.lowerBound + segment.span.upperBound) / 2
+                XCTAssertEqual(MenuBarRenderer.segment(atX: segment.span.lowerBound, in: spec), segment)
+                XCTAssertEqual(MenuBarRenderer.segment(atX: middle, in: spec), segment)
+                XCTAssertEqual(MenuBarRenderer.segment(atX: segment.span.upperBound, in: spec), segment)
+            }
         }
     }
 
@@ -313,7 +315,7 @@ final class PresentationTests: XCTestCase {
         XCTAssertEqual(MenuBarRenderer.segment(atX: gap + 1, in: spec)?.metric, .cpu)
         XCTAssertEqual(MenuBarRenderer.segment(atX: gap + MenuBarRenderer.spacing - 1, in: spec)?.metric, .memory)
         XCTAssertEqual(MenuBarRenderer.segment(atX: -20, in: spec)?.metric, .cpu)
-        XCTAssertEqual(MenuBarRenderer.segment(atX: 10_000, in: spec)?.metric, .fan)
+        XCTAssertEqual(MenuBarRenderer.segment(atX: 10_000, in: spec)?.metric, .network)
         XCTAssertNil(MenuBarRenderer.segment(atX: 5, in: MenuBarSpec(items: [], showLabels: true, colorize: false)))
     }
 
@@ -342,16 +344,20 @@ final class PresentationTests: XCTestCase {
         let store = UserDefaults(suiteName: suite)!
         defer { store.removePersistentDomain(forName: suite) }
         let settings = StatsSettings(store: store)
-        XCTAssertEqual(settings.enabledMetrics, Set(Metric.allCases))
+        // The newer metrics start off, so the bar of an existing user doesn't grow.
+        XCTAssertEqual(settings.enabledMetrics, [.cpu, .memory, .gpu, .fan])
         XCTAssertTrue(settings.showLabels)
         XCTAssertFalse(settings.colorByLoad)
         XCTAssertEqual(settings.interval, .one)
 
         settings.setEnabled(.gpu, false)
+        settings.setEnabled(.network, true)
         settings.interval = .five
         settings.colorByLoad = true
         let reloaded = StatsSettings(store: store)
         XCTAssertFalse(reloaded.enabledMetrics.contains(.gpu))
+        XCTAssertTrue(reloaded.enabledMetrics.contains(.network))
+        XCTAssertFalse(reloaded.enabledMetrics.contains(.temperature))
         XCTAssertEqual(reloaded.interval, .five)
         XCTAssertTrue(reloaded.colorByLoad)
     }
@@ -542,6 +548,57 @@ final class MonitorTests: XCTestCase {
         XCTAssertEqual(monitor.values(for: .cpu).count, 1)
     }
 
+    func testNetworkHasNoValueUntilTheSecondReading() throws {
+        try XCTSkipIf(NetworkSampler.read() == nil, "sem contadores de rede neste ambiente")
+        let monitor = makeMonitor([.network])
+        monitor.sample(.tick)
+        XCTAssertNil(monitor.snapshot.network)
+        XCTAssertTrue(monitor.values(for: .network).isEmpty)
+        XCTAssertTrue(monitor.uploadValues().isEmpty)
+        Thread.sleep(forTimeInterval: 0.3)
+        for _ in 0..<3 { monitor.sample(.extra) }
+        XCTAssertNil(monitor.snapshot.network, "extra samples never touch the network")
+        XCTAssertTrue(monitor.rawValues(for: .network).isEmpty)
+        monitor.sample(.tick)
+        XCTAssertNotNil(monitor.snapshot.network)
+        XCTAssertEqual(monitor.rawValues(for: .network).count, 1)
+        XCTAssertEqual(monitor.uploadHistory.values.count, 1)
+        monitor.sample(.cpuFollowUp)
+        XCTAssertEqual(monitor.rawValues(for: .network).count, 1, "two reads a few ms apart are ignored")
+        Thread.sleep(forTimeInterval: 0.3)
+        monitor.sample(.cpuFollowUp)
+        XCTAssertEqual(monitor.rawValues(for: .network).count, 2, "the follow-up adds history like a tick")
+        XCTAssertEqual(monitor.uploadHistory.values.count, 2)
+    }
+
+    func testTemperatureAndPowerAreInstantaneous() {
+        let monitor = makeMonitor([.temperature, .power])
+        monitor.sample(.cpuFollowUp)
+        XCTAssertNil(monitor.snapshot.temperature, "the follow-up is for the delta metrics only")
+        XCTAssertNil(monitor.snapshot.power)
+        for _ in 0..<3 { monitor.sample(.extra) }
+        XCTAssertTrue(monitor.rawValues(for: .temperature).isEmpty)
+        XCTAssertTrue(monitor.rawValues(for: .power).isEmpty)
+        monitor.sample(.tick)
+        // Whatever this Mac has: a reading and one history point, or neither.
+        XCTAssertEqual(monitor.rawValues(for: .temperature).count, monitor.snapshot.temperature == nil ? 0 : 1)
+        XCTAssertEqual(monitor.rawValues(for: .power).count, monitor.snapshot.power == nil ? 0 : 1)
+    }
+
+    func testHistoryIsStoredRawAndScaledOnTheWayOut() {
+        let monitor = makeMonitor([.temperature, .power, .network])
+        monitor.history[.temperature]?.append(50)
+        monitor.history[.power]?.append(5)
+        monitor.history[.network]?.append(1_000_000)
+        monitor.uploadHistory.append(500_000)
+        XCTAssertEqual(monitor.rawValues(for: .temperature), [50])
+        XCTAssertEqual(monitor.values(for: .temperature), [0.5])
+        XCTAssertEqual(monitor.values(for: .power), [0.5], "10 W floor")
+        // Download and upload share the larger peak.
+        XCTAssertEqual(monitor.values(for: .network), [1])
+        XCTAssertEqual(monitor.uploadValues(), [0.5])
+    }
+
     func testOnlyTicksAddHistory() {
         let monitor = makeMonitor([.cpu, .memory])
         monitor.sample(.tick)
@@ -597,15 +654,21 @@ final class StatsToolTests: XCTestCase {
     }
 
     func testAClickOnAReadoutOpensThePanelOnIt() {
-        let tool = StatsTool(defaults: makeStore())
-        let spec = MenuBarSpec(items: Metric.allCases.map { .init(metric: $0, text: "–", tone: .normal) },
-                               showLabels: true, colorize: false)
-        // Last to first: a Mac without fans drops that readout after the first
-        // sample, and the ones before it must not move.
-        for segment in MenuBarRenderer.segments(for: spec).reversed() {
+        let store = makeStore()
+        for metric in Metric.allCases { store.set(true, forKey: metric.defaultsKey) }
+        let tool = StatsTool(defaults: store)
+        // Last to first. The first sample of a Mac without fans, temperature or
+        // power sensors drops that readout and moves the ones after it, so the
+        // layout is rebuilt from what is on the bar at each click.
+        for target in Metric.allCases.reversed() {
+            let active = tool.monitor.activeMetrics
+            guard active.contains(target) else { continue }
+            let spec = MenuBarSpec(items: active.map { .init(metric: $0, text: "–", tone: .normal) },
+                                   showLabels: true, colorize: false)
+            let segment = MenuBarRenderer.segments(for: spec).first { $0.metric == target }!
             let middle = (segment.span.lowerBound + segment.span.upperBound) / 2
             XCTAssertEqual(tool.panelWillShow(clickedAtX: middle), segment.span)
-            XCTAssertEqual(tool.panelState.selected, segment.metric)
+            XCTAssertEqual(tool.panelState.selected, target)
         }
     }
 
