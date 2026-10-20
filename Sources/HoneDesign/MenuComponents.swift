@@ -35,6 +35,26 @@ public extension View {
     }
 }
 
+/// Takes whatever height the host offers (taller or shorter than the content)
+/// and keeps its single child at the top, at its own ideal height: extra space
+/// stays empty below, and a shorter frame clips the bottom, never the top. For
+/// a panel whose height changes while its popover is open, so it doesn't slide.
+public struct VibeTopAnchoredLayout: Layout {
+    public init() {}
+
+    public func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let ideal = child.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: ideal.width, height: proposal.height ?? ideal.height)
+    }
+
+    public func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let child = subviews.first else { return }
+        child.place(at: CGPoint(x: bounds.minX, y: bounds.minY), anchor: .topLeading,
+                    proposal: ProposedViewSize(width: bounds.width, height: nil))
+    }
+}
+
 // MARK: - Header
 
 /// Top of a tool's panel: its mascot, name and a one-line state, with small

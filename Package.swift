@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Hone",
-            dependencies: ["HoneDesign", "SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit", "LidFoldKit"],
+            dependencies: ["HoneDesign", "SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit", "LidFoldKit", "SoundlyKit"],
             path: "Sources/Hone",
             swiftSettings: [
                 // The system-level modules (event taps, AX API, C callbacks) are
@@ -50,6 +50,14 @@ let package = Package(
             path: "Sources/StatsKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Soundly: per-app volume through Core Audio process taps (macOS 14.2+).
+        // System frameworks only — no virtual driver, no kext.
+        .target(
+            name: "SoundlyKit",
+            dependencies: ["HoneDesign"],
+            path: "Sources/SoundlyKit",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         // Lid-angle sensor plus the pure fold maths ("iPhone Duo" screen effect).
         // System frameworks only: it depends on no Kit, never touches brightness,
         // display sleep or power assertions (Sleepy owns those).
@@ -81,6 +89,12 @@ let package = Package(
             name: "SleepyKitTests",
             dependencies: ["SleepyKit"],
             path: "Tests/SleepyKitTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "SoundlyKitTests",
+            dependencies: ["SoundlyKit"],
+            path: "Tests/SoundlyKitTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

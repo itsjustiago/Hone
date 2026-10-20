@@ -78,3 +78,50 @@ study and adaptation.
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
+
+## AudioCap (BSD 2-Clause)
+
+Source: https://github.com/insidegui/AudioCap
+
+Soundly's permission check and request in
+`Sources/SoundlyKit/AudioCapturePermission.swift` (looking up `TCCAccessPreflight`
+and `TCCAccessRequest` in the TCC framework at run time for
+`kTCCServiceAudioCapture`, and reading the preflight result as 0 = granted,
+1 = denied) are adapted from AudioCap's `AudioRecordingPermission.swift`. The
+shape of the process-tap setup in `Sources/SoundlyKit/AppTap.swift` (a
+`CATapDescription`, then a private aggregate device with the default output as
+main sub-device and the tap in its tap list) follows AudioCap's `ProcessTap.swift`.
+The file adapted from it carries a header comment pointing here.
+
+    Copyright (c) 2024 Guilherme Rambo
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    - Redistributions of source code must retain the above copyright notice, this
+      list of conditions and the following disclaimer. 
+
+    - Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimer in the documentation
+      and/or other materials provided with the distribution.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+    FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+    OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## FineTune (GPL-3.0) — studied, no code included
+
+Source: https://github.com/ronitsingh10/FineTune
+
+FineTune's tap mixer was read to learn how process taps behave in practice. No
+FineTune source code is included in Hone. Two facts learnt from it shaped
+Soundly's own code: tap drift compensation is left off for Bluetooth outputs
+(it crackles there), and the output device's own input streams are switched off
+in the IOProc's stream usage so a duplex device doesn't count as microphone use.

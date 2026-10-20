@@ -4,6 +4,7 @@ import ClippyKit
 import LidFoldKit
 import ScreenlyKit
 import SleepyKit
+import SoundlyKit
 import StatsKit
 
 extension PreviewRenderer {
@@ -83,6 +84,9 @@ extension PreviewRenderer {
             }),
             ("settings-stats", window("stats", off: off) {
                 tool("stats", ownIcon: true, settings: StatsPreview.settings())
+            }),
+            ("settings-soundly", window("soundly", off: off) {
+                tool("soundly", ownIcon: true, settings: SoundlyPreview.settings())
             }),
             ("settings-general", window("general", off: off) {
                 GeneralSettingsView(updateChecker: UpdateChecker())

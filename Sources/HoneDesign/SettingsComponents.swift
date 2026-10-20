@@ -239,22 +239,27 @@ public struct VibeBanner: View {
     let title: String
     let detail: String
     let actionTitle: String?
+    let stacked: Bool
     let action: () -> Void
 
-    /// Without an `actionTitle` the banner only informs.
+    /// Without an `actionTitle` the banner only informs. `stacked` puts the
+    /// button under the text instead of beside it, for narrow places (the menu
+    /// panel) where a long detail would wrap into a thin column.
     public init(color: Color, title: String, detail: String, actionTitle: String? = nil,
-                action: @escaping () -> Void = {}) {
+                stacked: Bool = false, action: @escaping () -> Void = {}) {
         self.color = color
         self.title = title
         self.detail = detail
         self.actionTitle = actionTitle
+        self.stacked = stacked
         self.action = action
     }
 
     public var body: some View {
         let shape = RoundedRectangle(cornerRadius: VibeRadius.settingsCard, style: .continuous)
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: stacked ? .top : .center, spacing: 10) {
             VibeDot(color, size: 7)
+                .padding(.top, stacked ? 5 : 0)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(VibeFont.settingsRow.weight(.semibold))
@@ -263,9 +268,15 @@ public struct VibeBanner: View {
                     .font(VibeFont.settingsDetail)
                     .foregroundStyle(VibeColor.text3)
                     .fixedSize(horizontal: false, vertical: true)
+                if stacked, let actionTitle {
+                    Button(actionTitle, action: action)
+                        .buttonStyle(VibeButtonStyle())
+                        .controlSize(.small)
+                        .padding(.top, 8)
+                }
             }
             Spacer(minLength: 8)
-            if let actionTitle {
+            if !stacked, let actionTitle {
                 Button(actionTitle, action: action)
                     .buttonStyle(VibeButtonStyle())
                     .controlSize(.small)

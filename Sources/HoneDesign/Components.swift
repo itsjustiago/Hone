@@ -102,6 +102,94 @@ private struct VibeSwitch: View {
     }
 }
 
+// MARK: - Slider
+
+/// Hone's slider: a thin track filled in the tool's colour up to a white knob
+/// (the switch's knob), 0…1. Plain shapes and a drag gesture rather than the
+/// native slider, so it looks the same everywhere and renders offscreen.
+/// Pressing anywhere on it moves the knob there.
+public struct VibeSlider: View {
+    @Binding var value: Double
+    let label: String
+    let tint: Color
+    let onEditingChanged: (Bool) -> Void
+
+    @State private var dragging = false
+
+    /// Keys and VoiceOver move it in steps of 5 %.
+    static let step = 0.05
+    private let knob: CGFloat = 16
+    private let track: CGFloat = 5
+
+    /// - Parameters:
+    ///   - label: what the slider sets, for VoiceOver ("Volume do Spotify").
+    ///   - tint: the filled part; pass a grey while the thing it sets is off.
+    ///   - onEditingChanged: `true` when a drag starts, `false` when it ends.
+    public init(value: Binding<Double>, label: String, tint: Color,
+                onEditingChanged: @escaping (Bool) -> Void = { _ in }) {
+        self._value = value
+        self.label = label
+        self.tint = tint
+        self.onEditingChanged = onEditingChanged
+    }
+
+    /// The value for a pointer `x` points from the track's left edge: the knob's
+    /// centre follows the pointer, and its travel is the width less one knob.
+    static func value(atX x: CGFloat, width: CGFloat, knob: CGFloat) -> Double {
+        let travel = max(width - knob, 1)
+        return Double(min(max((x - knob / 2) / travel, 0), 1))
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let travel = max(geo.size.width - knob, 1)
+            let x = CGFloat(min(max(value, 0), 1)) * travel
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(VibeColor.track)
+                    .frame(height: track)
+                Capsule(style: .continuous)
+                    .fill(tint)
+                    .frame(width: x + knob / 2, height: track)
+                Circle()
+                    .fill(VibeColor.text1)
+                    .frame(width: knob, height: knob)
+                    .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+                    .scaleEffect(dragging ? 1.08 : 1)
+                    .offset(x: x)
+            }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { drag in
+                        if !dragging {
+                            dragging = true
+                            onEditingChanged(true)
+                        }
+                        value = Self.value(atX: drag.location.x, width: geo.size.width, knob: knob)
+                    }
+                    .onEnded { _ in
+                        dragging = false
+                        onEditingChanged(false)
+                    }
+            )
+        }
+        .frame(height: VibeMetrics.toggle.height)
+        .animation(VibeMotion.quick, value: dragging)
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityValue(Text("\(Int((min(max(value, 0), 1) * 100).rounded())) por cento"))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: value = min(value + Self.step, 1)
+            case .decrement: value = max(value - Self.step, 0)
+            @unknown default: break
+            }
+        }
+    }
+}
+
 // MARK: - Buttons
 
 /// Gentle press feedback for custom controls (scale ~0.97).

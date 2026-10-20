@@ -51,7 +51,7 @@ public enum VibeColor {
 
 // MARK: - Tool palette
 
-/// The ten tool colours. Pastel-bright so they glow on black.
+/// The eleven tool colours. Pastel-bright so they glow on black.
 public enum VibePalette {
     public static let blue = Color(vibeHex: 0x5AA2F0)
     public static let purple = Color(vibeHex: 0x8C79F7)
@@ -62,10 +62,12 @@ public enum VibePalette {
     public static let yellow = Color(vibeHex: 0xEED65E)
     public static let lilac = Color(vibeHex: 0xC58AF2)
     public static let green = Color(vibeHex: 0x60C97A)
+    /// Fills the widest hue gap of the palette (yellow to green).
+    public static let lime = Color(vibeHex: 0xA6D65C)
     public static let white = Color(vibeHex: 0xF2F3F5)
 
     /// In display order, for previews and contact sheets.
-    public static let all: [Color] = [blue, purple, teal, red, orange, pink, yellow, lilac, green, white]
+    public static let all: [Color] = [blue, purple, teal, red, orange, pink, yellow, lilac, green, lime, white]
 }
 
 /// Single source of truth for which colour each Hone tool wears — the Hone
@@ -82,6 +84,7 @@ public enum VibeToolColor {
     public static let screenly = VibePalette.yellow
     public static let sleepy = VibePalette.lilac
     public static let stats = VibePalette.green
+    public static let soundly = VibePalette.lime
     public static let cleanKeyboard = VibePalette.white
     /// Shares Alt-Tab's teal: the palette is fully assigned and the two sit far apart in the list.
     public static let lidFold = VibePalette.teal
