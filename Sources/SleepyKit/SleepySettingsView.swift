@@ -6,6 +6,7 @@ import HoneDesign
 final class SettingsModel: ObservableObject {
     @Published var passwordless = PrivilegedAccess.isInstalled
     @Published var autoOffMinutes = SleepController.autoOffMinutes
+    @Published var autoOffUntilClock = SleepController.autoOffUntilClock
     @Published var batteryThreshold = SleepController.batteryThreshold
     @Published var sleepMode = SettingsModel.shownMode()
     @Published var endAction = SleepController.endAction
@@ -23,6 +24,7 @@ final class SettingsModel: ObservableObject {
     func refresh() {
         passwordless = PrivilegedAccess.isInstalled
         autoOffMinutes = SleepController.autoOffMinutes
+        autoOffUntilClock = SleepController.autoOffUntilClock
         batteryThreshold = SleepController.batteryThreshold
         sleepMode = Self.shownMode()
         endAction = SleepController.endAction
@@ -125,7 +127,7 @@ struct SleepySettingsView: View {
                 RowDivider()
                 SettingsRow(
                     title: "Desligar sozinho",
-                    subtitle: "O ecrã e o Mac voltam ao normal ao fim deste tempo. De tampa fechada, adormece logo."
+                    subtitle: "O ecrã e o Mac voltam ao normal ao fim deste tempo ou à hora escolhida. De tampa fechada, adormece logo."
                 ) {
                     Picker("", selection: Binding(
                         get: { model.autoOffMinutes },
@@ -135,10 +137,27 @@ struct SleepySettingsView: View {
                             // O prazo novo (ou a falta dele) muda a contagem do ícone.
                             model.onIconChange?()
                         })) {
-                        ForEach(SleepController.autoOffOptions) { Text($0.title).tag($0.minutes) }
+                        ForEach(SleepController.autoOffOptions(untilClock: model.autoOffUntilClock)) {
+                            Text($0.title).tag($0.minutes)
+                        }
                     }
                     .labelsHidden()
                     .frame(width: 120)
+                }
+                if model.autoOffMinutes == SleepController.untilClockMinutes {
+                    RowDivider()
+                    SettingsRow(title: "Hora", subtitle: "Se já passou hoje, conta a de amanhã.") {
+                        DatePicker("", selection: Binding(
+                            get: { SleepController.clockDate(model.autoOffUntilClock) },
+                            set: {
+                                let clock = SleepController.clockMinutes(of: $0)
+                                model.autoOffUntilClock = clock
+                                SleepController.autoOffUntilClock = clock
+                                // A hora nova muda o prazo e a contagem do ícone.
+                                model.onIconChange?()
+                            }), displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                    }
                 }
                 RowDivider()
                 SettingsRow(

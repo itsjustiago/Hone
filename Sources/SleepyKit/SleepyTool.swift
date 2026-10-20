@@ -361,6 +361,7 @@ public final class SleepyTool {
         menuModel.isActive = SleepController.shared.isActive
         menuModel.autoOffText = autoOffText()
         menuModel.autoOffMinutes = SleepController.autoOffMinutes
+        menuModel.autoOffUntilClock = SleepController.autoOffUntilClock
         menuModel.batteryThreshold = SleepController.batteryThreshold
         // O modo em uso: numa sessão do gatilho remoto pode não ser o guardado.
         menuModel.sleepMode = SleepController.shared.activeMode
@@ -377,11 +378,8 @@ public final class SleepyTool {
 
     private func autoOffText() -> String? {
         guard let off = SleepController.shared.autoOffDate else { return nil }
-        let fmt = DateFormatter()
-        fmt.dateFormat = "HH:mm"
         // Prazo passado com o Sleepy ainda ligado = o auto-desligar falhou.
-        if off <= Date() { return "Não desligou às \(fmt.string(from: off)) — desliga à mão" }
-        return "Desliga sozinho às \(fmt.string(from: off))"
+        return SleepController.autoOffLabel(off: off, now: Date())
     }
 
     /// Com o Sleepy desligado sozinho, o motivo e a hora para a linha de estado.

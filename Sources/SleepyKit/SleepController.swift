@@ -26,9 +26,9 @@ import IOKit.pwr_mgt
 /// bateria e corrente. O estado é persistido: um crash, um rebuild ou o auto-updater
 /// relançam a app, e sem isso a proteção caía em silêncio a meio de uma tarefa
 /// longa. Para não deixar o Mac acordado por esquecimento, há auto-desligar ao
-/// fim de `autoOffMinutes` (default 8h) — e, se a tampa estiver fechada (sem
-/// ecrã externo) nessa altura, mandamos o Mac dormir logo, que é o que a tampa
-/// fechada quer dizer.
+/// fim de `autoOffMinutes` (default 8h) ou à hora escolhida ("Até às HH:MM") — e,
+/// se a tampa estiver fechada (sem ecrã externo) nessa altura, mandamos o Mac
+/// dormir logo, que é o que a tampa fechada quer dizer.
 ///
 /// Desliga-se também sozinho por segurança — bateria no limite escolhido, ou o
 /// Mac a aquecer de tampa fechada ([[PowerGuards]]) — e diz porquê (`lastStop`
@@ -135,6 +135,8 @@ final class SleepController {
     private let activeSinceKey = "activeSince"
     private static let autoOffKey = "autoOffMinutes"
     private static let legacyAutoOffKey = "autoOffHours"
+    private static let autoOffUntilClockKey = "autoOffUntilClock"
+    private static let autoOffUntilSetAtKey = "autoOffUntilSetAt"
     private static let autoOffExtensionKey = "autoOffExtension"
     private static let sleepModeKey = "sleepMode"
     private static let endActionKey = "endAction"
@@ -145,8 +147,13 @@ final class SleepController {
     private static let autoOffWarnedKey = "autoOffWarnedSince"
     private static let waitForClaudeKey = "waitForClaudeSince"
 
-    /// Minutos até desligar sozinho. 0 = nunca. Antes disto a preferência era em
-    /// horas — migra-se na primeira leitura para não perder a escolha do utilizador.
+    /// Valor de `autoOffMinutes` para "Até às HH:MM": não é uma duração, é a hora
+    /// de `autoOffUntilClock`.
+    static let untilClockMinutes = -1
+
+    /// Minutos até desligar sozinho. 0 = nunca; `untilClockMinutes` = até à hora
+    /// escolhida. Antes disto a preferência era em horas — migra-se na primeira
+    /// leitura para não perder a escolha do utilizador.
     static var autoOffMinutes: Int {
         get {
             let d = SleepyDefaults.store
@@ -159,10 +166,43 @@ final class SleepController {
         }
         set {
             SleepyDefaults.store.set(newValue, forKey: autoOffKey)
+            // "Até às" escolhido agora: a hora conta a partir de agora, não do
+            // início de uma sessão ligada há mais tempo.
+            if newValue == untilClockMinutes { autoOffUntilSetAt = Date() }
             // Duração nova = prazo novo: o "+1 h" de antes já não conta.
             shared.autoOffExtension = 0
             shared.autoOffWarned = false
             shared.scheduleAutoOff()
+        }
+    }
+
+    /// A hora do "Até às", em minutos desde a meia-noite (0…1439). Omissão: 18:00.
+    static var autoOffUntilClock: Int {
+        get {
+            guard let clock = SleepyDefaults.store.object(forKey: autoOffUntilClockKey) as? Int,
+                  (0..<24 * 60).contains(clock) else { return 18 * 60 }
+            return clock
+        }
+        set {
+            SleepyDefaults.store.set(min(max(newValue, 0), 24 * 60 - 1), forKey: autoOffUntilClockKey)
+            // Hora nova = prazo novo, contado a partir de agora (como ao escolher o modo).
+            autoOffUntilSetAt = Date()
+            shared.autoOffExtension = 0
+            shared.autoOffWarned = false
+            shared.scheduleAutoOff()
+        }
+    }
+
+    /// Quando o utilizador escolheu "Até às" ou mudou a hora. A hora conta a
+    /// partir do mais tardio disto e do início da sessão (`autoOffDate`).
+    private(set) static var autoOffUntilSetAt: Date? {
+        get { SleepyDefaults.store.object(forKey: autoOffUntilSetAtKey) as? Date }
+        set {
+            if let newValue {
+                SleepyDefaults.store.set(newValue, forKey: autoOffUntilSetAtKey)
+            } else {
+                SleepyDefaults.store.removeObject(forKey: autoOffUntilSetAtKey)
+            }
         }
     }
 
@@ -256,17 +296,42 @@ final class SleepController {
         var id: Int { minutes }
     }
 
-    static let autoOffOptions: [AutoOffOption] = [
-        .init(minutes: 10, title: "10 minutos", short: "10 min"),
-        .init(minutes: 20, title: "20 minutos", short: "20 min"),
-        .init(minutes: 30, title: "30 minutos", short: "30 min"),
-        .init(minutes: 60, title: "1 hora", short: "1 h"),
-        .init(minutes: 120, title: "2 horas", short: "2 h"),
-        .init(minutes: 240, title: "4 horas", short: "4 h"),
-        .init(minutes: 480, title: "8 horas", short: "8 h"),
-        .init(minutes: 720, title: "12 horas", short: "12 h"),
-        .init(minutes: 0, title: "Nunca", short: "Nunca"),
-    ]
+    /// As durações fixas, "Até às HH:MM" (com a hora escolhida no texto) e "Nunca".
+    static func autoOffOptions(untilClock: Int) -> [AutoOffOption] {
+        let time = clockText(untilClock)
+        return [
+            .init(minutes: 10, title: "10 minutos", short: "10 min"),
+            .init(minutes: 20, title: "20 minutos", short: "20 min"),
+            .init(minutes: 30, title: "30 minutos", short: "30 min"),
+            .init(minutes: 60, title: "1 hora", short: "1 h"),
+            .init(minutes: 120, title: "2 horas", short: "2 h"),
+            .init(minutes: 240, title: "4 horas", short: "4 h"),
+            .init(minutes: 480, title: "8 horas", short: "8 h"),
+            .init(minutes: 720, title: "12 horas", short: "12 h"),
+            // Só a hora na pílula: "Até 18:00" não cabe ao lado do "+1 h" sem cortar o título da linha.
+            .init(minutes: untilClockMinutes, title: "Até às \(time)", short: time),
+            .init(minutes: 0, title: "Nunca", short: "Nunca"),
+        ]
+    }
+
+    /// Minutos desde a meia-noite como "HH:MM" (sempre com zero à esquerda). Pura.
+    static func clockText(_ clock: Int) -> String {
+        let c = min(max(clock, 0), 24 * 60 - 1)
+        return String(format: "%02d:%02d", c / 60, c % 60)
+    }
+
+    /// Hoje à hora `clock`, para o seletor de hora das Definições (que só mostra
+    /// horas e minutos). Pura.
+    static func clockDate(_ clock: Int, now: Date = Date(), calendar: Calendar = .current) -> Date {
+        let c = min(max(clock, 0), 24 * 60 - 1)
+        return calendar.date(bySettingHour: c / 60, minute: c % 60, second: 0, of: now) ?? now
+    }
+
+    /// O contrário de `clockDate`: a hora e os minutos de `date`, desde a meia-noite. Pura.
+    static func clockMinutes(of date: Date, calendar: Calendar = .current) -> Int {
+        let parts = calendar.dateComponents([.hour, .minute], from: date)
+        return (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+    }
 
     private static let batteryThresholdKey = "batteryThreshold"
 
@@ -1005,11 +1070,58 @@ final class SleepController {
         }
     }
 
-    /// Quando o auto-desligar dispara: início + duração + extensão. `nil` com
-    /// a duração a 0 (nunca). Pura.
-    static func autoOffDate(since: Date, minutes: Int, extension seconds: TimeInterval = 0) -> Date? {
+    /// Quando o auto-desligar dispara: início + duração + extensão. Em "Até às"
+    /// (`untilClockMinutes`) é a primeira ocorrência da hora depois do mais tardio
+    /// de `since` e `untilSetAt`, mais a extensão. `nil` com a duração a 0 (nunca). Pura.
+    static func autoOffDate(since: Date, minutes: Int, extension seconds: TimeInterval = 0,
+                            untilClock: Int = 18 * 60, untilSetAt: Date? = nil,
+                            calendar: Calendar = .current) -> Date? {
+        if minutes == untilClockMinutes {
+            let anchor = max(since, untilSetAt ?? since)
+            return untilDate(clock: untilClock, after: anchor, calendar: calendar)
+                .addingTimeInterval(max(0, seconds))
+        }
         guard minutes > 0 else { return nil }
         return since.addingTimeInterval(TimeInterval(minutes) * 60 + max(0, seconds))
+    }
+
+    /// A primeira ocorrência de `clock` (minutos desde a meia-noite) estritamente
+    /// depois de `anchor`: à hora exata conta a do dia seguinte. Pura.
+    static func untilDate(clock: Int, after anchor: Date, calendar: Calendar = .current) -> Date {
+        let c = min(max(clock, 0), 24 * 60 - 1)
+        let time = DateComponents(hour: c / 60, minute: c % 60, second: 0)
+        // `.nextTime`: uma hora que não existe (salto da primavera) passa para a seguinte.
+        return calendar.nextDate(after: anchor, matching: time, matchingPolicy: .nextTime)
+            ?? anchor.addingTimeInterval(24 * 3600)
+    }
+
+    /// O prazo para a linha de estado do painel: "Desliga sozinho às 18:00", com
+    /// "amanhã" ou a data (dd/MM) se não for hoje; com o prazo já passado, o
+    /// auto-desligar falhou. Pura.
+    static func autoOffLabel(off: Date, now: Date, calendar: Calendar = .current) -> String {
+        let time = formatted(off, "HH:mm", calendar: calendar)
+        if off <= now { return "Não desligou às \(time) — desliga à mão" }
+        if calendar.isDate(off, inSameDayAs: now) { return "Desliga sozinho às \(time)" }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(off, inSameDayAs: tomorrow) {
+            return "Desliga sozinho amanhã às \(time)"
+        }
+        return "Desliga sozinho a \(formatted(off, "dd/MM", calendar: calendar)) às \(time)"
+    }
+
+    private static func formatted(_ date: Date, _ format: String, calendar: Calendar) -> String {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.calendar = calendar
+        fmt.timeZone = calendar.timeZone
+        fmt.dateFormat = format
+        return fmt.string(from: date)
+    }
+
+    /// `autoOffDate` com as preferências e o estado desta sessão.
+    private func deadline(since: Date) -> Date? {
+        Self.autoOffDate(since: since, minutes: Self.autoOffMinutes, extension: autoOffExtension,
+                         untilClock: Self.autoOffUntilClock, untilSetAt: Self.autoOffUntilSetAt)
     }
 
     /// Já avisámos (5 min antes) que o auto-desligar se aproxima. Em disco, ligado
@@ -1066,13 +1178,13 @@ final class SleepController {
         // Com a espera pelo Claude também não: acaba com ele (ou no teto).
         guard isActive, Self.hasDeadline(startedByTrigger: startedByTrigger, waitingForClaude: waitsForClaude),
               let since = activeSince else { return nil }
-        return Self.autoOffDate(since: since, minutes: Self.autoOffMinutes, extension: autoOffExtension)
+        return deadline(since: since)
     }
 
     private func autoOffExpired() -> Bool {
         guard Self.hasDeadline(startedByTrigger: startedByTrigger, waitingForClaude: waitsForClaude),
               let since = activeSince,
-              let off = Self.autoOffDate(since: since, minutes: Self.autoOffMinutes, extension: autoOffExtension)
+              let off = deadline(since: since)
         else { return false }
         return Date() >= off
     }
@@ -1199,7 +1311,11 @@ final class SleepController {
         let closed = LidMonitor.current().closedWithoutExternal
         let lid = closed ? "fechada sem ecrã externo" : "aberta ou com ecrã externo"
         switch reason {
-        case .autoOff: NSLog("Sleepy: auto-desligar ao fim de \(Self.autoOffMinutes) min (tampa \(lid))")
+        case .autoOff:
+            let when = Self.autoOffMinutes == Self.untilClockMinutes
+                ? "à hora marcada (\(Self.clockText(Self.autoOffUntilClock)))"
+                : "ao fim de \(Self.autoOffMinutes) min"
+            NSLog("Sleepy: auto-desligar \(when) (tampa \(lid))")
         case .battery(let percent): NSLog("Sleepy: a desligar com a bateria a \(percent) % (tampa \(lid))")
         case .thermal: NSLog("Sleepy: a desligar, o Mac está a aquecer (tampa \(lid))")
         case .remoteSessionEnded: NSLog("Sleepy: a sessão remota terminou — a desligar (tampa \(lid))")
