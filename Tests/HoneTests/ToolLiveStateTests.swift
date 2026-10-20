@@ -61,24 +61,19 @@ final class ToolLiveStateTests: XCTestCase {
         XCTAssertEqual(tool.liveState?.isActive, true)
     }
 
-    private func home(enabled: Bool = true, alert: HomeTool.Alert? = nil, idle: Bool) -> HomeTool {
+    private func home(enabled: Bool = true, alert: HomeTool.Alert? = nil) -> HomeTool {
         HomeTool(id: "x", title: "X", shortTitle: "X", category: "", tagline: "", iconSystemName: "moon",
                  tint: .white, isAvailable: true, isMomentary: false, actionLabel: "", isEnabled: enabled,
-                 hasPanel: true, alert: alert, isIdle: idle)
+                 hasPanel: true, alert: alert)
     }
 
-    func testAnIdleToolDozesAndABusyOneIsAwake() {
-        XCTAssertEqual(home(idle: true).mood, .asleep)
-        XCTAssertEqual(home(idle: false).mood, .awake)
+    /// The switch is on, so the mascot is awake, even when Sleepy isn't blocking sleep.
+    func testAnOnToolIsAwake() {
+        XCTAssertEqual(home().mood, .awake)
     }
 
-    func testAlertsAndOffStillWinOverIdle() {
-        XCTAssertEqual(home(alert: .paused, idle: true).mood, .alert)
-        XCTAssertEqual(home(enabled: false, idle: false).mood, .asleep)
-    }
-
-    func testIdleOnlyChangesTheMood() {
-        XCTAssertTrue(home(idle: true).isLive)
-        XCTAssertTrue(home(idle: true).canOpenPanel)
+    func testAlertsAndOffWin() {
+        XCTAssertEqual(home(alert: .paused).mood, .alert)
+        XCTAssertEqual(home(enabled: false).mood, .asleep)
     }
 }

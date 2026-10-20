@@ -66,9 +66,9 @@ extension PreviewRenderer {
                      status: .off, ownIcon: false,
                      settings: SleepyPreview.settings())
             }),
-            // On in Hone, but not blocking sleep: the switch is on, the mascot dozes.
-            ("settings-sleepy-on", window("sleepy", off: off.subtracting(["sleepy"]), asleep: ["sleepy"]) {
-                tool("sleepy", mood: .asleep,
+            // On in Hone, but not blocking sleep: the switch is on, the mascot stays awake.
+            ("settings-sleepy-on", window("sleepy", off: off.subtracting(["sleepy"])) {
+                tool("sleepy",
                      status: .on(ToolLiveState(isActive: false, text: "sleep normal"), tint: VibeToolColor.sleepy),
                      ownIcon: false, settings: SleepyPreview.settings())
             }),
@@ -91,13 +91,13 @@ extension PreviewRenderer {
 
     /// The window: the sidebar as the live one builds it, `detail` on the right. Tall by
     /// default, with the pages laid out whole, so one image shows a page end to end.
-    private static func window<Detail: View>(_ selected: String, off: Set<String>, asleep: Set<String> = [],
+    private static func window<Detail: View>(_ selected: String, off: Set<String>,
                                              height: CGFloat = 900,
                                              @ViewBuilder detail: () -> Detail) -> AnyView {
         let entries = Fixture.all.map { spec -> SettingsEntry in
             let active = spec.momentary || !off.contains(spec.id)
             let isApp = spec.panel || spec.momentary
-            let mood: Blob.Mood = active && !asleep.contains(spec.id) ? .awake : .asleep
+            let mood: Blob.Mood = active ? .awake : .asleep
             return SettingsEntry(id: spec.id, title: spec.title,
                                  leading: isApp ? .blob(spec.tint, mood) : .tweak(spec.icon, spec.tint),
                                  isActive: active, isApp: isApp)

@@ -90,8 +90,7 @@ struct MenuBarContent: View {
                 iconSystemName: module.iconSystemName, tint: module.tint,
                 isAvailable: module.isAvailable, isMomentary: module.isMomentary,
                 actionLabel: module.actionLabel, isEnabled: module.isEnabled,
-                hasPanel: tool != nil, alert: alert(for: module, tool: tool),
-                isIdle: manager.isIdle(module))
+                hasPanel: tool != nil, alert: alert(for: module, tool: tool))
         }
     }
 
