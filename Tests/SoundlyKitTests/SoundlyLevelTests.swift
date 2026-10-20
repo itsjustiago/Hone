@@ -63,6 +63,9 @@ final class SoundlyLevelTests: XCTestCase {
         XCTAssertEqual(SoundlyMixer.status(level: low, hasTap: true, failure: nil, permission: .granted), .adjusted)
         XCTAssertEqual(SoundlyMixer.status(level: low, hasTap: false, failure: nil, permission: .unknown), .needsPermission)
         XCTAssertEqual(SoundlyMixer.status(level: low, hasTap: false, failure: nil, permission: .denied), .needsPermission)
+        XCTAssertEqual(SoundlyMixer.status(level: low, hasTap: true, failure: nil, permission: .denied), .needsPermission,
+                       "refused: a tap can't be applying anything")
+        XCTAssertEqual(SoundlyMixer.status(level: low, hasTap: false, failure: "Falhou", permission: .denied), .needsPermission)
     }
 
     // MARK: Persistence

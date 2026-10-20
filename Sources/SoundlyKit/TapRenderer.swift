@@ -23,6 +23,11 @@ struct TapRenderState {
     /// left and right: the device's preferred stereo pair.
     var stereoLeft: Int32
     var stereoRight: Int32
+    /// Set to 1 by the IOProc on every cycle, read by the main thread: the tap is
+    /// being read, so the app's own stream is muted (`mutedWhenTapped`). Same
+    /// single-store argument as `targetGain`. Lets a rebuild retire the old tap
+    /// only once the new one has taken over.
+    var hasRendered: Int32 = 0
 }
 
 /// A linear gain ramp: the gain moves towards its target by at most
@@ -141,7 +146,8 @@ enum TapRenderer {
 /// pointer handed over as client data, so no Swift closure context, no retain.
 let soundlyIOProc: AudioDeviceIOProc = { _, _, input, _, output, _, clientData in
     guard let clientData else { return noErr }
-    TapRenderer.render(input: input, output: output,
-                       state: clientData.assumingMemoryBound(to: TapRenderState.self))
+    let state = clientData.assumingMemoryBound(to: TapRenderState.self)
+    TapRenderer.render(input: input, output: output, state: state)
+    state.pointee.hasRendered = 1
     return noErr
 }

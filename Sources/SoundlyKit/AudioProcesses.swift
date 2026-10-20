@@ -44,9 +44,12 @@ struct AudioAppGroup: Equatable {
 ///
 /// Owner of a process, first match wins:
 /// 1. its responsible process is another UI app — how macOS attributes helpers,
-///    XPC services and WebKit processes (also what TCC uses). Checked first
-///    because Electron helpers ("Discord Helper (Renderer)") register with
-///    Launch Services as UI apps of their own;
+///    XPC services and WebKit processes (also what TCC uses) — and the process
+///    is not a UI app of its own, or it is one shipped inside the responsible
+///    app's bundle. Electron helpers ("Discord Helper (Renderer)") register with
+///    Launch Services as UI apps but live in `Discord.app`, so they go to
+///    Discord; a game Steam launched, or an app started from Terminal, is a UI
+///    app elsewhere and stays its own;
 /// 2. the process is itself a UI app;
 /// 3. its executable sits inside a running UI app's bundle
 ///    (`Google Chrome.app/Contents/Frameworks/…/Google Chrome Helper.app`);
@@ -55,11 +58,13 @@ struct AudioAppGroup: Equatable {
 /// Processes with no owner (daemons, system sound servers) are left out.
 enum AudioAppGrouping {
     static func owner(of process: AudioProcessFacts, apps: [pid_t: RunningAppFacts]) -> RunningAppFacts? {
+        let own = apps[process.pid].flatMap { $0.isUIApp ? $0 : nil }
         if let responsible = process.responsiblePID, responsible != process.pid,
-           let app = apps[responsible], app.isUIApp {
+           let app = apps[responsible], app.isUIApp,
+           own == nil || isShipped(process, own: own, inside: app) {
             return app
         }
-        if let app = apps[process.pid], app.isUIApp { return app }
+        if let own { return own }
         let uiApps = apps.values.filter(\.isUIApp)
         if let path = process.executablePath, let bundle = outermostAppBundle(in: path),
            let app = uiApps.filter({ $0.bundlePath.map(standardized) == bundle }).min(by: { $0.pid < $1.pid }) {
@@ -70,6 +75,17 @@ enum AudioAppGrouping {
             return candidates.max { ($0.bundleID.count, -$0.pid) < ($1.bundleID.count, -$1.pid) }
         }
         return nil
+    }
+
+    /// The process (its executable, or failing that its own app bundle) lives
+    /// inside `app`'s bundle: a helper app the app ships, not one it launched.
+    private static func isShipped(_ process: AudioProcessFacts, own: RunningAppFacts?,
+                                  inside app: RunningAppFacts) -> Bool {
+        guard let bundle = app.bundlePath.map(standardized) else { return false }
+        return [process.executablePath, own?.bundlePath].contains { path in
+            guard let path, let outer = outermostAppBundle(in: path) else { return false }
+            return outer == bundle && standardized(path) != bundle
+        }
     }
 
     /// The outermost `.app` folder in `path`, or `nil` when it isn't inside one.
@@ -130,6 +146,13 @@ enum AudioProcessReader {
                                  isPlaying: isPlaying(object),
                                  responsiblePID: responsiblePID(for: pid),
                                  executablePath: executablePath(for: pid))
+    }
+
+    /// The devices the process plays to right now (`kAudioProcessPropertyDevices`,
+    /// output scope). Empty when it has no output open or it can't be read.
+    static func outputDevices(_ object: AudioObjectID) -> [AudioDeviceID] {
+        (try? AudioObject.readArray(object, kAudioProcessPropertyDevices, scope: kAudioObjectPropertyScopeOutput,
+                                    of: AudioDeviceID.self, initial: 0)) ?? []
     }
 
     static func isPlaying(_ object: AudioObjectID) -> Bool {

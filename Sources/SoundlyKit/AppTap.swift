@@ -1,7 +1,8 @@
 import CoreAudio
 import Foundation
 
-/// The device the system plays to, and what a tap needs to know about it.
+/// An output device (the system's default, or the one an app plays to) and what
+/// a tap needs to know about it.
 struct OutputDevice: Equatable {
     var id: AudioDeviceID
     var uid: String
@@ -20,8 +21,13 @@ struct OutputDevice: Equatable {
 
     static func currentDefault() -> OutputDevice? {
         guard let id = try? AudioObject.read(AudioObject.system, kAudioHardwarePropertyDefaultOutputDevice,
-                                             as: AudioDeviceID.self, initial: 0),
-              id != kAudioObjectUnknown,
+                                             as: AudioDeviceID.self, initial: 0) else { return nil }
+        return read(id)
+    }
+
+    /// `nil` when the device can't be read (gone, or private to another process).
+    static func read(_ id: AudioDeviceID) -> OutputDevice? {
+        guard id != kAudioObjectUnknown,
               let uid = try? AudioObject.readString(id, kAudioDevicePropertyDeviceUID), !uid.isEmpty else { return nil }
         let name = (try? AudioObject.readString(id, kAudioObjectPropertyName)) ?? uid
         let rate = (try? AudioObject.read(id, kAudioDevicePropertyNominalSampleRate, as: Float64.self, initial: 0)) ?? 0
@@ -42,8 +48,8 @@ struct OutputDevice: Equatable {
 ///
 /// The tap mixes the app's processes down to stereo with `mutedWhenTapped`: the
 /// app's own stream is silenced only *while someone reads the tap*. The
-/// aggregate holds the tap plus the current output device, and its IOProc copies
-/// the tap to that output with the gain applied.
+/// aggregate holds the tap plus the device the app plays to (see `OutputRouting`),
+/// and its IOProc copies the tap to that output with the gain applied.
 ///
 /// No app can be left muted by a dead Hone. From the SDK headers:
 /// - `CATapMutedWhenTapped` (CATapDescription.h): audio "is captured by the tap
@@ -60,13 +66,16 @@ struct OutputDevice: Equatable {
 /// Main thread only, except for the IOProc (see `TapRenderState`). Call
 /// `invalidate()` before dropping it: that is what stops the audio.
 @MainActor
-final class AppTap {
+final class AppTap: SoundlyTap {
     enum Failure: Error, CustomStringConvertible {
         case needsNewerSystem
         case coreAudio(CoreAudioError)
         case unsupportedFormat(String)
         /// The output has no stream the aggregate can play to (an aggregate or multi-output device).
         case unusableOutput(String)
+        /// Core Audio refused to keep the output device's own inputs off: starting
+        /// would risk switching its microphone on (AirPods would drop to HFP).
+        case inputsNotDisabled(String, OSStatus)
 
         var description: String {
             switch self {
@@ -74,12 +83,13 @@ final class AppTap {
             case .coreAudio(let error): return "Erro de áudio: \(error.description)."
             case .unsupportedFormat(let detail): return "Formato de áudio não suportado (\(detail))."
             case .unusableOutput(let name): return "A saída «\(name)» não pode ser usada (dispositivo agregado ou de várias saídas)."
+            case .inputsNotDisabled(let name, let status):
+                return "Não foi possível manter o microfone de «\(name)» desligado (\(CoreAudioError.fourCC(status)))."
             }
         }
     }
 
     private(set) var objectIDs: [AudioObjectID]
-    let deviceUID: String
     private let description: CATapDescription
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
@@ -92,7 +102,6 @@ final class AppTap {
     init(objectIDs: [AudioObjectID], appName: String, output: OutputDevice,
          startGain: Float, targetGain: Float) throws {
         self.objectIDs = objectIDs
-        deviceUID = output.uid
         description = CATapDescription(stereoMixdownOfProcesses: objectIDs)
         description.uuid = UUID()
         description.name = "Hone Soundly — \(appName)"
@@ -117,6 +126,8 @@ final class AppTap {
         set { if isValid { state.pointee.targetGain = min(max(newValue, 0), 1) } }
     }
 
+    var hasRendered: Bool { isValid && state.pointee.hasRendered != 0 }
+
     private func check(_ status: OSStatus, _ operation: String) throws {
         guard status == noErr else { throw Failure.coreAudio(CoreAudioError(operation: operation, status: status)) }
     }
@@ -137,8 +148,12 @@ final class AppTap {
             kAudioAggregateDeviceMainSubDeviceKey: output.uid,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,
-            // IO starts when the app first sends audio, not before.
-            kAudioAggregateDeviceTapAutoStartKey: true,
+            // No `kAudioAggregateDeviceTapAutoStartKey`: with it, AudioHardware.h says
+            // "calling AudioDeviceStart with the aggregate device will wait until a
+            // tapped process begins receiving its first audio". This runs on the
+            // main thread and the app may be silent (paused, muted between calls),
+            // so the start must not depend on the app playing. Without the key the
+            // IO runs from the start, reading silence until the app plays.
             kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: output.uid]],
             // Drift compensation resamples the tap onto the output's clock — except
             // on Bluetooth, where both already follow the same clock (see `isBluetooth`).
@@ -178,16 +193,20 @@ final class AppTap {
         try check(AudioDeviceCreateIOProcID(aggregateID, soundlyIOProc, UnsafeMutableRawPointer(state), &procID),
                   "Criar o IOProc")
         if aggregateInputs > tapStreams {
-            disableDeviceInputs(total: aggregateInputs, tapStreams: tapStreams)
+            // Never start a duplex device (AirPods, USB headset) with its inputs
+            // possibly on: that is microphone use, and Bluetooth drops to HFP.
+            let status = disableDeviceInputs(total: aggregateInputs, tapStreams: tapStreams)
+            guard status == noErr else { throw Failure.inputsNotDisabled(output.name, status) }
         }
         try check(AudioDeviceStart(aggregateID, procID), "Arrancar o áudio")
     }
 
     /// Tells Core Audio the IOProc never reads the output device's own input
     /// streams, so they are never switched on: a duplex device (USB headset)
-    /// would otherwise count as microphone use. Best effort.
-    private func disableDeviceInputs(total: Int, tapStreams: Int) {
-        guard let procID else { return }
+    /// would otherwise count as microphone use. The caller fails the tap unless
+    /// this returns `noErr`.
+    private func disableDeviceInputs(total: Int, tapStreams: Int) -> OSStatus {
+        guard let procID else { return kAudioHardwareIllegalOperationError }
         let header = MemoryLayout<AudioHardwareIOProcStreamUsage>.offset(of: \.mStreamIsOn) ?? 12
         let size = header + total * MemoryLayout<UInt32>.size
         let raw = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: MemoryLayout<UnsafeRawPointer>.alignment)
@@ -200,7 +219,7 @@ final class AppTap {
                            toByteOffset: header + i * MemoryLayout<UInt32>.size, as: UInt32.self)
         }
         var address = AudioObject.address(kAudioDevicePropertyIOProcStreamUsage, kAudioObjectPropertyScopeInput)
-        _ = AudioObjectSetPropertyData(aggregateID, &address, 0, nil, UInt32(size), raw)
+        return AudioObjectSetPropertyData(aggregateID, &address, 0, nil, UInt32(size), raw)
     }
 
     /// Points the existing tap at a new set of processes (a helper appeared or

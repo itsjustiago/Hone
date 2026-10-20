@@ -65,6 +65,49 @@ final class AppGroupingTests: XCTestCase {
         XCTAssertEqual(groups.first?.isPlaying, true)
     }
 
+    private let terminal = RunningAppFacts(pid: 800, bundleID: "com.apple.Terminal", name: "Terminal",
+                                           bundlePath: "/System/Applications/Utilities/Terminal.app", isUIApp: true)
+    private let steam = RunningAppFacts(pid: 810, bundleID: "com.valvesoftware.steam", name: "Steam",
+                                        bundlePath: "/Applications/Steam.app", isUIApp: true)
+
+    func testUIAppLaunchedFromTerminalIsItsOwnOwner() {
+        // `./Game.app/Contents/MacOS/Game` typed in Terminal: Terminal is responsible,
+        // but the game is a UI app of its own, outside Terminal.app.
+        let game = RunningAppFacts(pid: 801, bundleID: "com.example.game", name: "Game",
+                                   bundlePath: "/Users/x/Games/Game.app", isUIApp: true)
+        let process = process(40, pid: 801, bundleID: "com.example.game", playing: true, responsible: 800,
+                              path: "/Users/x/Games/Game.app/Contents/MacOS/Game")
+        XCTAssertEqual(AudioAppGrouping.owner(of: process, apps: byPID([terminal, game]))?.bundleID, "com.example.game")
+        let groups = AudioAppGrouping.groups(processes: [process], apps: [terminal, game], hostPID: 1, hostBundleIDs: [])
+        XCTAssertEqual(groups.map(\.owner.bundleID), ["com.example.game"], "its own slider, not Terminal's")
+    }
+
+    func testGameLaunchedBySteamIsItsOwnOwner() {
+        let game = RunningAppFacts(pid: 811, bundleID: "com.studio.game", name: "Game",
+                                   bundlePath: "/Users/x/Library/Application Support/Steam/steamapps/common/Game/Game.app",
+                                   isUIApp: true)
+        let process = process(41, pid: 811, bundleID: "com.studio.game", responsible: 810,
+                              path: "/Users/x/Library/Application Support/Steam/steamapps/common/Game/Game.app/Contents/MacOS/Game")
+        XCTAssertEqual(AudioAppGrouping.owner(of: process, apps: byPID([steam, game]))?.bundleID, "com.studio.game")
+    }
+
+    func testCommandLineToolLaunchedFromTerminalStillGoesToTerminal() {
+        // `afplay` isn't a UI app: the responsible app is all there is.
+        let afplay = process(42, pid: 802, responsible: 800, path: "/usr/bin/afplay")
+        XCTAssertEqual(AudioAppGrouping.owner(of: afplay, apps: byPID([terminal]))?.bundleID, "com.apple.Terminal")
+    }
+
+    func testUIHelperInsideTheResponsibleBundleByExecutablePath() {
+        // Launch Services gave no bundle path, but the executable sits inside Discord.app.
+        let discord = RunningAppFacts(pid: 700, bundleID: "com.hnc.Discord", name: "Discord",
+                                      bundlePath: "/Applications/Discord.app", isUIApp: true)
+        let renderer = RunningAppFacts(pid: 702, bundleID: "com.hnc.Discord.helper.Renderer",
+                                       name: "Discord Helper (Renderer)", bundlePath: nil, isUIApp: true)
+        let helper = process(43, pid: 702, responsible: 700,
+                             path: "/Applications/Discord.app/Contents/Frameworks/Discord Helper (Renderer).app/Contents/MacOS/Discord Helper (Renderer)")
+        XCTAssertEqual(AudioAppGrouping.owner(of: helper, apps: byPID([discord, renderer]))?.bundleID, "com.hnc.Discord")
+    }
+
     func testAppResponsibleForItselfIsItsOwnOwner() {
         let spotifyProcess = process(30, pid: 300, bundleID: "com.spotify.client", responsible: 300)
         XCTAssertEqual(AudioAppGrouping.owner(of: spotifyProcess, apps: byPID([spotify]))?.bundleID, "com.spotify.client")
