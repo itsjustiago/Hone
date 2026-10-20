@@ -122,10 +122,11 @@ public struct VibeSlider: View {
     let onDoubleClickThumb: (() -> Void)?
 
     @State private var dragging = false
-    @State private var press: VibeSliderPress.Kind?
-    /// The press has moved at some point (a knob brought back to where it was grabbed still follows).
-    @State private var pressMoved = false
-    @State private var clicks = VibeSliderPress()
+    /// The press under way and the clicks before it.
+    @State private var tracker = VibeSliderPress()
+    /// True while a drag lasts. SwiftUI resets it when the drag ends *and* when
+    /// it is cancelled (the panel closing mid-drag), which never calls `onEnded`.
+    @GestureState private var isPressed = false
 
     /// Keys and VoiceOver move it in steps of 5 % (of the value, e.g. 0.05).
     static let step = 0.05
@@ -185,6 +186,13 @@ public struct VibeSlider: View {
         return abs(value - target) <= span * snapFraction ? target : value
     }
 
+    /// One key or VoiceOver step of `delta` from `value`: kept in `range` and,
+    /// like a drag, pulled onto `defaultValue` when it lands close.
+    static func stepped(_ value: Double, by delta: Double, in range: ClosedRange<Double> = 0...1,
+                        defaultValue: Double? = nil) -> Double {
+        snapped(min(max(value + delta, range.lowerBound), range.upperBound), to: defaultValue, in: range)
+    }
+
     /// What a press of `kind`, now at `x`, sets — `nil` for nothing: a knob
     /// that hasn't moved yet (so a click, or the first half of a double-click,
     /// never nudges it) and a double-click (which resets instead).
@@ -209,6 +217,15 @@ public struct VibeSlider: View {
         } else if let defaultValue {
             value = defaultValue
         }
+    }
+
+    /// The drag is over, ended or cancelled. Safe to call twice: both ways out
+    /// may run, in either order.
+    private func endPress() {
+        tracker.finish()
+        guard dragging else { return }
+        dragging = false
+        onEditingChanged(false)
     }
 
     public var body: some View {
@@ -241,34 +258,32 @@ public struct VibeSlider: View {
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
+                    .updating($isPressed) { _, pressed, _ in pressed = true }
                     .onChanged { drag in
-                        if press == nil {
-                            if !dragging {
-                                dragging = true
-                                onEditingChanged(true)
-                            }
-                            let kind = clicks.began(x: drag.startLocation.x, knobCenter: center, knob: knob,
+                        if !dragging {
+                            dragging = true
+                            onEditingChanged(true)
+                        }
+                        let press = tracker.changed(x: drag.startLocation.x,
+                                                    distance: hypot(drag.translation.width, drag.translation.height),
+                                                    knobCenter: center, knob: knob,
                                                     time: drag.time.timeIntervalSinceReferenceDate,
                                                     doubleClickInterval: NSEvent.doubleClickInterval,
                                                     resets: resets)
-                            press = kind
-                            pressMoved = false
-                            if kind == .doubleClick { reset() }
-                        }
-                        if drag.translation != .zero { pressMoved = true }
-                        guard let press,
-                              let next = Self.value(for: press, atX: drag.location.x,
-                                                    moved: pressMoved, width: width, knob: knob,
+                        if press.isNew, press.kind == .doubleClick { reset() }
+                        guard let next = Self.value(for: press.kind, atX: drag.location.x,
+                                                    moved: tracker.moved, width: width, knob: knob,
                                                     in: range, defaultValue: defaultValue) else { return }
                         value = next
                     }
                     .onEnded { drag in
-                        clicks.ended(distance: hypot(drag.translation.width, drag.translation.height))
-                        press = nil
-                        dragging = false
-                        onEditingChanged(false)
+                        tracker.ended(distance: hypot(drag.translation.width, drag.translation.height))
+                        endPress()
                     }
             )
+            .onChange(of: isPressed) { _, pressed in
+                if !pressed { endPress() }
+            }
         }
         .frame(height: VibeMetrics.toggle.height)
         .animation(VibeMotion.quick, value: dragging)
@@ -277,17 +292,23 @@ public struct VibeSlider: View {
         .accessibilityValue(Text("\(Int((min(max(value, range.lowerBound), range.upperBound) * 100).rounded())) por cento"))
         .accessibilityAdjustableAction { direction in
             switch direction {
-            case .increment: value = min(value + Self.step, range.upperBound)
-            case .decrement: value = max(value - Self.step, range.lowerBound)
+            case .increment: value = Self.stepped(value, by: Self.step, in: range, defaultValue: defaultValue)
+            case .decrement: value = Self.stepped(value, by: -Self.step, in: range, defaultValue: defaultValue)
             @unknown default: break
+            }
+        }
+        .accessibilityActions {
+            if let defaultValue {
+                Button("Repor \(Int((defaultValue * 100).rounded())) %") { reset() }
             }
         }
     }
 }
 
 /// How a press on a `VibeSlider` reads: on the track it jumps the knob there;
-/// on the knob it grabs it where it is; a second click on the knob within the
-/// system's double-click interval is a reset. Pure, so it is tested without a window.
+/// on the knob it grabs it where it is, and only follows once it has moved past
+/// `clickSlop`; a second click on the knob within the system's double-click
+/// interval is a reset. Pure, so it is tested without a window.
 struct VibeSliderPress: Equatable {
     enum Kind: Equatable {
         case track
@@ -304,6 +325,32 @@ struct VibeSliderPress: Equatable {
 
     /// When the last click (a press that didn't drag) on the knob began.
     private(set) var lastKnobClick: TimeInterval?
+    /// The press under way; `nil` between presses.
+    private(set) var current: Kind?
+    /// The press under way has gone past `clickSlop` at some point (a knob
+    /// brought back to where it was grabbed still follows).
+    private(set) var moved = false
+
+    /// Further than `clickSlop` from where the press began: a drag, not a click.
+    static func isDrag(distance: CGFloat) -> Bool { distance > clickSlop }
+
+    /// The pointer moved, `distance` points from where the press began at `x`.
+    /// The first call of a press decides its kind (`began`); `isNew` says so.
+    mutating func changed(x: CGFloat, distance: CGFloat, knobCenter: CGFloat, knob: CGFloat, time: TimeInterval,
+                          doubleClickInterval: TimeInterval, resets: Bool) -> (kind: Kind, isNew: Bool) {
+        let kind: Kind
+        let isNew = current == nil
+        if let current {
+            kind = current
+        } else {
+            kind = began(x: x, knobCenter: knobCenter, knob: knob, time: time,
+                         doubleClickInterval: doubleClickInterval, resets: resets)
+            current = kind
+            moved = false
+        }
+        if Self.isDrag(distance: distance) { moved = true }
+        return (kind, isNew)
+    }
 
     /// A press began at `x`. `resets`: the slider has something to reset to,
     /// otherwise a double-click is just two clicks.
@@ -324,7 +371,14 @@ struct VibeSliderPress: Equatable {
 
     /// The press ended after moving `distance` points: a drag isn't half of a double-click.
     mutating func ended(distance: CGFloat) {
-        if distance > Self.clickSlop { lastKnobClick = nil }
+        if Self.isDrag(distance: distance) { lastKnobClick = nil }
+        finish()
+    }
+
+    /// The press is over, ended or cancelled: the next one starts clean.
+    mutating func finish() {
+        current = nil
+        moved = false
     }
 }
 

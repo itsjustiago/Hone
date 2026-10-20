@@ -54,18 +54,32 @@ enum GainRamp {
 }
 
 /// Keeps a boost (gain above 1) from clipping, without touching anything at or
-/// below 100 %. A peak limiter with instant attack, a short hold and a smooth
-/// release, stereo-linked: it follows the loudest boosted sample of each frame
-/// and turns the gain down just enough to keep it under `ceiling`. It only ever
-/// takes back the boost — never below what the app plays at 100 % — so a level
-/// just over 100 % sounds exactly like 100 % and crossing it doesn't click.
+/// below 100 %. A stereo-linked peak limiter: it follows the loudest *input*
+/// sample of each frame (before gain) with an instant attack, a short hold and a
+/// smooth release, and gives back as much of the boost as the curve allows. It
+/// only ever takes back the boost — never below what the app plays at 100 % — so
+/// a level just over 100 % sounds exactly like 100 % and crossing it doesn't click.
+///
+/// The envelope is pre-gain, so lowering the gain mid-limiting lowers the level
+/// at once instead of leaving a peak boosted at the old gain holding it down.
+///
+/// Soft knee, no look-ahead (that would delay the output at ≤ 100 % too): the
+/// boosted envelope goes through `shaped`, linear up to `knee` (−6 dBFS) and
+/// then easing exponentially towards `ceiling` with a continuous slope. With an
+/// instant attack the envelope is never below the current sample, so the output
+/// stays under `ceiling` with no clipper; the knee turns the first rising edge of
+/// a transient into a gentle saturation rather than a flat top at the ceiling.
+/// A timed attack was ruled out: it lets peaks through, and the clipper needed
+/// to catch them would flatten them again.
 ///
 /// Plain values only, owned by the IOProc: no allocation, lock or ARC.
-/// `envelope` is either 0 or above the ceiling, so silence never decays it into
-/// subnormal floats.
+/// `envelope` is either 0 or high enough to reach the knee once boosted, so
+/// silence never decays it into subnormal floats.
 struct PeakLimiter {
-    /// -1 dBFS: what a boosted peak is brought down to.
+    /// -1 dBFS: what boosted peaks approach and never pass.
     static let defaultCeiling: Float = 0.891
+    /// -6 dBFS: where the boost starts to be eased.
+    static let defaultKnee: Float = 0.5
     /// A peak holds the gain down this long before it recovers: longer than the
     /// gap between peaks of a 25 Hz bass, so steady low notes aren't rippled.
     static let holdDuration: Double = 0.02
@@ -74,16 +88,19 @@ struct PeakLimiter {
 
     /// Read in the IOProc, so stored rather than static (no lazy global there).
     var ceiling: Float
+    var knee: Float
     var holdFrames: Int32
     /// Per-frame multiplier of the envelope while it recovers.
     var release: Float
-    /// The boosted peak being held or released; 0 while nothing is over the ceiling.
+    /// The input peak (before gain) being held or released; 0 while boosting it
+    /// stays under the knee.
     var envelope: Float = 0
     var holdLeft: Int32 = 0
 
     init(sampleRate: Double = 48_000) {
         let rate = sampleRate > 0 ? sampleRate : 48_000
         ceiling = Self.defaultCeiling
+        knee = Self.defaultKnee
         holdFrames = Int32((rate * Self.holdDuration).rounded())
         release = Float(exp(-1 / (rate * Self.releaseDuration)))
     }
@@ -92,23 +109,35 @@ struct PeakLimiter {
     /// gain), when `gain` > 1. Between 1 and `gain`.
     @inline(__always)
     mutating func limitedGain(peak: Float, gain: Float) -> Float {
-        var level = peak * gain
-        if !(level < .infinity) { level = 0 }  // NaN or ∞ must not stick in the state
-        if level >= envelope {
-            envelope = level
+        var peak = peak
+        if !(peak < .infinity) { peak = 0 }  // NaN or ∞ must not stick in the state
+        if peak >= envelope {
+            envelope = peak
             holdLeft = holdFrames
         } else if holdLeft > 0 {
             holdLeft -= 1
         } else {
             envelope *= release
-            if envelope < level { envelope = level }
+            if envelope < peak { envelope = peak }
         }
-        guard envelope > ceiling else {
+        let level = envelope * gain
+        guard level > knee else {
             envelope = 0
             return gain
         }
-        let limited = gain * (ceiling / envelope)
-        return limited > 1 ? limited : 1
+        let limited = shaped(level) / envelope
+        if limited < 1 { return 1 }
+        return limited < gain ? limited : gain
+    }
+
+    /// The level a boosted peak `level` comes out at: itself up to `knee`, then
+    /// `knee + w·(1 − e^(−(level − knee)/w))` with `w = ceiling − knee`, which
+    /// leaves the knee at slope 1 and tends to `ceiling` without passing it.
+    @inline(__always)
+    func shaped(_ level: Float) -> Float {
+        guard level > knee else { return level }
+        let width = ceiling - knee
+        return knee + width * (1 - exp((knee - level) / width))
     }
 
     /// Back at or below 100 %: the next boost starts from scratch.

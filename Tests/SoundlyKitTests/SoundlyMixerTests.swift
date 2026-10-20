@@ -274,6 +274,29 @@ final class SoundlyMixerTests: XCTestCase {
         XCTAssertFalse(backend.taps[0].isInvalidated)
     }
 
+    func testBoostWaitsForTheCrossfadeToEnd() {
+        let (mixer, backend) = makeMixer()
+        defer { mixer.stop() }
+        mixer.start()
+        mixer.setVolume(1.8, for: spotify)
+        backend.defaultDevice = airPods
+        mixer.outputDeviceChanged()
+        XCTAssertEqual(backend.taps[1].startGain, 0)
+        XCTAssertEqual(backend.taps[1].targetGain, 1, "both taps play the app: no boost on top of the overlap")
+        mixer.setVolume(2, for: spotify)
+        XCTAssertEqual(backend.taps[1].targetGain, 1, "not even when the slider moves meanwhile")
+
+        backend.taps[1].hasRendered = true
+        wait(SoundlyMixer.handoffMinimum + 0.1)
+        XCTAssertTrue(backend.taps[0].isInvalidated)
+        XCTAssertEqual(backend.taps[1].targetGain, 2, accuracy: 1e-6, "alone again, the boost goes on")
+    }
+
+    func testOldTapOutlivesAFadeFromTheTop() {
+        // 20 ms per 1× of gain: 40 ms from 200 %, then an IO cycle or two.
+        XCTAssertGreaterThan(SoundlyMixer.handoffMinimum, GainRamp.duration * Double(TapRenderer.maxGain))
+    }
+
     func testFailedRebuildLetsGoOfTheOldTapAtOnce() {
         let (mixer, backend) = makeMixer()
         defer { mixer.stop() }

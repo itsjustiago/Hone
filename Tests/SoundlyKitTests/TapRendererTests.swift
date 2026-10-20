@@ -204,18 +204,41 @@ final class TapRendererTests: XCTestCase {
         var state = boostState(2)
         render(input, output, state: &state)
         let peak = output.samples(0).map(\.magnitude).max() ?? 9
-        XCTAssertLessThanOrEqual(peak, PeakLimiter.defaultCeiling + 1e-6)
-        XCTAssertGreaterThan(peak, 0.85, "still louder than the 0.6 the app plays")
-        // After the first peak the gain holds: later cycles are a clean, scaled sine.
+        XCTAssertLessThan(peak, PeakLimiter.defaultCeiling)
+        XCTAssertGreaterThan(peak, 0.8, "still louder than the 0.6 the app plays")
+        // After the first peak the gain holds: later cycles are a clean, scaled
+        // sine, its peak where the knee puts 2 × 0.6.
         let steady = Array(output.samples(0)[1_920...])  // from the 20th cycle
-        XCTAssertEqual(steady.map(\.magnitude).max() ?? 0, PeakLimiter.defaultCeiling, accuracy: 1e-3)
+        XCTAssertEqual(steady.map(\.magnitude).max() ?? 0, PeakLimiter().shaped(1.2), accuracy: 1e-4)
+    }
+
+    func testKneeIsLinearBelowAndNeverReachesTheCeiling() {
+        let limiter = PeakLimiter()
+        XCTAssertEqual(limiter.shaped(0.3), 0.3)
+        XCTAssertEqual(limiter.shaped(PeakLimiter.defaultKnee), PeakLimiter.defaultKnee)
+        // Slope 1 on both sides of the knee: no kink where it starts.
+        let h: Float = 1e-3
+        XCTAssertEqual((limiter.shaped(0.5 + h) - limiter.shaped(0.5)) / h, 1, accuracy: 2e-3)
+        var last: Float = 0
+        for level in stride(from: Float(0), through: 8, by: 0.01) {
+            let out = limiter.shaped(level)
+            // Under it as far as a full-scale pair summed at 200 % (4); at the
+            // ceiling, not over, once Float rounds the curve's last bit away.
+            if level <= 4 {
+                XCTAssertLessThan(out, PeakLimiter.defaultCeiling, "\(level)")
+            } else {
+                XCTAssertLessThanOrEqual(out, PeakLimiter.defaultCeiling, "\(level)")
+            }
+            XCTAssertGreaterThanOrEqual(out, last, "rises with the level")
+            last = out
+        }
     }
 
     func testQuietSignalIsBoostedUntouched() {
-        let input = Buffers([(2, [0.3, -0.3, 0.1, 0.4])])
+        let input = Buffers([(2, [0.2, -0.2, 0.1, 0.25])])
         let output = Buffers([(2, zeros(4))])
         _ = render(input, output, gain: 2)
-        XCTAssertEqual(output.samples(0), [0.6, -0.6, 0.2, 0.8], "under the ceiling: plain gain, no limiting")
+        XCTAssertEqual(output.samples(0), [0.4, -0.4, 0.2, 0.5], "up to the knee: plain gain, no limiting")
     }
 
     func testAtOrBelowFullVolumeTheOutputIsBitIdentical() {
@@ -284,6 +307,149 @@ final class TapRendererTests: XCTestCase {
         let output = Buffers([(2, zeros(4))])
         render(Buffers([(2, [0.25, 0.25, 0.3, -0.3])]), output, state: &state)
         XCTAssertTrue(output.samples(0).allSatisfy(\.isFinite))
+    }
+
+    // MARK: Limiter, every path through the IOProc
+
+    /// One channel's samples of an interleaved buffer.
+    private func side(_ samples: [Float], _ channel: Int, of channels: Int = 2) -> [Float] {
+        stride(from: channel, to: samples.count, by: channels).map { samples[$0] }
+    }
+
+    private func peak(_ samples: [Float]) -> Float { samples.map(\.magnitude).max() ?? 9 }
+
+    func testBothSidesOnOneChannelAreLimitedOnTheirSum() {
+        // A device whose preferred pair is one channel twice: L + R land together.
+        let samples = sine(amplitude: 0.4, frames: 960)
+        let output = Buffers([(2, zeros(samples.count))])
+        var state = boostState(2)
+        state.stereoRight = 0
+        render(Buffers([(2, samples)]), output, state: &state)
+        let out = output.samples(0)
+        XCTAssertLessThan(peak(side(out, 0)), PeakLimiter.defaultCeiling, "the limiter saw |L| + |R|, not the louder side")
+        XCTAssertGreaterThan(peak(side(out, 0)), 0.8, "0.8 summed, still boosted")
+        XCTAssertTrue(side(out, 1).allSatisfy { $0 == 0 })
+    }
+
+    func testMonoOutputIsLimitedLikeEitherSide() {
+        let samples = sine(amplitude: 0.8, frames: 960)
+        let mono = Buffers([(1, zeros(960))])
+        var monoState = boostState(2)
+        render(Buffers([(2, samples)]), mono, state: &monoState)
+        let stereo = Buffers([(2, zeros(samples.count))])
+        var stereoState = boostState(2)
+        render(Buffers([(2, samples)]), stereo, state: &stereoState)
+
+        XCTAssertLessThan(peak(mono.samples(0)), PeakLimiter.defaultCeiling)
+        XCTAssertGreaterThan(peak(mono.samples(0)), 0.8, "boosted")
+        XCTAssertEqual(mono.samples(0), side(stereo.samples(0), 0), "the downmix of two equal sides is either side")
+    }
+
+    func testBoostedMonoTapIsLimitedTheSameOnBothSides() {
+        let tone = side(sine(amplitude: 0.6, frames: 960), 0)
+        let output = Buffers([(2, zeros(1_920))])
+        var state = boostState(2)
+        render(Buffers([(1, tone)]), output, state: &state)
+        let reference = Buffers([(2, zeros(1_920))])
+        var referenceState = boostState(2)
+        render(Buffers([(2, sine(amplitude: 0.6, frames: 960))]), reference, state: &referenceState)
+
+        XCTAssertEqual(output.samples(0), reference.samples(0), "a mono tap is a stereo one with equal sides")
+        XCTAssertLessThan(peak(output.samples(0)), PeakLimiter.defaultCeiling)
+        XCTAssertGreaterThan(peak(output.samples(0)), 0.8)
+    }
+
+    func testRampingUpThroughFullVolumeStaysUnderTheCeilingAndIsContinuous() {
+        // 0.5 → 2 over 300 of 400 frames, crossing 100 % at frame 100.
+        let level = Buffers([(2, [Float](repeating: 0.6, count: 800))])
+        let output = Buffers([(2, zeros(800))])
+        var state = boostState(2, start: 0.5)
+        state.maxStepPerFrame = 0.005
+        render(level, output, state: &state)
+        let out = side(output.samples(0), 0)
+        XCTAssertLessThan(peak(out), PeakLimiter.defaultCeiling)
+        for i in 1..<out.count {
+            XCTAssertLessThanOrEqual(abs(out[i] - out[i - 1]), 0.6 * 0.005 + 1e-6, "frame \(i)")
+        }
+        XCTAssertEqual(state.currentGain, 2)
+
+        let hot = sine(amplitude: 0.8, frames: 400)
+        let output2 = Buffers([(2, zeros(hot.count))])
+        var state2 = boostState(2, start: 0.5)
+        state2.maxStepPerFrame = 0.005
+        render(Buffers([(2, hot)]), output2, state: &state2)
+        XCTAssertLessThan(peak(output2.samples(0)), PeakLimiter.defaultCeiling)
+    }
+
+    func testOneLongCycleMatchesTenShortOnes() {
+        // Two tones, uneven sides, a ramp up to 200 % under way: ramp and limiter
+        // must carry over from one cycle to the next exactly.
+        let samples = (0..<4_800).flatMap { frame -> [Float] in
+            let t = Double(frame) / 48_000
+            let value = Float(0.5 * sin(2 * .pi * 220 * t) + 0.35 * sin(2 * .pi * 1_330 * t))
+            return [value, value * 0.7]
+        }
+        var longState = boostState(2, start: 1)
+        longState.maxStepPerFrame = GainRamp.maxStep(sampleRate: 48_000)
+        var shortState = longState
+
+        let long = Buffers([(2, zeros(samples.count))])
+        render(Buffers([(2, samples)]), long, state: &longState)
+
+        var short: [Float] = []
+        for cycle in 0..<10 {
+            let slice = Array(samples[(cycle * 960)..<((cycle + 1) * 960)])
+            let output = Buffers([(2, zeros(slice.count))])
+            render(Buffers([(2, slice)]), output, state: &shortState)
+            short += output.samples(0)
+        }
+        XCTAssertEqual(short, long.samples(0))
+        XCTAssertEqual(shortState.currentGain, longState.currentGain)
+        XCTAssertEqual(shortState.limiter.envelope, longState.limiter.envelope)
+        XCTAssertEqual(shortState.limiter.holdLeft, longState.limiter.holdLeft)
+    }
+
+    func testLoweringTheGainNeverDipsBelowTheNewLevel() {
+        // Limited at 200 %, then down to 150 %: from then on, never quieter than
+        // 150 % limited from scratch.
+        let samples = sine(amplitude: 0.6, frames: 3_360)
+        let before = Array(samples[..<1_920]), after = Array(samples[1_920...])
+        var state = boostState(2)
+        render(Buffers([(2, before)]), Buffers([(2, zeros(before.count))]), state: &state)
+        state.targetGain = 1.5
+        state.maxStepPerFrame = GainRamp.maxStep(sampleRate: 48_000)
+        let output = Buffers([(2, zeros(after.count))])
+        render(Buffers([(2, after)]), output, state: &state)
+
+        let reference = Buffers([(2, zeros(samples.count))])
+        var referenceState = boostState(1.5)
+        render(Buffers([(2, samples)]), reference, state: &referenceState)
+        let expected = Array(reference.samples(0)[1_920...])
+        let out = output.samples(0)
+        for i in 0..<out.count {
+            XCTAssertGreaterThanOrEqual(out[i].magnitude, expected[i].magnitude - 1e-6, "sample \(i)")
+        }
+    }
+
+    func testTransientAfterSilenceIsNotFlattened() {
+        // A 100 Hz note out of silence at 200 %: its first rising edge must keep
+        // rising (soft knee), not sit on the ceiling for a run of samples.
+        let samples = [Float](repeating: 0, count: 960) + sine(amplitude: 0.6, frames: 480, hz: 100)
+        let output = Buffers([(2, zeros(samples.count))])
+        var state = boostState(2)
+        render(Buffers([(2, samples)]), output, state: &state)
+        let out = side(output.samples(0), 0)
+        let note = Array(out[480..<720])  // its first half-cycle
+        let top = peak(note)
+        XCTAssertLessThan(top, PeakLimiter.defaultCeiling)
+        XCTAssertLessThanOrEqual(note.filter { $0 >= top - 1e-4 }.count, 6, "no plateau at the top")
+        for i in 481...600 {  // the rising quarter-cycle, up to the peak
+            XCTAssertGreaterThan(out[i], out[i - 1], "frame \(i)")
+        }
+        let input = side(samples, 0)
+        for i in 480..<960 {
+            XCTAssertGreaterThanOrEqual(out[i].magnitude, input[i].magnitude - 1e-6, "never under 100 %")
+        }
     }
 
     func testLimiterTimesFollowTheSampleRate() {

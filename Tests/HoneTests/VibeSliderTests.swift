@@ -54,6 +54,17 @@ final class VibeSliderTests: XCTestCase {
         XCTAssertEqual(VibeSlider.snapped(1.02, to: nil, in: boost), 1.02, "no default, no magnet")
     }
 
+    func testStepsStayInRangeAndSnapOntoTheDefault() {
+        XCTAssertEqual(VibeSlider.stepped(0.95, by: 0.05, in: boost, defaultValue: 1), 1, "exactly 100 %, not 99.999…")
+        XCTAssertEqual(VibeSlider.stepped(0.97, by: 0.05, in: boost, defaultValue: 1), 1)
+        XCTAssertEqual(VibeSlider.stepped(1.03, by: -0.05, in: boost, defaultValue: 1), 1)
+        XCTAssertEqual(VibeSlider.stepped(1, by: 0.05, in: boost, defaultValue: 1), 1.05, accuracy: 1e-9, "steps off it again")
+        XCTAssertEqual(VibeSlider.stepped(1, by: -0.05, in: boost, defaultValue: 1), 0.95, accuracy: 1e-9)
+        XCTAssertEqual(VibeSlider.stepped(1.98, by: 0.05, in: boost, defaultValue: 1), 2)
+        XCTAssertEqual(VibeSlider.stepped(0.02, by: -0.05, in: boost, defaultValue: 1), 0)
+        XCTAssertEqual(VibeSlider.stepped(0.97, by: 0.05, in: boost), 1.02, accuracy: 1e-9, "no default, no magnet")
+    }
+
     // MARK: Pressing and dragging
 
     func testTrackPressJumpsToThePointer() {
@@ -124,6 +135,64 @@ final class VibeSliderTests: XCTestCase {
         _ = press(&tracker, x: 40, at: 0)
         tracker.ended(distance: 0)
         XCTAssertEqual(press(&tracker, x: 100, at: 0.2), .knob(grab: 0))
+    }
+
+    // MARK: A press as the gesture reports it
+
+    private func move(_ tracker: inout VibeSliderPress, x: CGFloat, distance: CGFloat,
+                      at time: TimeInterval = 0) -> (kind: VibeSliderPress.Kind, isNew: Bool) {
+        tracker.changed(x: x, distance: distance, knobCenter: 100, knob: 16, time: time,
+                        doubleClickInterval: 0.5, resets: true)
+    }
+
+    func testTremorWithinTheSlopIsStillAClick() {
+        var tracker = VibeSliderPress()
+        let first = move(&tracker, x: 104, distance: 0)
+        XCTAssertEqual(first.kind, .knob(grab: 4))
+        XCTAssertTrue(first.isNew)
+        let jitter = move(&tracker, x: 104, distance: 2.9)
+        XCTAssertFalse(jitter.isNew)
+        XCTAssertFalse(tracker.moved)
+        XCTAssertNil(VibeSlider.value(for: jitter.kind, atX: 106.9, moved: tracker.moved, width: 200, knob: 16, in: boost),
+                     "1–3 pt of a shaky click writes nothing (and so doesn't unmute)")
+        _ = move(&tracker, x: 104, distance: 3.5)
+        XCTAssertTrue(tracker.moved, "past the slop it is a drag")
+        _ = move(&tracker, x: 104, distance: 0)
+        XCTAssertTrue(tracker.moved, "brought back to where it was grabbed, it still follows")
+    }
+
+    func testShakyDoubleClickOnlyResets() {
+        var tracker = VibeSliderPress()
+        let first = move(&tracker, x: 100, distance: 1)
+        XCTAssertNil(VibeSlider.value(for: first.kind, atX: 101, moved: tracker.moved, width: 200, knob: 16, in: boost))
+        tracker.ended(distance: 1)
+        let second = move(&tracker, x: 101, distance: 1, at: 0.3)
+        XCTAssertEqual(second.kind, .doubleClick)
+        XCTAssertTrue(second.isNew)
+        XCTAssertNil(VibeSlider.value(for: second.kind, atX: 102, moved: tracker.moved, width: 200, knob: 16, in: boost))
+    }
+
+    func testCancelledPressDoesNotLeakIntoTheNext() {
+        var tracker = VibeSliderPress()
+        _ = move(&tracker, x: 100, distance: 0)
+        _ = move(&tracker, x: 100, distance: 20)
+        XCTAssertTrue(tracker.moved)
+        tracker.finish()  // cancelled: no `ended`
+        XCTAssertNil(tracker.current)
+        let next = move(&tracker, x: 40, distance: 0, at: 5)
+        XCTAssertEqual(next.kind, .track, "a fresh press, not the old knob grab")
+        XCTAssertTrue(next.isNew)
+        XCTAssertFalse(tracker.moved)
+    }
+
+    func testEndingClearsThePress() {
+        var tracker = VibeSliderPress()
+        _ = move(&tracker, x: 100, distance: 10)
+        tracker.ended(distance: 10)
+        XCTAssertNil(tracker.current)
+        XCTAssertFalse(tracker.moved)
+        tracker.finish()  // the cancel path running too changes nothing
+        XCTAssertEqual(move(&tracker, x: 100, distance: 0, at: 0.2).kind, .knob(grab: 0), "a drag isn't half of a double-click")
     }
 
     func testWithoutADefaultThereIsNothingToResetTo() {

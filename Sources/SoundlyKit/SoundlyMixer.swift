@@ -29,9 +29,10 @@ public final class SoundlyMixer: ObservableObject {
     /// How long a released tap keeps running so the gain can ramp back to 1.
     static let releaseDelay: TimeInterval = 0.1
     static let fallbackInterval: TimeInterval = 10
-    /// A tap replaced by a rebuild lives on at least this long (its fade-out,
-    /// `GainRamp.duration`, plus an IO cycle or two)…
-    static let handoffMinimum: TimeInterval = 0.06
+    /// A tap replaced by a rebuild lives on at least this long: its fade-out
+    /// (`GainRamp.duration` per 1× of gain, so twice that from 200 %) plus an IO
+    /// cycle or two…
+    static let handoffMinimum: TimeInterval = GainRamp.duration * Double(TapRenderer.maxGain) + 0.04
     /// …and until its successor is being read — or this long at most.
     static let handoffTimeout: TimeInterval = 1.5
     static let handoffPollInterval: TimeInterval = 0.02
@@ -382,7 +383,7 @@ public final class SoundlyMixer: ObservableObject {
             makeTap(appID, group: group, target: target, startGain: 1, targetGain: level.gain)
             return
         }
-        live.tap.targetGain = level.gain
+        live.tap.targetGain = liveGain(appID)
         taps[appID]?.followsDefault = target.followsDefault
         if live.output != target.output {
             rebuildTap(appID, to: target)
@@ -441,14 +442,15 @@ public final class SoundlyMixer: ObservableObject {
     /// taps are read, *both* aggregates play the app (mute is per hardware
     /// stream, the copies are per tap), so the overlap would double it. Hence a
     /// crossfade: the old tap fades to 0 but keeps being read — the app stays
-    /// muted — while the new one starts at 0 and ramps to the level. The old one
-    /// is invalidated only once the new one is being read (`advanceHandoffs`).
+    /// muted — while the new one starts at 0 and ramps to the level (100 % at
+    /// most until the old one is gone, see `liveGain`). The old one is
+    /// invalidated only once the new one is being read (`advanceHandoffs`).
     /// The price is a moment of silence while the new device starts, never a blast.
     private func rebuildTap(_ appID: String, to target: Target) {
         guard let old = taps.removeValue(forKey: appID), let group = groups[appID] else { return }
         old.tap.targetGain = 0
         retiring[appID, default: []].append(RetiringTap(tap: old.tap, since: ProcessInfo.processInfo.systemUptime))
-        if makeTap(appID, group: group, target: target, startGain: 0, targetGain: store.level(for: appID).gain) {
+        if makeTap(appID, group: group, target: target, startGain: 0, targetGain: liveGain(appID)) {
             journal.info("tap rebuilt for \(appID, privacy: .public) → \(target.output.name, privacy: .public)")
             scheduleHandoffs()
         } else {
@@ -479,11 +481,21 @@ public final class SoundlyMixer: ObservableObject {
                 return false
             }
             retiring[appID] = remaining.isEmpty ? nil : remaining
+            // Alone again: a boost held back during the crossfade goes on.
+            if remaining.isEmpty { taps[appID]?.tap.targetGain = liveGain(appID) }
         }
         if retiring.isEmpty {
             handoffTimer?.invalidate()
             handoffTimer = nil
         }
+    }
+
+    /// The gain an app's live tap heads for: its level's, held at 100 % while a
+    /// tap it replaced is still fading out. Both play the app then, and each
+    /// limiter only sees its own copy: a boost on top of the overlap would clip.
+    private func liveGain(_ appID: String) -> Float {
+        let gain = store.level(for: appID).gain
+        return retiring[appID] == nil ? gain : min(gain, 1)
     }
 
     private func retireNow(_ appID: String) {
