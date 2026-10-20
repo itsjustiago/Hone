@@ -6,12 +6,20 @@ import HoneDesign
 final class SettingsModel: ObservableObject {
     @Published var passwordless = PrivilegedAccess.isInstalled
     @Published var autoOffMinutes = SleepController.autoOffMinutes
+    @Published var autoOffUntilClock = SleepController.autoOffUntilClock
     @Published var batteryThreshold = SleepController.batteryThreshold
+    @Published var mouseNudgeMinutes = SleepController.mouseNudgeMinutes
+    /// O macOS deixa o Hone postar eventos (Acessibilidade)? Só interessa com o "Mexer o rato" ligado.
+    @Published var mouseNudgeAllowed = CGPreflightPostEventAccess()
     @Published var sleepMode = SettingsModel.shownMode()
     @Published var endAction = SleepController.endAction
     @Published var lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
     @Published var muteWhenLidClosed = LidExtras.muteWhenLidClosed
     @Published var stayAwakeForRemoteSessions = SleepController.stayAwakeForRemoteSessions
+    @Published var accent = MenuBarIconSettings.accent
+    @Published var showsCountdown = MenuBarIconSettings.showsCountdown
+    /// O ícone da barra tem de se redesenhar (cor ou contagem mudaram). Ligado pelo `SleepyTool`.
+    var onIconChange: (() -> Void)?
     /// A regra sudoers instalada deixa ligar o Low Power Mode? `nil` = ainda não
     /// se sabe (ou o toggle está desligado e não interessa).
     @Published var lowPowerRuleAllowed: Bool?
@@ -19,12 +27,47 @@ final class SettingsModel: ObservableObject {
     func refresh() {
         passwordless = PrivilegedAccess.isInstalled
         autoOffMinutes = SleepController.autoOffMinutes
+        autoOffUntilClock = SleepController.autoOffUntilClock
         batteryThreshold = SleepController.batteryThreshold
+        mouseNudgeMinutes = SleepController.mouseNudgeMinutes
+        mouseNudgeAllowed = CGPreflightPostEventAccess()
         sleepMode = Self.shownMode()
         endAction = SleepController.endAction
         lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
         muteWhenLidClosed = LidExtras.muteWhenLidClosed
         stayAwakeForRemoteSessions = SleepController.stayAwakeForRemoteSessions
+        accent = MenuBarIconSettings.accent
+        showsCountdown = MenuBarIconSettings.showsCountdown
+    }
+
+    /// Escolher um intervalo grava-o e liga o "Mexer o rato". É aqui, e só aqui, que o
+    /// sistema pede a permissão — ao passar de «Nunca» para um intervalo sem acesso.
+    func setMouseNudgeMinutes(_ minutes: Int) {
+        let old = mouseNudgeMinutes
+        mouseNudgeMinutes = minutes
+        SleepController.mouseNudgeMinutes = minutes
+        if MouseNudge.shouldRequestAccess(from: old, to: minutes, hasAccess: CGPreflightPostEventAccess()) {
+            CGRequestPostEventAccess()
+        }
+        mouseNudgeAllowed = CGPreflightPostEventAccess()
+    }
+
+    func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func setAccent(_ value: IconAccent) {
+        accent = value
+        MenuBarIconSettings.accent = value
+        onIconChange?()
+    }
+
+    func setShowsCountdown(_ on: Bool) {
+        showsCountdown = on
+        MenuBarIconSettings.showsCountdown = on
+        onIconChange?()
     }
 
     /// Com o Sleepy ligado, o modo em uso (como o painel): numa sessão do gatilho
@@ -107,15 +150,37 @@ struct SleepySettingsView: View {
                 RowDivider()
                 SettingsRow(
                     title: "Desligar sozinho",
-                    subtitle: "O ecrã e o Mac voltam ao normal ao fim deste tempo. De tampa fechada, adormece logo."
+                    subtitle: "O ecrã e o Mac voltam ao normal ao fim deste tempo ou à hora escolhida. De tampa fechada, adormece logo."
                 ) {
                     Picker("", selection: Binding(
                         get: { model.autoOffMinutes },
-                        set: { model.autoOffMinutes = $0; SleepController.autoOffMinutes = $0 })) {
-                        ForEach(SleepController.autoOffOptions) { Text($0.title).tag($0.minutes) }
+                        set: {
+                            model.autoOffMinutes = $0
+                            SleepController.autoOffMinutes = $0
+                            // O prazo novo (ou a falta dele) muda a contagem do ícone.
+                            model.onIconChange?()
+                        })) {
+                        ForEach(SleepController.autoOffOptions(untilClock: model.autoOffUntilClock)) {
+                            Text($0.title).tag($0.minutes)
+                        }
                     }
                     .labelsHidden()
                     .frame(width: 120)
+                }
+                if model.autoOffMinutes == SleepController.untilClockMinutes {
+                    RowDivider()
+                    SettingsRow(title: "Hora", subtitle: "Se já passou hoje, conta a de amanhã.") {
+                        DatePicker("", selection: Binding(
+                            get: { SleepController.clockDate(model.autoOffUntilClock) },
+                            set: {
+                                let clock = SleepController.clockMinutes(of: $0)
+                                model.autoOffUntilClock = clock
+                                SleepController.autoOffUntilClock = clock
+                                // A hora nova muda o prazo e a contagem do ícone.
+                                model.onIconChange?()
+                            }), displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                    }
                 }
                 RowDivider()
                 SettingsRow(
@@ -143,11 +208,63 @@ struct SleepySettingsView: View {
                     .labelsHidden()
                     .frame(width: 140)
                 }
+                RowDivider()
+                SettingsRow(
+                    title: "Mexer o rato",
+                    subtitle: "De N em N minutos sem mexeres, o cursor anda 1 px e volta, para o Teams e o Slack não te porem ausente. Só com o Sleepy ligado."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { model.mouseNudgeMinutes },
+                        set: { model.setMouseNudgeMinutes($0) })) {
+                        ForEach(SleepController.mouseNudgeOptions) { Text($0.title).tag($0.minutes) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+                if model.mouseNudgeMinutes > 0, !model.mouseNudgeAllowed {
+                    RowDivider()
+                    SettingsRow(
+                        title: "O macOS ainda não deixa o Hone mexer o rato.",
+                        subtitle: "Ativa o Hone em Privacidade e Segurança, Acessibilidade."
+                    ) {
+                        Button("Abrir Definições") { model.openAccessibilitySettings() }
+                            .buttonStyle(VibeButtonStyle())
+                            .controlSize(.small)
+                    }
+                }
+            }
+            SettingsSection(title: "Ícone da barra de menus") {
+                SettingsRow(
+                    title: "Cor com o Sleepy ligado",
+                    subtitle: "Só no ícone próprio do Sleepy. «Nenhuma» segue a cor da barra."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { model.accent },
+                        set: { model.setAccent($0) })) {
+                        ForEach(IconAccent.allCases) { accent in
+                            Label { Text(accent.title) } icon: { Image(nsImage: accent.swatch) }
+                                .tag(accent)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+                RowDivider()
+                ToggleRow(
+                    title: "Contagem decrescente",
+                    subtitle: "Mostra ao lado do ícone quanto falta para desligar sozinho, quando há prazo.",
+                    isOn: Binding(
+                        get: { model.showsCountdown },
+                        set: { model.setShowsCountdown($0) }))
             }
         }
         .onAppear {
             model.refresh()
             model.refreshLowPowerRule()
+        }
+        // Voltar das Definições do sistema depois de dar o acesso: o aviso do rato desaparece.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.mouseNudgeAllowed = CGPreflightPostEventAccess()
         }
     }
 
