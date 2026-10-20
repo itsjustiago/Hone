@@ -21,7 +21,8 @@ final class StatsSettings: ObservableObject {
     private let store: UserDefaults
     let didChange = PassthroughSubject<Void, Never>()
 
-    /// Metrics the user wants in the menu bar and panel (each defaults to on).
+    /// Metrics the user wants in the menu bar and panel (each has its own default,
+    /// see `Metric.enabledByDefault`).
     @Published var enabledMetrics: Set<Metric> {
         didSet {
             for metric in Metric.allCases { store.set(enabledMetrics.contains(metric), forKey: metric.defaultsKey) }
@@ -43,7 +44,7 @@ final class StatsSettings: ObservableObject {
 
     init(store: UserDefaults = .standard) {
         self.store = store
-        enabledMetrics = Set(Metric.allCases.filter { store.object(forKey: $0.defaultsKey) as? Bool ?? true })
+        enabledMetrics = Set(Metric.allCases.filter { store.object(forKey: $0.defaultsKey) as? Bool ?? $0.enabledByDefault })
         showLabels = store.object(forKey: Self.showLabelsKey) as? Bool ?? true
         colorByLoad = store.object(forKey: Self.colorByLoadKey) as? Bool ?? false
         interval = RefreshInterval(rawValue: store.integer(forKey: Self.intervalKey)) ?? .one
