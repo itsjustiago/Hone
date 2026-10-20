@@ -23,11 +23,11 @@ struct StatsSettingsView: View {
             }
             SettingsSection(title: "Aspeto") {
                 ToggleRow(title: "Mostrar etiquetas",
-                          subtitle: "CPU, RAM, GPU e FAN por cima de cada valor. Desligadas, cada valor leva um símbolo.",
+                          subtitle: "O nome da métrica (CPU, RAM…) por cima de cada valor. Desligadas, cada valor leva um símbolo.",
                           isOn: $settings.showLabels)
                 RowDivider()
                 ToggleRow(title: "Colorir pela carga",
-                          subtitle: "Laranja a partir de 60% e vermelho a partir de 85%. A memória segue a pressão.",
+                          subtitle: "Laranja a partir de 60% e vermelho a partir de 85%. A memória segue a pressão; a temperatura muda aos 85 °C e aos 95 °C.",
                           isOn: $settings.colorByLoad)
                 RowDivider()
                 SettingsRow(title: "Atualizar a cada", subtitle: "Intervalos mais curtos gastam um pouco mais de bateria.") {
