@@ -46,9 +46,8 @@ public struct VibeDot: View {
 
 // MARK: - Switch
 
-/// Hone's switch: a capsule (`VibeMetrics.toggle`) in the tool's colour. The knob
-/// turns dark on light tracks (white, yellow) so it stays visible. `isPaused` keeps
-/// it on but visibly held back.
+/// Hone's switch: a capsule (`VibeMetrics.toggle`) in the tool's colour with a
+/// white knob on every track. `isPaused` keeps it on but visibly held back.
 public struct VibeToggleStyle: ToggleStyle {
     let tint: Color
     let isPaused: Bool
@@ -81,10 +80,6 @@ private struct VibeSwitch: View {
         return isPaused ? tint.opacity(0.45) : tint
     }
 
-    private var knobColor: Color {
-        isOn && !isPaused && tint.vibeIsLight ? VibeColor.inkOnLight : VibeColor.text1
-    }
-
     var body: some View {
         Button(action: { withAnimation(VibeMotion.standard) { toggle() } }) {
             Capsule(style: .continuous)
@@ -92,7 +87,7 @@ private struct VibeSwitch: View {
                 .frame(width: size.width, height: size.height)
                 .overlay(alignment: isOn ? .trailing : .leading) {
                     Circle()
-                        .fill(knobColor)
+                        .fill(VibeColor.text1)
                         .frame(width: knob, height: knob)
                         .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
                         .padding(2)
