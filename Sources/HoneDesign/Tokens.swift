@@ -85,6 +85,8 @@ public enum VibeToolColor {
     public static let cleanKeyboard = VibePalette.white
     /// Shares Alt-Tab's teal: the palette is fully assigned and the two sit far apart in the list.
     public static let lidFold = VibePalette.teal
+    /// Shares Stats' green: the palette is fully assigned, and a tweak and an app sit far apart in the list.
+    public static let windowsShortcuts = VibePalette.green
 }
 
 // MARK: - Shape & space

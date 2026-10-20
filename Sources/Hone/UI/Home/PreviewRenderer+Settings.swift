@@ -33,6 +33,9 @@ extension PreviewRenderer {
             ("settings-keyswap", window("keySwap", off: off) {
                 tool("keySwap", settings: AnyView(KeySwapSettingsView(module: KeySwapModule())))
             }),
+            ("settings-windowsshortcuts", window("windowsShortcuts", off: off) {
+                tool("windowsShortcuts", settings: AnyView(WindowsShortcutsSettingsView(module: WindowsShortcutsModule())))
+            }),
             ("settings-lidfold", window("lidFold", off: off) {
                 tool("lidFold", settings: lidFoldSettings(status: .running, hasScreenAccess: true))
             }),
