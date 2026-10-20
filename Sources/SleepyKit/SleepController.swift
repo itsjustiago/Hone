@@ -58,6 +58,9 @@ import IOKit.pwr_mgt
 /// mão (ou por segurança) a meio de uma sessão, o gatilho não volta a ligar até
 /// ela acabar (`remoteSuppressed`).
 ///
+/// Opcionalmente (`mouseNudgeMinutes`) mexe o rato 1 px de N em N minutos sem input,
+/// para o Teams e o Slack não nos marcarem ausentes ([[MouseNudge]]).
+///
 /// "Até o Claude acabar" é uma espera de uso único (`waitForClaudeSince`): com
 /// ela armada não há prazo, e o Sleepy desliga-se quando nenhuma sessão do
 /// Claude Code está a trabalhar ([[ClaudeActivityMonitor]]). A bateria e a
@@ -98,7 +101,9 @@ final class SleepController {
 
     /// O `SleepyTool` está a correr (`start` até `stop`/`stopKeepingState`). Parado,
     /// mudar a preferência remota só a guarda: o monitor arranca no próximo `start`.
-    var toolRunning = false
+    var toolRunning = false {
+        didSet { if oldValue != toolRunning { syncMouseNudger() } }
+    }
 
     // Sessões remotas (ver "Sessões remotas"). Só no main.
     private let remoteMonitor = RemoteSessionMonitor()
@@ -109,6 +114,9 @@ final class SleepController {
     private let claudeMonitor = ClaudeActivityMonitor()
     /// A última leitura entregue pelo monitor; `nil` até à primeira.
     private(set) var claudeActivity: ClaudeActivity?
+
+    // "Mexer o rato" (ver [[MouseNudge]]). Só no main.
+    private let mouseNudger = MouseNudger()
 
     // Bateria e temperatura (ver [[PowerGuards]]). Só enquanto o Sleepy está ligado.
     private let powerWatcher = PowerWatcher()
@@ -364,6 +372,44 @@ final class SleepController {
         .init(percent: 50, title: "50 %", short: "50 %"),
     ]
 
+    private static let mouseNudgeKey = "mouseNudgeMinutes"
+
+    /// Minutos sem input ao fim dos quais o Sleepy mexe o rato 1 px (para o Teams e
+    /// o Slack não nos porem ausentes). 0 = nunca, a omissão.
+    static var mouseNudgeMinutes: Int {
+        get { SleepyDefaults.store.object(forKey: mouseNudgeKey) as? Int ?? 0 }
+        set {
+            SleepyDefaults.store.set(newValue, forKey: mouseNudgeKey)
+            shared.syncMouseNudger()
+        }
+    }
+
+    /// As escolhas de "Mexer o rato", partilhadas pelas definições. Mesmo formato
+    /// das de auto-desligar (`minutes`, `title`, `short`).
+    static let mouseNudgeOptions: [AutoOffOption] = [
+        .init(minutes: 0, title: "Nunca", short: "Nunca"),
+        .init(minutes: 1, title: "1 minuto", short: "1 min"),
+        .init(minutes: 2, title: "2 minutos", short: "2 min"),
+        .init(minutes: 3, title: "3 minutos", short: "3 min"),
+        .init(minutes: 5, title: "5 minutos", short: "5 min"),
+        .init(minutes: 10, title: "10 minutos", short: "10 min"),
+    ]
+
+    /// O "Mexer o rato" só corre com a opção ligada, o Sleepy ligado e o tool a correr. Pura.
+    static func mouseNudgeWanted(isActive: Bool, toolRunning: Bool, minutes: Int) -> Bool {
+        isActive && toolRunning && minutes > 0
+    }
+
+    /// Liga, desliga ou muda o intervalo do "Mexer o rato" conforme o estado. Idempotente.
+    func syncMouseNudger() {
+        let minutes = Self.mouseNudgeMinutes
+        if Self.mouseNudgeWanted(isActive: isActive, toolRunning: toolRunning, minutes: minutes) {
+            mouseNudger.start(interval: TimeInterval(minutes * 60))
+        } else {
+            mouseNudger.stop()
+        }
+    }
+
     /// Porque é que o Sleepy se desligou sozinho.
     enum StopReason: Equatable {
         case autoOff
@@ -598,6 +644,7 @@ final class SleepController {
         SleepyDefaults.store.set(true, forKey: activeKey)
         startModeServices(for: mode)
         scheduleAutoOff()
+        syncMouseNudger()
         Notifier.shared.requestAuthorizationIfNeeded()
         onStateChange?()
         return true
@@ -626,6 +673,7 @@ final class SleepController {
         stopVerification()
         CrashWatchdog.stop()
         isActive = false
+        syncMouseNudger()
         if startedByTrigger { NSLog("Sleepy: a desligar a sessão que o gatilho remoto tinha ligado") }
         if waitsForClaude { NSLog("Sleepy: desligado — a espera pelo Claude fica desarmada") }
         clearPersisted()
@@ -712,6 +760,7 @@ final class SleepController {
         autoOffTimer?.invalidate()
         autoOffTimer = nil
         isActive = false
+        syncMouseNudger()
     }
 
     /// Confere o estado real quando o painel se abre, sem bloquear o main:
@@ -981,6 +1030,7 @@ final class SleepController {
         }
         resumeRemoteTracking()
         resumeClaudeWait()
+        syncMouseNudger()
         onStateChange?()
     }
 

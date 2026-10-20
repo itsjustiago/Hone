@@ -8,6 +8,9 @@ final class SettingsModel: ObservableObject {
     @Published var autoOffMinutes = SleepController.autoOffMinutes
     @Published var autoOffUntilClock = SleepController.autoOffUntilClock
     @Published var batteryThreshold = SleepController.batteryThreshold
+    @Published var mouseNudgeMinutes = SleepController.mouseNudgeMinutes
+    /// O macOS deixa o Hone postar eventos (Acessibilidade)? Só interessa com o "Mexer o rato" ligado.
+    @Published var mouseNudgeAllowed = CGPreflightPostEventAccess()
     @Published var sleepMode = SettingsModel.shownMode()
     @Published var endAction = SleepController.endAction
     @Published var lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
@@ -26,6 +29,8 @@ final class SettingsModel: ObservableObject {
         autoOffMinutes = SleepController.autoOffMinutes
         autoOffUntilClock = SleepController.autoOffUntilClock
         batteryThreshold = SleepController.batteryThreshold
+        mouseNudgeMinutes = SleepController.mouseNudgeMinutes
+        mouseNudgeAllowed = CGPreflightPostEventAccess()
         sleepMode = Self.shownMode()
         endAction = SleepController.endAction
         lowPowerWhenLidClosed = LidExtras.lowPowerWhenLidClosed
@@ -33,6 +38,24 @@ final class SettingsModel: ObservableObject {
         stayAwakeForRemoteSessions = SleepController.stayAwakeForRemoteSessions
         accent = MenuBarIconSettings.accent
         showsCountdown = MenuBarIconSettings.showsCountdown
+    }
+
+    /// Escolher um intervalo grava-o e liga o "Mexer o rato". É aqui, e só aqui, que o
+    /// sistema pede a permissão — ao passar de «Nunca» para um intervalo sem acesso.
+    func setMouseNudgeMinutes(_ minutes: Int) {
+        let old = mouseNudgeMinutes
+        mouseNudgeMinutes = minutes
+        SleepController.mouseNudgeMinutes = minutes
+        if MouseNudge.shouldRequestAccess(from: old, to: minutes, hasAccess: CGPreflightPostEventAccess()) {
+            CGRequestPostEventAccess()
+        }
+        mouseNudgeAllowed = CGPreflightPostEventAccess()
+    }
+
+    func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func setAccent(_ value: IconAccent) {
@@ -185,6 +208,30 @@ struct SleepySettingsView: View {
                     .labelsHidden()
                     .frame(width: 140)
                 }
+                RowDivider()
+                SettingsRow(
+                    title: "Mexer o rato",
+                    subtitle: "De N em N minutos sem mexeres, o cursor anda 1 px e volta, para o Teams e o Slack não te porem ausente. Só com o Sleepy ligado."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { model.mouseNudgeMinutes },
+                        set: { model.setMouseNudgeMinutes($0) })) {
+                        ForEach(SleepController.mouseNudgeOptions) { Text($0.title).tag($0.minutes) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+                if model.mouseNudgeMinutes > 0, !model.mouseNudgeAllowed {
+                    RowDivider()
+                    SettingsRow(
+                        title: "O macOS ainda não deixa o Hone mexer o rato.",
+                        subtitle: "Ativa o Hone em Privacidade e Segurança, Acessibilidade."
+                    ) {
+                        Button("Abrir Definições") { model.openAccessibilitySettings() }
+                            .buttonStyle(VibeButtonStyle())
+                            .controlSize(.small)
+                    }
+                }
             }
             SettingsSection(title: "Ícone da barra de menus") {
                 SettingsRow(
@@ -214,6 +261,10 @@ struct SleepySettingsView: View {
         .onAppear {
             model.refresh()
             model.refreshLowPowerRule()
+        }
+        // Voltar das Definições do sistema depois de dar o acesso: o aviso do rato desaparece.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.mouseNudgeAllowed = CGPreflightPostEventAccess()
         }
     }
 
