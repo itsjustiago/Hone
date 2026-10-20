@@ -25,10 +25,10 @@ final class MouseNudgeTests: XCTestCase {
 
     // MARK: - canNudge
 
-    private func can(isActive: Bool = true, lidDimmed: Bool = false, screenLocked: Bool = false,
-                     buttonsDown: Bool = false, hasAccess: Bool = true) -> Bool {
-        MouseNudge.canNudge(isActive: isActive, lidDimmed: lidDimmed, screenLocked: screenLocked,
-                            buttonsDown: buttonsDown, hasAccess: hasAccess)
+    private func can(isActive: Bool = true, lidDimmed: Bool = false, displayAsleep: Bool = false,
+                     screenLocked: Bool = false, buttonsDown: Bool = false, hasAccess: Bool = true) -> Bool {
+        MouseNudge.canNudge(isActive: isActive, lidDimmed: lidDimmed, displayAsleep: displayAsleep,
+                            screenLocked: screenLocked, buttonsDown: buttonsDown, hasAccess: hasAccess)
     }
 
     func testCanNudgeWhenEverythingIsFine() {
@@ -38,6 +38,7 @@ final class MouseNudgeTests: XCTestCase {
     func testEachConditionAloneBlocks() {
         XCTAssertFalse(can(isActive: false), "Sleepy desligado")
         XCTAssertFalse(can(lidDimmed: true), "tampa fechada com o painel apagado")
+        XCTAssertFalse(can(displayAsleep: true), "ecrã apagado à mão, sem bloqueio nem tampa")
         XCTAssertFalse(can(screenLocked: true), "ecrã bloqueado")
         XCTAssertFalse(can(buttonsDown: true), "botão do rato carregado")
         XCTAssertFalse(can(hasAccess: false), "sem acesso do macOS")

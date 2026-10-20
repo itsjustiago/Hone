@@ -324,8 +324,10 @@ public final class SleepyTool {
     /// a ver o ícone, e acerta já o texto (um prazo novo ou a opção desligada não
     /// esperam pelo próximo tick). Idempotente, para chamar em qualquer mudança.
     private func syncCountdownTimer() {
-        let wanted = isRunning && SleepController.shared.isActive && MenuBarIconSettings.showsCountdown
-            && showsOwnMenuBarIcon && SleepController.shared.autoOffDate != nil
+        let wanted = MenuBarIcon.countdownTimerWanted(
+            isRunning: isRunning, isActive: SleepController.shared.isActive,
+            showsCountdown: MenuBarIconSettings.showsCountdown, showsOwnIcon: showsOwnMenuBarIcon,
+            hasDeadline: SleepController.shared.autoOffDate != nil)
         if wanted {
             if countdownTimer == nil {
                 let timer = Timer(timeInterval: Self.countdownInterval, repeats: true) { [weak self] _ in

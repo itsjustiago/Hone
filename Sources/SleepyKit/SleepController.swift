@@ -173,6 +173,10 @@ final class SleepController {
             return 8 * 60
         }
         set {
+            // Re-escolher o valor já escolhido (o picker chama sempre `onChange`,
+            // mesmo no item com visto) não mexe em nada: senão "Até às 18:00" com
+            // "+1 h" voltava a contar de agora e o prazo saltava para amanhã.
+            guard newValue != autoOffMinutes else { return }
             SleepyDefaults.store.set(newValue, forKey: autoOffKey)
             // "Até às" escolhido agora: a hora conta a partir de agora, não do
             // início de uma sessão ligada há mais tempo.

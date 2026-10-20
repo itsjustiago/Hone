@@ -94,6 +94,14 @@ enum MenuBarIcon {
         return "\(minutes / 60)h" + String(format: "%02d", minutes % 60)
     }
 
+    /// O timer da contagem só corre com algo para contar e alguém a ver o ícone:
+    /// a tool a correr, o Sleepy ligado, a opção da contagem ligada, o ícone próprio
+    /// visível e um prazo. Qualquer condição falsa sozinha desliga-o.
+    static func countdownTimerWanted(isRunning: Bool, isActive: Bool, showsCountdown: Bool,
+                                     showsOwnIcon: Bool, hasDeadline: Bool) -> Bool {
+        isRunning && isActive && showsCountdown && showsOwnIcon && hasDeadline
+    }
+
     /// O símbolo centrado na caixa fixa `box` (à esquerda, sempre no mesmo sítio) e,
     /// se houver contagem, o texto à direita. Com `accent` a imagem deixa de ser
     /// template e símbolo e texto levam essa cor; sem ele, template, como sempre.

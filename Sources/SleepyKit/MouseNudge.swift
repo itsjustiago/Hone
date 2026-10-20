@@ -8,8 +8,10 @@ import CoreGraphics
 ///
 /// Nunca com a tampa fechada sem ecrã externo (`lidDimmed`): o painel está apagado
 /// com `pmset displaysleepnow` e um movimento sintético podia acendê-lo dentro da
-/// tampa. Nem com o ecrã bloqueado, nem com um botão do rato carregado (um arrasto
-/// em curso), nem sem a permissão do macOS para postar eventos.
+/// tampa. Nem com o ecrã apagado à mão (canto ativo, ⌃⇧⏏, `pmset displaysleepnow`
+/// com a tampa aberta): o movimento acendia-o. Nem com o ecrã bloqueado, nem com um
+/// botão do rato carregado (um arrasto em curso), nem sem a permissão do macOS para
+/// postar eventos.
 ///
 /// Não é um event tap nem um hotkey: só posta eventos (`CGEvent.post`), por isso
 /// não se mete na camada de input que o Hone partilha com as outras ferramentas.
@@ -25,9 +27,9 @@ enum MouseNudge {
     }
 
     /// Todas as condições têm de se verificar: qualquer uma sozinha trava.
-    static func canNudge(isActive: Bool, lidDimmed: Bool, screenLocked: Bool,
+    static func canNudge(isActive: Bool, lidDimmed: Bool, displayAsleep: Bool, screenLocked: Bool,
                          buttonsDown: Bool, hasAccess: Bool) -> Bool {
-        isActive && !lidDimmed && !screenLocked && !buttonsDown && hasAccess
+        isActive && !lidDimmed && !displayAsleep && !screenLocked && !buttonsDown && hasAccess
     }
 
     /// Para onde mexer: 1 px para a direita, ou para a esquerda se já está na
@@ -85,6 +87,7 @@ final class MouseNudger {
         let sleepy = SleepController.shared
         guard MouseNudge.canNudge(
             isActive: sleepy.isActive, lidDimmed: sleepy.lidDimmed,
+            displayAsleep: CGDisplayIsAsleep(Self.cursorDisplayID()) != 0,
             screenLocked: Self.isScreenLocked(), buttonsDown: NSEvent.pressedMouseButtons != 0,
             hasAccess: CGPreflightPostEventAccess()) else { return }
         nudge()
@@ -93,7 +96,7 @@ final class MouseNudger {
     /// Mexe o cursor 1 px e volta ao ponto original. Dois `mouseMoved`, nada de cliques.
     private func nudge() {
         guard let origin = CGEvent(source: nil)?.location else { return }
-        let target = MouseNudge.nudgeTarget(from: origin, in: Self.displayBounds(containing: origin))
+        let target = MouseNudge.nudgeTarget(from: origin, in: Self.displayBounds())
         let source = CGEventSource(stateID: .hidSystemState)
         for point in [target, origin] {
             CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
@@ -102,13 +105,18 @@ final class MouseNudger {
     }
 
     /// O ecrã onde está o cursor; na falta, o principal.
-    private static func displayBounds(containing point: CGPoint) -> CGRect {
+    private static func cursorDisplayID() -> CGDirectDisplayID {
+        guard let point = CGEvent(source: nil)?.location else { return CGMainDisplayID() }
         var display = CGDirectDisplayID()
         var count: UInt32 = 0
         if CGGetDisplaysWithPoint(point, 1, &display, &count) == .success, count > 0 {
-            return CGDisplayBounds(display)
+            return display
         }
-        return CGDisplayBounds(CGMainDisplayID())
+        return CGMainDisplayID()
+    }
+
+    private static func displayBounds() -> CGRect {
+        CGDisplayBounds(cursorDisplayID())
     }
 
     private static func isScreenLocked() -> Bool {

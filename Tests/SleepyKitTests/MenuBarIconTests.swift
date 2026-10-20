@@ -69,6 +69,27 @@ final class MenuBarIconTests: XCTestCase {
         XCTAssertEqual(text(after: 3600), "1h00")
     }
 
+    // MARK: - Timer da contagem
+
+    private func timerWanted(isRunning: Bool = true, isActive: Bool = true, showsCountdown: Bool = true,
+                             showsOwnIcon: Bool = true, hasDeadline: Bool = true) -> Bool {
+        MenuBarIcon.countdownTimerWanted(isRunning: isRunning, isActive: isActive,
+                                         showsCountdown: showsCountdown, showsOwnIcon: showsOwnIcon,
+                                         hasDeadline: hasDeadline)
+    }
+
+    func testCountdownTimerWantedWhenEverythingHolds() {
+        XCTAssertTrue(timerWanted())
+    }
+
+    func testCountdownTimerEachConditionAloneStopsIt() {
+        XCTAssertFalse(timerWanted(isRunning: false), "tool parada")
+        XCTAssertFalse(timerWanted(isActive: false), "Sleepy desligado")
+        XCTAssertFalse(timerWanted(showsCountdown: false), "contagem desligada")
+        XCTAssertFalse(timerWanted(showsOwnIcon: false), "sem ícone próprio")
+        XCTAssertFalse(timerWanted(hasDeadline: false), "sem prazo")
+    }
+
     // MARK: - Desenho
 
     private let symbol = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: nil) ?? NSImage()
