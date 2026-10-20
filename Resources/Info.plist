@@ -27,6 +27,11 @@
     <!-- Menu bar agent: no Dock icon, no main window on launch. -->
     <key>LSUIElement</key>
     <true/>
+    <!-- Soundly (per-app volume): Core Audio process taps need the
+         "System Audio Recording" permission. Asked only when the user first
+         moves an app's slider off 100 %, never at launch. -->
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>O Soundly precisa de acesso ao áudio das apps para lhes ajustar o volume. O som nunca é gravado nem guardado.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Hone — a modular macOS power-tools suite.</string>
 </dict>
