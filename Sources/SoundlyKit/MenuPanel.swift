@@ -206,9 +206,17 @@ private struct SoundlyAppRow: View {
         .opacity(failure == nil ? 1 : 0.5)
     }
 
+    /// Off 100 %: the reset button shows.
+    private var isOffDefault: Bool { app.volume != 1 }
+
     private var controls: some View {
         HStack(spacing: 4) {
-            SoundlyMuteButton(isMuted: app.isMuted, name: app.name) { onMute(!app.isMuted) }
+            SoundlyRowButton(
+                systemName: app.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                isHighlighted: app.isMuted,
+                help: app.isMuted ? "Tirar o silêncio de \(app.name)" : "Silenciar \(app.name)") {
+                onMute(!app.isMuted)
+            }
             VibeSlider(
                 value: Binding(
                     get: { app.volume },
@@ -217,17 +225,28 @@ private struct SoundlyAppRow: View {
                         if app.isMuted { onMute(false) }
                         onVolume(volume)
                     }),
+                in: 0...SoundlyLevel.maximumVolume,
+                defaultValue: 1,
                 label: "Volume de \(app.name)",
                 tint: app.isMuted ? VibeColor.text4 : tint,
-                onEditingChanged: onEditing)
+                onEditingChanged: onEditing,
+                // Like the reset button: the volume only, a muted app stays muted.
+                onDoubleClickThumb: { onVolume(1) })
             Text(SoundlyFormat.percent(app.volume))
                 .font(VibeFont.caption.monospacedDigit())
                 .foregroundStyle(app.isMuted ? VibeColor.text4 : VibeColor.text2)
-                .frame(width: 38, alignment: .trailing)
+                .frame(width: 34, alignment: .trailing)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { onVolume(1) }
                 .help("Duplo clique para repor 100 %")
                 .accessibilityHidden(true)
+            // Always laid out, so the slider keeps its width when it comes and goes.
+            SoundlyRowButton(systemName: "arrow.counterclockwise", help: "Repor 100 %") { onVolume(1) }
+                .opacity(isOffDefault ? 1 : 0)
+                .disabled(!isOffDefault)
+                .allowsHitTesting(isOffDefault)  // hidden: no hover, no tooltip
+                .accessibilityHidden(!isOffDefault)
+                .animation(VibeMotion.quick, value: isOffDefault)
         }
         .opacity(failure == nil ? 1 : 0.5)
     }
@@ -246,29 +265,32 @@ private struct SoundlyAppRow: View {
     }
 }
 
-/// The speaker before the slider: a tap mutes or unmutes the app.
-private struct SoundlyMuteButton: View {
-    let isMuted: Bool
-    let name: String
+/// A round glyph button beside the slider: the speaker before it (mutes and
+/// unmutes the app) and the reset after it. Highlighted while its state is on
+/// (the app is muted) or under the pointer.
+private struct SoundlyRowButton: View {
+    let systemName: String
+    var isHighlighted = false
+    let help: String
     let action: () -> Void
 
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+            Image(systemName: systemName)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(isMuted || hovering ? VibeColor.text1 : VibeColor.text3)
+                .foregroundStyle(isHighlighted || hovering ? VibeColor.text1 : VibeColor.text3)
                 .frame(width: 26, height: 26)
-                .background(isMuted || hovering ? VibeColor.control : .clear, in: Circle())
+                .background(isHighlighted || hovering ? VibeColor.control : .clear, in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(VibePressStyle(scale: 0.92))
         .onHover { hovering = $0 }
         .animation(VibeMotion.quick, value: hovering)
-        .animation(VibeMotion.quick, value: isMuted)
-        .help(isMuted ? "Tirar o silêncio de \(name)" : "Silenciar \(name)")
-        .accessibilityLabel(isMuted ? "Tirar o silêncio de \(name)" : "Silenciar \(name)")
+        .animation(VibeMotion.quick, value: isHighlighted)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -308,7 +330,7 @@ enum SoundlyIcons {
 /// Entry point for Hone's offscreen preview renders: fake apps, no audio touched.
 public enum SoundlyPreview {
     public enum Scenario: Sendable {
-        /// A playing app at 35 %, one at full volume, one muted, one that failed.
+        /// A playing app boosted to 150 %, one at 100 %, one muted, one that failed.
         case apps
         /// The same, and the permission was never asked.
         case needsAccess
@@ -354,7 +376,7 @@ public enum SoundlyPreview {
     private static func sample(needingPermission: Bool) -> [SoundlyApp] {
         [
             fake("com.apple.Music", "Música", path: "/System/Applications/Music.app", playing: true,
-                 volume: 0.35, status: needingPermission ? .needsPermission : .adjusted),
+                 volume: 1.5, status: needingPermission ? .needsPermission : .adjusted),
             fake("com.apple.Safari", "Safari", path: "/Applications/Safari.app", playing: true),
             fake("com.apple.podcasts", "Podcasts", path: "/System/Applications/Podcasts.app",
                  volume: 0.6, muted: true, status: needingPermission ? .needsPermission : .adjusted),

@@ -366,6 +366,22 @@ final class SoundlyMixerTests: XCTestCase {
         XCTAssertEqual(status(mixer, spotify), .direct)
     }
 
+    func testBoostTapsAndBackAtTopReleases() {
+        let (mixer, backend) = makeMixer()
+        defer { mixer.stop() }
+        mixer.start()
+        mixer.setVolume(1.5, for: spotify)
+        XCTAssertEqual(backend.taps.count, 1, "above 100 % needs a tap too")
+        XCTAssertEqual(backend.taps[0].startGain, 1)
+        XCTAssertEqual(backend.taps[0].targetGain, 1.5, accuracy: 1e-6)
+        XCTAssertEqual(status(mixer, spotify), .adjusted)
+        mixer.setVolume(1.002, for: spotify)  // the slider brought back to 100 %
+        XCTAssertEqual(backend.taps[0].targetGain, 1)
+        wait(SoundlyMixer.releaseDelay * 2.5)
+        XCTAssertTrue(backend.taps[0].isInvalidated)
+        XCTAssertEqual(status(mixer, spotify), .direct)
+    }
+
     // MARK: Failures
 
     func testFailureMarksUnavailableAndOnlyAUserActionRetries() {

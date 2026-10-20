@@ -38,14 +38,27 @@ final class SoundlyLevelTests: XCTestCase {
         XCTAssertTrue(SoundlyLevel(volume: 0.4, isMuted: false).needsTap)
         XCTAssertTrue(SoundlyLevel(volume: 0, isMuted: false).needsTap)
         XCTAssertTrue(SoundlyLevel(volume: 1, isMuted: true).needsTap)
-        XCTAssertFalse(SoundlyLevel(volume: 0.997, isMuted: false).needsTap, "the top of the slider lets go")
+        XCTAssertFalse(SoundlyLevel(volume: 0.997, isMuted: false).needsTap, "back at 100 % lets go")
+        XCTAssertFalse(SoundlyLevel(volume: 1.003, isMuted: false).needsTap, "from above too")
+    }
+
+    func testBoostNeedsATap() {
+        XCTAssertTrue(SoundlyLevel(volume: 1.5, isMuted: false).needsTap)
+        XCTAssertTrue(SoundlyLevel(volume: 2, isMuted: false).needsTap)
+        XCTAssertTrue(SoundlyLevel(volume: 1.01, isMuted: false).needsTap)
     }
 
     func testVolumeIsClampedAndSnapped() {
-        XCTAssertEqual(SoundlyLevel.normalized(1.7), 1)
+        XCTAssertEqual(SoundlyLevel.maximumVolume, 2)
+        XCTAssertEqual(SoundlyLevel.normalized(1.7), 1.7)
+        XCTAssertEqual(SoundlyLevel.normalized(2), 2)
+        XCTAssertEqual(SoundlyLevel.normalized(2.4), 2)
+        XCTAssertEqual(SoundlyLevel.normalized(.infinity), 1)
         XCTAssertEqual(SoundlyLevel.normalized(-0.2), 0)
         XCTAssertEqual(SoundlyLevel.normalized(0.996), 1)
+        XCTAssertEqual(SoundlyLevel.normalized(1.004), 1)
         XCTAssertEqual(SoundlyLevel.normalized(0.99), 0.99)
+        XCTAssertEqual(SoundlyLevel.normalized(1.01), 1.01)
         XCTAssertEqual(SoundlyLevel.normalized(.nan), 1)
     }
 
@@ -53,6 +66,8 @@ final class SoundlyLevelTests: XCTestCase {
         XCTAssertEqual(SoundlyLevel(volume: 0.4, isMuted: false).gain, 0.4, accuracy: 1e-6)
         XCTAssertEqual(SoundlyLevel(volume: 0.4, isMuted: true).gain, 0)
         XCTAssertEqual(SoundlyLevel.unchanged.gain, 1)
+        XCTAssertEqual(SoundlyLevel(volume: 2, isMuted: false).gain, 2, "200 % = twice the amplitude, +6 dB")
+        XCTAssertEqual(SoundlyLevel(volume: 1.5, isMuted: true).gain, 0)
     }
 
     func testStatus() {
@@ -91,6 +106,19 @@ final class SoundlyLevelTests: XCTestCase {
         XCTAssertEqual(reopened.level(for: "com.apple.Music"), .unchanged)
     }
 
+    func testBoostRoundTripsAndOldLevelsStayValid() {
+        let defaults = throwawayDefaults()
+        // Saved by a version whose top was 100 %: read back exactly as they were.
+        defaults.set(["com.spotify.client": ["volume": 0.35, "muted": false],
+                      "com.apple.Music": ["volume": 1.0, "muted": true]], forKey: SoundlyStore.levelsKey)
+        let store = SoundlyStore(defaults: defaults)
+        XCTAssertEqual(store.level(for: "com.spotify.client"), SoundlyLevel(volume: 0.35, isMuted: false))
+        XCTAssertEqual(store.level(for: "com.apple.Music"), SoundlyLevel(volume: 1, isMuted: true))
+
+        store.setLevel(SoundlyLevel(volume: 1.5, isMuted: false), for: "com.google.Chrome")
+        XCTAssertEqual(SoundlyStore(defaults: defaults).level(for: "com.google.Chrome").volume, 1.5)
+    }
+
     func testBackToUnchangedForgetsTheApp() {
         let defaults = throwawayDefaults()
         let store = SoundlyStore(defaults: defaults)
@@ -101,10 +129,12 @@ final class SoundlyLevelTests: XCTestCase {
 
     func testCorruptEntryReadsAsUnchanged() {
         let defaults = throwawayDefaults()
-        defaults.set(["com.spotify.client": "loud", "com.apple.Music": ["volume": 7.0]], forKey: SoundlyStore.levelsKey)
+        defaults.set(["com.spotify.client": "loud", "com.apple.Music": ["volume": 7.0],
+                      "com.apple.TV": ["volume": -3.0]], forKey: SoundlyStore.levelsKey)
         let store = SoundlyStore(defaults: defaults)
         XCTAssertEqual(store.level(for: "com.spotify.client"), .unchanged)
-        XCTAssertEqual(store.level(for: "com.apple.Music"), .unchanged, "out of range is clamped back to 100 %")
+        XCTAssertEqual(store.level(for: "com.apple.Music").volume, 2, "out of range is clamped to 200 %")
+        XCTAssertEqual(store.level(for: "com.apple.TV").volume, 0)
     }
 
     @MainActor

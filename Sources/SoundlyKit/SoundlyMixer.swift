@@ -12,7 +12,7 @@ import os
 ///   device and the sample rate of every device in use, plus app launch/quit
 ///   notifications. A slow timer catches what slips through and re-reads the
 ///   permission (preflight only).
-/// - A tap exists only while an app is below 100 % or muted (`SoundlyLevel.needsTap`),
+/// - A tap exists only while an app is off 100 % or muted (`SoundlyLevel.needsTap`),
 ///   and plays to the device the app itself plays to (`OutputRouting`).
 /// - The permission prompt only ever follows a user action: moving a slider off
 ///   100 %, muting, or `requestPermission()` (a "grant access" button). Never at launch.
@@ -159,7 +159,7 @@ public final class SoundlyMixer: ObservableObject {
 
     // MARK: - User actions
 
-    /// Sets an app's volume (0…1, snapped to 1 near the top) and applies it.
+    /// Sets an app's volume (0…2, snapped to 1 within half a percent) and applies it.
     public func setVolume(_ volume: Double, for appID: SoundlyApp.ID) {
         let current = store.level(for: appID)
         userChanged(SoundlyLevel(volume: volume, isMuted: current.isMuted), for: appID)

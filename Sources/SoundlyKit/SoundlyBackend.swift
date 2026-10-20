@@ -4,7 +4,7 @@ import CoreAudio
 @MainActor
 protocol SoundlyTap: AnyObject {
     var objectIDs: [AudioObjectID] { get }
-    /// What the IOProc ramps towards, 0…1.
+    /// What the IOProc ramps towards, 0…2 (above 1 the limiter keeps it from clipping).
     var targetGain: Float { get set }
     /// The IOProc has run: the tap is being read, so the app's own stream is muted.
     var hasRendered: Bool { get }
