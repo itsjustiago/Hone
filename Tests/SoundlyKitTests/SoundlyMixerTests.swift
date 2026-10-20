@@ -274,6 +274,29 @@ final class SoundlyMixerTests: XCTestCase {
         XCTAssertFalse(backend.taps[0].isInvalidated)
     }
 
+    func testBoostWaitsForTheCrossfadeToEnd() {
+        let (mixer, backend) = makeMixer()
+        defer { mixer.stop() }
+        mixer.start()
+        mixer.setVolume(1.8, for: spotify)
+        backend.defaultDevice = airPods
+        mixer.outputDeviceChanged()
+        XCTAssertEqual(backend.taps[1].startGain, 0)
+        XCTAssertEqual(backend.taps[1].targetGain, 1, "both taps play the app: no boost on top of the overlap")
+        mixer.setVolume(2, for: spotify)
+        XCTAssertEqual(backend.taps[1].targetGain, 1, "not even when the slider moves meanwhile")
+
+        backend.taps[1].hasRendered = true
+        wait(SoundlyMixer.handoffMinimum + 0.1)
+        XCTAssertTrue(backend.taps[0].isInvalidated)
+        XCTAssertEqual(backend.taps[1].targetGain, 2, accuracy: 1e-6, "alone again, the boost goes on")
+    }
+
+    func testOldTapOutlivesAFadeFromTheTop() {
+        // 20 ms per 1× of gain: 40 ms from 200 %, then an IO cycle or two.
+        XCTAssertGreaterThan(SoundlyMixer.handoffMinimum, GainRamp.duration * Double(TapRenderer.maxGain))
+    }
+
     func testFailedRebuildLetsGoOfTheOldTapAtOnce() {
         let (mixer, backend) = makeMixer()
         defer { mixer.stop() }
@@ -361,6 +384,22 @@ final class SoundlyMixerTests: XCTestCase {
         mixer.setVolume(0.5, for: spotify)
         mixer.setVolume(1, for: spotify)
         XCTAssertFalse(backend.taps[0].isInvalidated)
+        wait(SoundlyMixer.releaseDelay * 2.5)
+        XCTAssertTrue(backend.taps[0].isInvalidated)
+        XCTAssertEqual(status(mixer, spotify), .direct)
+    }
+
+    func testBoostTapsAndBackAtTopReleases() {
+        let (mixer, backend) = makeMixer()
+        defer { mixer.stop() }
+        mixer.start()
+        mixer.setVolume(1.5, for: spotify)
+        XCTAssertEqual(backend.taps.count, 1, "above 100 % needs a tap too")
+        XCTAssertEqual(backend.taps[0].startGain, 1)
+        XCTAssertEqual(backend.taps[0].targetGain, 1.5, accuracy: 1e-6)
+        XCTAssertEqual(status(mixer, spotify), .adjusted)
+        mixer.setVolume(1.002, for: spotify)  // the slider brought back to 100 %
+        XCTAssertEqual(backend.taps[0].targetGain, 1)
         wait(SoundlyMixer.releaseDelay * 2.5)
         XCTAssertTrue(backend.taps[0].isInvalidated)
         XCTAssertEqual(status(mixer, spotify), .direct)

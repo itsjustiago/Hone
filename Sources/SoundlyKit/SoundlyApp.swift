@@ -5,7 +5,11 @@ public struct SoundlyLevel: Equatable, Sendable {
     /// Untouched apps play exactly as they would without Soundly.
     public static let unchanged = SoundlyLevel(volume: 1, isMuted: false)
 
-    /// 0…1. Only attenuation for now: nothing goes above what the app plays.
+    /// The top of the slider: 200 %, twice the amplitude (+6 dB).
+    public static let maximumVolume: Double = 2
+
+    /// 0…2 (0–200 %). 1 is what the app plays; above it is a boost, kept from
+    /// clipping by the IOProc's limiter (`PeakLimiter`).
     public var volume: Double
     public var isMuted: Bool
 
@@ -14,17 +18,18 @@ public struct SoundlyLevel: Equatable, Sendable {
         self.isMuted = isMuted
     }
 
-    /// Clamped to 0…1, and snapped to 1 within half a percent so a slider
-    /// dragged "all the way" really lets go of the app.
+    /// Clamped to 0…2 (levels saved when the top was 100 % stay as they were),
+    /// and snapped to 1 within half a percent so a slider brought back to 100 %
+    /// really lets go of the app.
     public static func normalized(_ volume: Double) -> Double {
         guard volume.isFinite else { return 1 }
-        let clamped = min(max(volume, 0), 1)
-        return clamped >= 0.995 ? 1 : clamped
+        let clamped = min(max(volume, 0), maximumVolume)
+        return abs(clamped - 1) < 0.005 ? 1 : clamped
     }
 
     /// A tap is only worth it when it changes something: at 100 % and unmuted
     /// there is none, so no overhead and no use of the audio permission.
-    public var needsTap: Bool { isMuted || volume < 1 }
+    public var needsTap: Bool { isMuted || volume != 1 }
 
     /// The amplitude factor the IOProc applies. Linear in the slider value; a
     /// perceptual curve, if wanted, belongs here and nowhere else.

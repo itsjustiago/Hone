@@ -111,7 +111,8 @@ final class AppTap: SoundlyTap {
         state = .allocate(capacity: 1)
         state.initialize(to: TapRenderState(targetGain: targetGain, currentGain: startGain,
                                             maxStepPerFrame: GainRamp.maxStep(sampleRate: output.sampleRate),
-                                            tapBufferCount: 1, stereoLeft: stereo.left, stereoRight: stereo.right))
+                                            tapBufferCount: 1, stereoLeft: stereo.left, stereoRight: stereo.right,
+                                            limiter: PeakLimiter(sampleRate: output.sampleRate)))
         do {
             try build(output: output, appName: appName)
         } catch {
@@ -123,7 +124,7 @@ final class AppTap: SoundlyTap {
     /// What the IOProc ramps towards (see `TapRenderState` for why a plain store is enough).
     var targetGain: Float {
         get { isValid ? state.pointee.targetGain : 1 }
-        set { if isValid { state.pointee.targetGain = min(max(newValue, 0), 1) } }
+        set { if isValid { state.pointee.targetGain = min(max(newValue, 0), TapRenderer.maxGain) } }
     }
 
     var hasRendered: Bool { isValid && state.pointee.hasRendered != 0 }
@@ -182,6 +183,7 @@ final class AppTap: SoundlyTap {
         let rate = (try? AudioObject.read(aggregateID, kAudioDevicePropertyNominalSampleRate,
                                           as: Float64.self, initial: 0)) ?? output.sampleRate
         state.pointee.maxStepPerFrame = GainRamp.maxStep(sampleRate: rate > 0 ? rate : 48_000)
+        state.pointee.limiter = PeakLimiter(sampleRate: rate > 0 ? rate : 48_000)
 
         // The aggregate's inputs are the output device's own inputs (a headset
         // mic, say) followed by the tap: only the trailing ones are ours.

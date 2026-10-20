@@ -15,11 +15,15 @@ final class PanelModelTests: XCTestCase {
         XCTAssertEqual(SoundlyFormat.percent(0.35), "35%")
         XCTAssertEqual(SoundlyFormat.percent(0.456), "46%")
         XCTAssertEqual(SoundlyFormat.percent(1), "100%")
+        XCTAssertEqual(SoundlyFormat.percent(1.5), "150%")
+        XCTAssertEqual(SoundlyFormat.percent(1.996), "200%")
+        XCTAssertEqual(SoundlyFormat.percent(2), "200%")
     }
 
     func testPercentStaysInsideTheRange() {
         XCTAssertEqual(SoundlyFormat.percent(-0.2), "0%")
-        XCTAssertEqual(SoundlyFormat.percent(1.7), "100%")
+        XCTAssertEqual(SoundlyFormat.percent(1.7), "170%")
+        XCTAssertEqual(SoundlyFormat.percent(2.6), "200%")
     }
 
     // MARK: Notice
@@ -97,10 +101,12 @@ final class PanelModelTests: XCTestCase {
         let store = SoundlyStore(defaults: defaults)
         store.setLevel(SoundlyLevel(volume: 0.3, isMuted: true), for: "com.example.one")
         store.setLevel(SoundlyLevel(volume: 0.6, isMuted: false), for: "com.example.two")
+        store.setLevel(SoundlyLevel(volume: 1.8, isMuted: false), for: "com.example.boosted")
 
         SoundlyMixer(store: store).resetAll()
 
         XCTAssertEqual(store.level(for: "com.example.one"), .unchanged)
         XCTAssertEqual(store.level(for: "com.example.two"), .unchanged)
+        XCTAssertEqual(store.level(for: "com.example.boosted"), .unchanged, "boosted apps go back to 100 % too")
     }
 }

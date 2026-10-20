@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Building blocks of the Hone look. All plain SwiftUI shapes and text — no
@@ -105,88 +106,279 @@ private struct VibeSwitch: View {
 // MARK: - Slider
 
 /// Hone's slider: a thin track filled in the tool's colour up to a white knob
-/// (the switch's knob), 0…1. Plain shapes and a drag gesture rather than the
-/// native slider, so it looks the same everywhere and renders offscreen.
-/// Pressing anywhere on it moves the knob there.
+/// (the switch's knob). Plain shapes and a drag gesture rather than the native
+/// slider, so it looks the same everywhere and renders offscreen.
+/// Pressing the track moves the knob there; pressing the knob grabs it where it
+/// is, so a click on it moves nothing. With a `defaultValue` the track marks it,
+/// the knob sticks to it when dragged close, and a double-click on the knob
+/// goes back to it.
 public struct VibeSlider: View {
     @Binding var value: Double
+    let range: ClosedRange<Double>
+    let defaultValue: Double?
     let label: String
     let tint: Color
     let onEditingChanged: (Bool) -> Void
+    let onDoubleClickThumb: (() -> Void)?
 
     @State private var dragging = false
+    /// The press under way and the clicks before it.
+    @State private var tracker = VibeSliderPress()
+    /// True while a drag lasts. SwiftUI resets it when the drag ends *and* when
+    /// it is cancelled (the panel closing mid-drag), which never calls `onEnded`.
+    @GestureState private var isPressed = false
 
-    /// Keys and VoiceOver move it in steps of 5 %.
+    /// Keys and VoiceOver move it in steps of 5 % (of the value, e.g. 0.05).
     static let step = 0.05
+    /// Dragged within this share of the range, the knob sticks to `defaultValue`
+    /// (±3 % on a 0…200 % slider).
+    static let snapFraction = 0.015
     private let knob: CGFloat = 16
     private let track: CGFloat = 5
 
     /// - Parameters:
+    ///   - range: what the ends stand for (0…1 unless given).
+    ///   - defaultValue: marked on the track, magnetic, and where a double-click
+    ///     on the knob goes back to. `nil`: none of that.
     ///   - label: what the slider sets, for VoiceOver ("Volume do Spotify").
     ///   - tint: the filled part; pass a grey while the thing it sets is off.
     ///   - onEditingChanged: `true` when a drag starts, `false` when it ends.
-    public init(value: Binding<Double>, label: String, tint: Color,
-                onEditingChanged: @escaping (Bool) -> Void = { _ in }) {
+    ///   - onDoubleClickThumb: what a double-click on the knob does instead of
+    ///     setting `defaultValue` through the binding.
+    public init(value: Binding<Double>, in range: ClosedRange<Double> = 0...1, defaultValue: Double? = nil,
+                label: String, tint: Color,
+                onEditingChanged: @escaping (Bool) -> Void = { _ in },
+                onDoubleClickThumb: (() -> Void)? = nil) {
         self._value = value
+        self.range = range
+        self.defaultValue = defaultValue
         self.label = label
         self.tint = tint
         self.onEditingChanged = onEditingChanged
+        self.onDoubleClickThumb = onDoubleClickThumb
+    }
+
+    /// Where `value` sits along `range`, 0…1.
+    static func fraction(_ value: Double, in range: ClosedRange<Double> = 0...1) -> Double {
+        let span = range.upperBound - range.lowerBound
+        guard span > 0, value.isFinite else { return 0 }
+        return min(max((value - range.lowerBound) / span, 0), 1)
     }
 
     /// The value for a pointer `x` points from the track's left edge: the knob's
     /// centre follows the pointer, and its travel is the width less one knob.
-    static func value(atX x: CGFloat, width: CGFloat, knob: CGFloat) -> Double {
+    static func value(atX x: CGFloat, width: CGFloat, knob: CGFloat, in range: ClosedRange<Double> = 0...1) -> Double {
         let travel = max(width - knob, 1)
-        return Double(min(max((x - knob / 2) / travel, 0), 1))
+        let fraction = Double(min(max((x - knob / 2) / travel, 0), 1))
+        return range.lowerBound + fraction * (range.upperBound - range.lowerBound)
+    }
+
+    /// Where the knob's centre is for `value`, from the track's left edge.
+    static func knobCenter(for value: Double, width: CGFloat, knob: CGFloat,
+                           in range: ClosedRange<Double> = 0...1) -> CGFloat {
+        knob / 2 + CGFloat(fraction(value, in: range)) * max(width - knob, 1)
+    }
+
+    /// `value`, pulled onto `target` within `snapFraction` of the range.
+    static func snapped(_ value: Double, to target: Double?, in range: ClosedRange<Double> = 0...1) -> Double {
+        guard let target else { return value }
+        let span = range.upperBound - range.lowerBound
+        return abs(value - target) <= span * snapFraction ? target : value
+    }
+
+    /// One key or VoiceOver step of `delta` from `value`: kept in `range` and,
+    /// like a drag, pulled onto `defaultValue` when it lands close.
+    static func stepped(_ value: Double, by delta: Double, in range: ClosedRange<Double> = 0...1,
+                        defaultValue: Double? = nil) -> Double {
+        snapped(min(max(value + delta, range.lowerBound), range.upperBound), to: defaultValue, in: range)
+    }
+
+    /// What a press of `kind`, now at `x`, sets — `nil` for nothing: a knob
+    /// that hasn't moved yet (so a click, or the first half of a double-click,
+    /// never nudges it) and a double-click (which resets instead).
+    static func value(for kind: VibeSliderPress.Kind, atX x: CGFloat, moved: Bool, width: CGFloat, knob: CGFloat,
+                      in range: ClosedRange<Double> = 0...1, defaultValue: Double? = nil) -> Double? {
+        let pointer: CGFloat
+        switch kind {
+        case .track: pointer = x
+        case .knob(let grab):
+            guard moved else { return nil }
+            pointer = x - grab
+        case .doubleClick: return nil
+        }
+        return snapped(value(atX: pointer, width: width, knob: knob, in: range), to: defaultValue, in: range)
+    }
+
+    private var resets: Bool { defaultValue != nil || onDoubleClickThumb != nil }
+
+    private func reset() {
+        if let onDoubleClickThumb {
+            onDoubleClickThumb()
+        } else if let defaultValue {
+            value = defaultValue
+        }
+    }
+
+    /// The drag is over, ended or cancelled. Safe to call twice: both ways out
+    /// may run, in either order.
+    private func endPress() {
+        tracker.finish()
+        guard dragging else { return }
+        dragging = false
+        onEditingChanged(false)
     }
 
     public var body: some View {
         GeometryReader { geo in
-            let travel = max(geo.size.width - knob, 1)
-            let x = CGFloat(min(max(value, 0), 1)) * travel
+            let width = geo.size.width
+            let center = Self.knobCenter(for: value, width: width, knob: knob, in: range)
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
                     .fill(VibeColor.track)
                     .frame(height: track)
+                if let defaultValue {
+                    // Taller than the track, so its ends still show once the fill passes it.
+                    Capsule(style: .continuous)
+                        .fill(VibeColor.text4)
+                        .frame(width: 2, height: track + 6)
+                        .offset(x: Self.knobCenter(for: defaultValue, width: width, knob: knob, in: range) - 1)
+                        .accessibilityHidden(true)
+                }
                 Capsule(style: .continuous)
                     .fill(tint)
-                    .frame(width: x + knob / 2, height: track)
+                    .frame(width: center, height: track)
                 Circle()
                     .fill(VibeColor.text1)
                     .frame(width: knob, height: knob)
                     .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
                     .scaleEffect(dragging ? 1.08 : 1)
-                    .offset(x: x)
+                    .offset(x: center - knob / 2)
             }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
+            .frame(width: width, height: geo.size.height, alignment: .leading)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
+                    .updating($isPressed) { _, pressed, _ in pressed = true }
                     .onChanged { drag in
                         if !dragging {
                             dragging = true
                             onEditingChanged(true)
                         }
-                        value = Self.value(atX: drag.location.x, width: geo.size.width, knob: knob)
+                        let press = tracker.changed(x: drag.startLocation.x,
+                                                    distance: hypot(drag.translation.width, drag.translation.height),
+                                                    knobCenter: center, knob: knob,
+                                                    time: drag.time.timeIntervalSinceReferenceDate,
+                                                    doubleClickInterval: NSEvent.doubleClickInterval,
+                                                    resets: resets)
+                        if press.isNew, press.kind == .doubleClick { reset() }
+                        guard let next = Self.value(for: press.kind, atX: drag.location.x,
+                                                    moved: tracker.moved, width: width, knob: knob,
+                                                    in: range, defaultValue: defaultValue) else { return }
+                        value = next
                     }
-                    .onEnded { _ in
-                        dragging = false
-                        onEditingChanged(false)
+                    .onEnded { drag in
+                        tracker.ended(distance: hypot(drag.translation.width, drag.translation.height))
+                        endPress()
                     }
             )
+            .onChange(of: isPressed) { _, pressed in
+                if !pressed { endPress() }
+            }
         }
         .frame(height: VibeMetrics.toggle.height)
         .animation(VibeMotion.quick, value: dragging)
         .accessibilityElement()
         .accessibilityLabel(label)
-        .accessibilityValue(Text("\(Int((min(max(value, 0), 1) * 100).rounded())) por cento"))
+        .accessibilityValue(Text("\(Int((min(max(value, range.lowerBound), range.upperBound) * 100).rounded())) por cento"))
         .accessibilityAdjustableAction { direction in
             switch direction {
-            case .increment: value = min(value + Self.step, 1)
-            case .decrement: value = max(value - Self.step, 0)
+            case .increment: value = Self.stepped(value, by: Self.step, in: range, defaultValue: defaultValue)
+            case .decrement: value = Self.stepped(value, by: -Self.step, in: range, defaultValue: defaultValue)
             @unknown default: break
             }
         }
+        .accessibilityActions {
+            if let defaultValue {
+                Button("Repor \(Int((defaultValue * 100).rounded())) %") { reset() }
+            }
+        }
+    }
+}
+
+/// How a press on a `VibeSlider` reads: on the track it jumps the knob there;
+/// on the knob it grabs it where it is, and only follows once it has moved past
+/// `clickSlop`; a second click on the knob within the system's double-click
+/// interval is a reset. Pure, so it is tested without a window.
+struct VibeSliderPress: Equatable {
+    enum Kind: Equatable {
+        case track
+        /// The pointer's distance from the knob's centre when the press began:
+        /// the knob keeps that offset as it follows the pointer.
+        case knob(grab: CGFloat)
+        case doubleClick
+    }
+
+    /// Movement up to this many points still counts as a click.
+    static let clickSlop: CGFloat = 3
+    /// A press this close to the knob's edge counts as on the knob.
+    static let knobSlop: CGFloat = 2
+
+    /// When the last click (a press that didn't drag) on the knob began.
+    private(set) var lastKnobClick: TimeInterval?
+    /// The press under way; `nil` between presses.
+    private(set) var current: Kind?
+    /// The press under way has gone past `clickSlop` at some point (a knob
+    /// brought back to where it was grabbed still follows).
+    private(set) var moved = false
+
+    /// Further than `clickSlop` from where the press began: a drag, not a click.
+    static func isDrag(distance: CGFloat) -> Bool { distance > clickSlop }
+
+    /// The pointer moved, `distance` points from where the press began at `x`.
+    /// The first call of a press decides its kind (`began`); `isNew` says so.
+    mutating func changed(x: CGFloat, distance: CGFloat, knobCenter: CGFloat, knob: CGFloat, time: TimeInterval,
+                          doubleClickInterval: TimeInterval, resets: Bool) -> (kind: Kind, isNew: Bool) {
+        let kind: Kind
+        let isNew = current == nil
+        if let current {
+            kind = current
+        } else {
+            kind = began(x: x, knobCenter: knobCenter, knob: knob, time: time,
+                         doubleClickInterval: doubleClickInterval, resets: resets)
+            current = kind
+            moved = false
+        }
+        if Self.isDrag(distance: distance) { moved = true }
+        return (kind, isNew)
+    }
+
+    /// A press began at `x`. `resets`: the slider has something to reset to,
+    /// otherwise a double-click is just two clicks.
+    mutating func began(x: CGFloat, knobCenter: CGFloat, knob: CGFloat, time: TimeInterval,
+                        doubleClickInterval: TimeInterval, resets: Bool) -> Kind {
+        let grab = x - knobCenter
+        guard abs(grab) <= knob / 2 + Self.knobSlop else {
+            lastKnobClick = nil
+            return .track
+        }
+        if resets, let last = lastKnobClick, time - last >= 0, time - last <= doubleClickInterval {
+            lastKnobClick = nil  // a third click starts over
+            return .doubleClick
+        }
+        lastKnobClick = time  // until it turns out to be a drag
+        return .knob(grab: grab)
+    }
+
+    /// The press ended after moving `distance` points: a drag isn't half of a double-click.
+    mutating func ended(distance: CGFloat) {
+        if Self.isDrag(distance: distance) { lastKnobClick = nil }
+        finish()
+    }
+
+    /// The press is over, ended or cancelled: the next one starts clean.
+    mutating func finish() {
+        current = nil
+        moved = false
     }
 }
 

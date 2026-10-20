@@ -6,9 +6,9 @@ import Foundation
 
 /// Text for the panel (PT-PT).
 enum SoundlyFormat {
-    /// 0…1 → "80%", like Stats' readouts.
+    /// 0…2 → "80%", "150%", like Stats' readouts.
     static func percent(_ volume: Double) -> String {
-        "\(Int((min(max(volume, 0), 1) * 100).rounded()))%"
+        "\(Int((min(max(volume, 0), SoundlyLevel.maximumVolume) * 100).rounded()))%"
     }
 }
 
