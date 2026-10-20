@@ -262,13 +262,12 @@ struct SettingsView: View {
 }
 
 private extension ModuleManager {
-    /// The tool's mascot mood, as on the home: asleep when off or idle (on, but
-    /// with nothing to do), alert when something holds it back.
+    /// The tool's mascot mood, as on the home: asleep when off, alert when
+    /// something holds it back.
     func mood(for module: any HoneModule) -> Blob.Mood {
         if module.isMomentary { return .awake }
         guard module.isAvailable, module.isEnabled else { return .asleep }
-        if isPaused(module) || isWaitingOnPermission(module) { return .alert }
-        return isIdle(module) ? .asleep : .awake
+        return isPaused(module) || isWaitingOnPermission(module) ? .alert : .awake
     }
 }
 

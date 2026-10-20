@@ -106,13 +106,6 @@ final class ModuleManager {
         return tool.isEnabled && legacyApps.isRunning(tool.legacyBundleID)
     }
 
-    /// On and running, but with nothing to do right now (Sleepy not blocking
-    /// sleep). Its mascot dozes, though the switch stays on.
-    func isIdle(_ module: any HoneModule) -> Bool {
-        guard let live = (module as? any MenuBarTool)?.liveState else { return false }
-        return !live.isActive
-    }
-
     /// Quits the old app behind a paused tool; the tool starts once it's gone.
     func quitLegacyApp(for tool: any MenuBarTool) {
         // The twin tears its state down on quit; let the tool keep what it needs first.
