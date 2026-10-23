@@ -39,6 +39,31 @@ enum Format {
         return decimal1(Double(value) / 1_073_741_824) + " GB"
     }
 
+    /// Disk capacity split in number and unit, in base 1000 like the Finder (the
+    /// rest of `Format` is base 1024 like Activity Monitor): ("850", "MB"),
+    /// ("4,2", "GB"), ("368", "GB"), ("1,2", "TB"). A rounding that reaches the
+    /// next unit moves to it: 999,6 GB is "1,0 TB", never "1000 GB".
+    static func diskSpaceParts(_ bytes: Int64) -> (value: String, unit: String) {
+        let value = Double(max(0, bytes))
+        let megabytes = (value / 1e6).rounded()
+        if megabytes < 1000 { return ("\(Int(megabytes))", "MB") }
+        let gigabytes = value / 1e9
+        if (gigabytes * 10).rounded() / 10 < 10 { return (decimal1(gigabytes), "GB") }
+        if gigabytes.rounded() < 1000 { return ("\(Int(gigabytes.rounded()))", "GB") }
+        return (decimal1(value / 1e12), "TB")
+    }
+
+    /// "368 GB".
+    static func diskSpace(_ bytes: Int64) -> String {
+        let parts = diskSpaceParts(bytes)
+        return "\(parts.value) \(parts.unit)"
+    }
+
+    /// "368 GB livres".
+    static func diskFree(_ bytes: Int64) -> String {
+        "\(diskSpace(bytes)) livres"
+    }
+
     /// Fan speed without unit: "1850".
     static func rpm(_ value: Double) -> String {
         "\(Int(min(9999, max(0, value)).rounded()))"

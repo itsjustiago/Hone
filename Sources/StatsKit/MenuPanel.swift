@@ -129,6 +129,10 @@ struct StatsPanel: View {
             guard let network = s.network else { return (Format.noData, nil) }
             let parts = Format.rateParts(network.download)
             return (parts.value, parts.unit)
+        case .disk:
+            guard let space = s.diskSpace else { return (Format.noData, nil) }
+            let parts = Format.diskSpaceParts(space.available)
+            return (parts.value, parts.unit)
         }
     }
 
@@ -137,6 +141,7 @@ struct StatsPanel: View {
         case .fan: return "Ventoinha mais rápida"
         case .temperature: return "Média do CPU"
         case .network: return "Receção por segundo"
+        case .disk: return "Livre no disco de arranque"
         case .cpu, .memory, .gpu, .power: return nil
         }
     }
@@ -164,6 +169,7 @@ struct StatsPanel: View {
         case .temperature: temperatureDetail
         case .power: powerDetail
         case .network: networkDetail
+        case .disk: diskDetail
         }
     }
 
@@ -303,13 +309,41 @@ struct StatsPanel: View {
     private var networkDetail: some View {
         let network = monitor.snapshot.network
         return VStack(alignment: .leading, spacing: 8) {
-            networkBlock(title: "↓ Receção", rate: network?.download, values: monitor.values(for: .network))
-            networkBlock(title: "↑ Envio", rate: network?.upload, values: monitor.uploadValues())
+            rateBlock(title: "↓ Receção", rate: network?.download, values: monitor.values(for: .network))
+            rateBlock(title: "↑ Envio", rate: network?.upload, values: monitor.uploadValues())
             caption("Soma do Wi-Fi e da Ethernet.")
         }
     }
 
-    private func networkBlock(title: String, rate: Double?, values: [Double]) -> some View {
+    private var diskDetail: some View {
+        let disk = monitor.snapshot.disk
+        return VStack(alignment: .leading, spacing: 8) {
+            // Without a reading of the space the block is left out, never shown as 0.
+            if let space = monitor.snapshot.diskSpace {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(Format.diskFree(space.available))
+                            .font(.system(size: 15, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(VibeColor.text1)
+                        Text("de \(Format.diskSpace(space.total))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(VibeColor.text3)
+                    }
+                    FractionBar(fraction: space.usedFraction)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Espaço usado")
+                        .accessibilityValue(Format.percent(space.usedFraction))
+                    if let name = space.name { InfoRow(title: "Volume", value: name) }
+                }
+            }
+            rateBlock(title: "Leitura", rate: disk?.read, values: monitor.values(for: .disk))
+            rateBlock(title: "Escrita", rate: disk?.write, values: monitor.writeValues())
+            caption("Leitura e escrita de todos os discos físicos.")
+        }
+    }
+
+    /// A throughput with its own sparkline (network and disk).
+    private func rateBlock(title: String, rate: Double?, values: [Double]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
@@ -366,7 +400,7 @@ struct TopAnchoredLayout: Layout {
 
 /// Entry point for Hone's offscreen preview renders: fake readings, nothing samples.
 public enum StatsPreview {
-    public enum Tab: Sendable { case cpu, memory, gpu, fan, temperature, power, network }
+    public enum Tab: Sendable { case cpu, memory, gpu, fan, temperature, power, network, disk }
 
     @MainActor
     public static func panel(_ tab: Tab = .cpu, back: (() -> Void)? = nil) -> AnyView {
@@ -384,6 +418,7 @@ public enum StatsPreview {
         case .temperature: selected = .temperature
         case .power: selected = .power
         case .network: selected = .network
+        case .disk: selected = .disk
         }
         settings.setEnabled(selected, true)
         let monitor = SystemMonitor(settings: settings)
@@ -404,6 +439,8 @@ public enum StatsPreview {
         snapshot.power = 14.2
         snapshot.powerSource = .battery
         snapshot.network = NetworkRates(download: 1.34 * 1_048_576, upload: 86 * 1024)
+        snapshot.disk = DiskRates(read: 24.6 * 1_048_576, write: 3.2 * 1_048_576)
+        snapshot.diskSpace = DiskSpace(available: 368_000_000_000, total: 995_000_000_000, name: "Macintosh HD")
         monitor.snapshot = snapshot
         monitor.fanCount = 1
         monitor.temperatureSensors = TemperatureSensors(gpu: true, battery: true)
@@ -421,6 +458,7 @@ public enum StatsPreview {
                 case .temperature: buffer.append(45 + 20 * f)
                 case .power: buffer.append(30 * f)
                 case .network: buffer.append(3_000_000 * f)
+                case .disk: buffer.append(40_000_000 * f)
                 case .cpu, .memory, .gpu, .fan: buffer.append(f)
                 }
             }
@@ -430,6 +468,10 @@ public enum StatsPreview {
         let networkIndex = Metric.allCases.firstIndex(of: .network) ?? 0
         for i in 0..<SystemMonitor.historyLength { upload.append(400_000 * wave(i, networkIndex)) }
         monitor.uploadHistory = upload
+        var written = RingBuffer(capacity: SystemMonitor.historyLength)
+        let diskIndex = Metric.allCases.firstIndex(of: .disk) ?? 0
+        for i in 0..<SystemMonitor.historyLength { written.append(8_000_000 * wave(i, diskIndex)) }
+        monitor.writeHistory = written
 
         let state = PanelState()
         state.selected = selected

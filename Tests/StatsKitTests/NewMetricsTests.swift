@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 @testable import StatsKit
 
-// Temperature, power and network in the history, the bar and the panel.
+// Temperature, power, network and disk in the history, the bar and the panel.
 
 final class HistoryScaleTests: XCTestCase {
     func testTheOriginalMetricsAreAlreadyFractions() {
@@ -53,11 +53,11 @@ final class NewMetricsPresentationTests: XCTestCase {
     }
 
     func testMetricsAreOrderedAndNamed() {
-        XCTAssertEqual(Metric.allCases, [.cpu, .memory, .gpu, .fan, .temperature, .power, .network])
+        XCTAssertEqual(Metric.allCases, [.cpu, .memory, .gpu, .fan, .temperature, .power, .network, .disk])
         XCTAssertEqual(Metric.allCases.filter(\.enabledByDefault), [.cpu, .memory, .gpu, .fan])
-        XCTAssertEqual([Metric.temperature, .power, .network].map(\.shortLabel), ["TEMP", "PWR", "NET"])
-        XCTAssertEqual([Metric.temperature, .power, .network].map(\.title), ["Temperatura", "Energia", "Rede"])
-        XCTAssertEqual([Metric.temperature, .power, .network].map(\.spokenName), ["temperatura", "energia", "rede"])
+        XCTAssertEqual([Metric.temperature, .power, .network, .disk].map(\.shortLabel), ["TEMP", "PWR", "NET", "DISK"])
+        XCTAssertEqual([Metric.temperature, .power, .network, .disk].map(\.title), ["Temperatura", "Energia", "Rede", "Disco"])
+        XCTAssertEqual([Metric.temperature, .power, .network, .disk].map(\.spokenName), ["temperatura", "energia", "rede", "disco"])
         for metric in Metric.allCases {
             XCTAssertNotNil(metric.glyphSymbol, "\(metric) needs a symbol that exists on this macOS")
         }
@@ -102,14 +102,14 @@ final class NewMetricsPresentationTests: XCTestCase {
 
     func testSegmentsStayLeftToRightWithTheNewReadouts() {
         for labels in [true, false] {
-            let all = MenuBarSpec(items: Metric.allCases.map { .init(metric: $0, text: "0", tone: .normal, secondary: $0 == .network ? "0" : nil) },
+            let all = MenuBarSpec(items: Metric.allCases.map { .init(metric: $0, text: "0", tone: .normal, secondary: $0 == .network || $0 == .disk ? "0" : nil) },
                                   showLabels: labels, colorize: false)
             let segments = MenuBarRenderer.segments(for: all)
             XCTAssertEqual(segments.map(\.metric), Metric.allCases)
             for (previous, next) in zip(segments, segments.dropFirst()) {
                 XCTAssertEqual(next.span.lowerBound, previous.span.upperBound + MenuBarRenderer.spacing)
             }
-            // A click on each reading, the network one included, lands on it.
+            // A click on each reading, the two-line ones included, lands on it.
             for segment in segments {
                 let middle = (segment.span.lowerBound + segment.span.upperBound) / 2
                 XCTAssertEqual(MenuBarRenderer.segment(atX: middle, in: all), segment)
@@ -149,8 +149,8 @@ final class NewMetricsPresentationTests: XCTestCase {
 @MainActor
 final class NewMetricsPanelTests: XCTestCase {
     func testTileColumns() {
-        let columns = (1...7).map { StatsPanel.tileColumns(count: $0) }
-        XCTAssertEqual(columns, [1, 2, 3, 4, 3, 3, 4])
+        let columns = (1...8).map { StatsPanel.tileColumns(count: $0) }
+        XCTAssertEqual(columns, [1, 2, 3, 4, 3, 3, 4, 4])
     }
 
     private func idealHeight(metrics: Set<Metric>, selected: Metric) -> CGFloat {
@@ -169,20 +169,20 @@ final class NewMetricsPanelTests: XCTestCase {
     func testMoreThanFourTilesWrapIntoASecondRow() {
         let four = idealHeight(metrics: [.cpu, .memory, .gpu, .fan], selected: .fan)
         let five = idealHeight(metrics: [.cpu, .memory, .gpu, .fan, .temperature], selected: .fan)
-        let seven = idealHeight(metrics: Set(Metric.allCases), selected: .fan)
+        let eight = idealHeight(metrics: Set(Metric.allCases), selected: .fan)
         XCTAssertGreaterThan(five, four + 30, "a second row of tiles")
-        XCTAssertEqual(seven, five, "five to seven tiles are two rows either way")
+        XCTAssertEqual(eight, five, "five to eight tiles are two rows either way")
     }
 
     func testEveryDetailHasContent() {
-        for metric in [Metric.temperature, .power, .network] {
+        for metric in [Metric.temperature, .power, .network, .disk] {
             let height = idealHeight(metrics: [metric], selected: metric)
             XCTAssertGreaterThan(height, 150, "\(metric) detail is laid out")
         }
     }
 
     func testPreviewsCoverTheNewTabs() {
-        for tab in [StatsPreview.Tab.temperature, .power, .network] {
+        for tab in [StatsPreview.Tab.temperature, .power, .network, .disk] {
             let host = NSHostingView(rootView: StatsPreview.panel(tab))
             XCTAssertGreaterThan(host.fittingSize.height, 150)
         }
@@ -243,7 +243,7 @@ final class NewMetricsToolTests: XCTestCase {
 
     func testProcessListsStayOnTheirThreeMetrics() async {
         let model = TopProcessesModel()
-        for metric in [Metric.fan, .temperature, .power, .network] {
+        for metric in [Metric.fan, .temperature, .power, .network, .disk] {
             await model.watch(metric: metric)  // returns at once: nothing to list
             XCTAssertTrue(model.rowsByMetric.isEmpty)
         }
