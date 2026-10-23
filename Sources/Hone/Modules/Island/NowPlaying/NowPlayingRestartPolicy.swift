@@ -1,0 +1,31 @@
+import Foundation
+
+/// When to restart the adapter after it dies on its own, and when to stop trying.
+/// Pure, so the timing is testable without a process.
+struct NowPlayingRestartPolicy {
+    enum Decision: Equatable {
+        case retry(after: TimeInterval)
+        case giveUp
+    }
+
+    /// Wait before the 1st, 2nd… consecutive restart; the last one repeats.
+    static let delays: [TimeInterval] = [1, 2, 5, 10, 30]
+    /// This many failures inside `window` and the adapter is not coming back.
+    static let maxFailures = 5
+    static let window: TimeInterval = 120
+    /// An adapter that lived this long was healthy: its death starts the delays over.
+    static let healthyUptime: TimeInterval = 60
+
+    private var recent: [Date] = []
+    private var consecutive = 0
+
+    /// `uptime` is how long the process that just died had been running.
+    mutating func recordFailure(at now: Date, uptime: TimeInterval = 0) -> Decision {
+        if uptime >= Self.healthyUptime { consecutive = 0 }
+        consecutive += 1
+        recent = recent.filter { now.timeIntervalSince($0) < Self.window }
+        recent.append(now)
+        if recent.count >= Self.maxFailures { return .giveUp }
+        return .retry(after: Self.delays[min(consecutive, Self.delays.count) - 1])
+    }
+}

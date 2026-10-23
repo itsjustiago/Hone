@@ -4,6 +4,11 @@ import PackageDescription
 let package = Package(
     name: "Hone",
     platforms: [.macOS(.v14)],
+    products: [
+        // Loaded into /usr/bin/perl at runtime (never linked into Hone): the Island's
+        // "now playing" source. build.sh copies it into Hone.app/Contents/Frameworks.
+        .library(name: "HoneNowPlaying", type: .dynamic, targets: ["HoneNowPlaying"])
+    ],
     targets: [
         .executableTarget(
             name: "Hone",
@@ -65,6 +70,14 @@ let package = Package(
             name: "LidFoldKit",
             path: "Sources/LidFoldKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        // MediaRemote adapter (Objective-C) for the Island. Since macOS 15.4 MediaRemote
+        // answers only Apple-entitled processes, so the Hone loads this into the
+        // platform binary /usr/bin/perl and talks to it over stdin/stdout.
+        .target(
+            name: "HoneNowPlaying",
+            path: "Sources/HoneNowPlaying",
+            linkerSettings: [.linkedFramework("Foundation")]
         ),
         // Hone's own pure logic (Quit on Close's decisions). The Kits have their own.
         .testTarget(

@@ -17,12 +17,18 @@ fi
 
 echo "▸ A compilar ($CONFIG)…"
 swift build -c "$CONFIG"
-BIN="$(swift build -c "$CONFIG" --show-bin-path)/Hone"
+BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+BIN="$BIN_DIR/Hone"
+# Adaptador de «a tocar agora»: dylib que o /usr/bin/perl carrega (o Hone não a liga).
+NOWPLAYING="$BIN_DIR/libHoneNowPlaying.dylib"
+[ -f "$NOWPLAYING" ] || swift build -c "$CONFIG" --product HoneNowPlaying
 
 APP="Hone.app"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$BIN" "$APP/Contents/MacOS/Hone"
+# Vai para Frameworks/ antes de assinar: o `codesign --deep` assina-a com o resto.
+cp "$NOWPLAYING" "$APP/Contents/Frameworks/libHoneNowPlaying.dylib"
 cp "Resources/Info.plist" "$APP/Contents/Info.plist"
 [ -f "Hone.icns" ] && cp "Hone.icns" "$APP/Contents/Resources/Hone.icns"
 
