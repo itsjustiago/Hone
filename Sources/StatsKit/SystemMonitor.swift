@@ -22,6 +22,9 @@ struct StatsSnapshot {
     var power: Double?
     var powerSource: PowerSource?
     var network: NetworkRates?
+    var disk: DiskRates?
+    /// Free and total space of the startup volume; refreshed far less often than the rates.
+    var diskSpace: DiskSpace?
 }
 
 /// Samples the system on a timer and keeps the last snapshot plus a short
@@ -40,22 +43,27 @@ final class SystemMonitor: ObservableObject {
         case tick
         /// Refreshes the instantaneous values (memory, GPU, fans, temperature,
         /// power) only: the panel opening, a setting changing. No history, and the
-        /// CPU and network baselines untouched.
+        /// CPU, network and disk baselines untouched.
         case extra
-        /// The second reading of the metrics that need two (CPU, network), soon
-        /// after their baseline.
+        /// The second reading of the metrics that need two (CPU, network, disk),
+        /// soon after their baseline.
         case cpuFollowUp
     }
 
     static let temperatureNote = "Este Mac não expõe a temperatura do chip."
     static let powerNote = "Este Mac não expõe o consumo de energia."
     static let networkNote = "Este Mac não tem Wi-Fi nem Ethernet para medir."
+    static let diskNote = "Não foi possível ler o disco deste Mac."
+    /// The free space is read off the main thread, at most this often.
+    static let diskSpaceInterval: TimeInterval = 30
 
     @Published var snapshot = StatsSnapshot()
-    /// Raw values for temperature, power and network (see `RingBuffer`); the
-    /// network entry holds the download, the upload lives in `uploadHistory`.
+    /// Raw values for temperature, power, network and disk (see `RingBuffer`); the
+    /// network entry holds the download and the disk one the read; the upload and
+    /// the write live in `uploadHistory` and `writeHistory`.
     @Published var history: [Metric: RingBuffer] = SystemMonitor.emptyHistory()
     @Published var uploadHistory = RingBuffer(capacity: SystemMonitor.historyLength)
+    @Published var writeHistory = RingBuffer(capacity: SystemMonitor.historyLength)
     /// Why a metric can't be shown on this Mac (absent = available). Only for
     /// permanent reasons: a transient failure never hides a metric.
     @Published var unavailable: [Metric: String] = [:]
@@ -86,6 +94,15 @@ final class SystemMonitor: ObservableObject {
     private var networkPrevious: [UInt16: InterfaceCounters]?
     private var networkReadAt = Date.distantPast
     private var networkTracked = false
+    private var diskPrevious: [UInt64: DiskCounters]?
+    private var diskReadAt = Date.distantPast
+    private var diskTracked = false
+    /// Free-space read in flight / when the last one started. A result only
+    /// counts if `diskSpaceGeneration` is still the one it started with: turning
+    /// the disk off or stopping the monitor moves it on.
+    private var diskSpaceReading = false
+    private var diskSpaceReadAt = Date.distantPast
+    private(set) var diskSpaceGeneration = 0
     private var wakeObserver: NSObjectProtocol?
     private var cancellable: AnyCancellable?
 
@@ -121,12 +138,23 @@ final class SystemMonitor: ObservableObject {
 
     /// The history as 0…1 fractions, ready to draw.
     func values(for metric: Metric) -> [Double] {
-        HistoryScale.fractions(rawValues(for: metric), for: metric, peak: metric == .network ? networkPeak : nil)
+        let peak: Double?
+        switch metric {
+        case .network: peak = networkPeak
+        case .disk: peak = diskPeak
+        default: peak = nil
+        }
+        return HistoryScale.fractions(rawValues(for: metric), for: metric, peak: peak)
     }
 
     /// The upload history as fractions, on the same scale as the download.
     func uploadValues() -> [Double] {
         HistoryScale.fractions(uploadHistory.values, for: .network, peak: networkPeak)
+    }
+
+    /// The write history as fractions, on the same scale as the read.
+    func writeValues() -> [Double] {
+        HistoryScale.fractions(writeHistory.values, for: .disk, peak: diskPeak)
     }
 
     /// The stored values as they are (°C, W, B/s for the newer metrics).
@@ -137,6 +165,11 @@ final class SystemMonitor: ObservableObject {
         max(rawValues(for: .network).max() ?? 0, uploadHistory.values.max() ?? 0)
     }
 
+    /// Read and write share one scale too.
+    private var diskPeak: Double {
+        max(rawValues(for: .disk).max() ?? 0, writeHistory.values.max() ?? 0)
+    }
+
     // MARK: Lifecycle
 
     func start() {
@@ -144,11 +177,15 @@ final class SystemMonitor: ObservableObject {
         isRunning = true
         history = Self.emptyHistory()
         uploadHistory = RingBuffer(capacity: Self.historyLength)
+        writeHistory = RingBuffer(capacity: Self.historyLength)
         snapshot = StatsSnapshot()
         cpuPrevious = nil
         cpuTracked = false
         networkPrevious = nil
         networkTracked = false
+        diskPrevious = nil
+        diskTracked = false
+        invalidateDiskSpace()
         probeAvailability()
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
@@ -170,6 +207,9 @@ final class SystemMonitor: ObservableObject {
         cpuTracked = false
         networkPrevious = nil
         networkTracked = false
+        diskPrevious = nil
+        diskTracked = false
+        invalidateDiskSpace()
     }
 
     /// The panel is on screen (SwiftUI `onAppear`). If the matching
@@ -197,6 +237,9 @@ final class SystemMonitor: ObservableObject {
         if sensorSampler.powerState == .absent { next[.power] = Self.powerNote }
         if sensorSampler.sensors != temperatureSensors { temperatureSensors = sensorSampler.sensors }
         if NetworkSampler.read()?.isEmpty ?? true { next[.network] = Self.networkNote }
+        // Only when neither the counters nor the volume can be read: one failing
+        // on its own is transient and never hides the metric.
+        if DiskSampler.read()?.isEmpty ?? true, DiskSampler.readSpace() == nil { next[.disk] = Self.diskNote }
         if next != unavailable { unavailable = next }
         // The probe leaves the SMC open for the sampling that follows; with
         // nothing running (Settings open on its own) nobody would close it.
@@ -223,6 +266,7 @@ final class SystemMonitor: ObservableObject {
             // Idle → sampling: counters are stale, measure from now.
             rebaselineCPU()
             rebaselineNetwork()
+            rebaselineDisk()
             schedule()
             sample(.tick)
             scheduleCPUFollowUp()
@@ -245,7 +289,7 @@ final class SystemMonitor: ObservableObject {
         scheduledInterval = interval
     }
 
-    /// CPU and network need two readings: take the second one soon instead of after a full interval.
+    /// CPU, network and disk need two readings: take the second one soon instead of after a full interval.
     private func scheduleCPUFollowUp() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             MainActor.assumeIsolated {
@@ -271,6 +315,21 @@ final class SystemMonitor: ObservableObject {
         networkPrevious = networkTracked ? NetworkSampler.read() : nil
         networkReadAt = Date()
         snapshot.network = nil
+    }
+
+    private func rebaselineDisk() {
+        diskTracked = activeMetrics.contains(.disk)
+        diskPrevious = diskTracked ? DiskSampler.read() : nil
+        diskReadAt = Date()
+        snapshot.disk = nil
+    }
+
+    /// Drops the space and any read still in flight; the next sample starts a new one.
+    private func invalidateDiskSpace() {
+        diskSpaceGeneration += 1
+        diskSpaceReading = false
+        diskSpaceReadAt = .distantPast
+        snapshot.diskSpace = nil
     }
 
     private func settingsChanged() {
@@ -299,6 +358,18 @@ final class SystemMonitor: ObservableObject {
                 snapshot.network = nil
             }
         }
+        let diskOn = active.contains(.disk)
+        if diskOn != diskTracked {
+            if diskOn, timer != nil {
+                rebaselineDisk()
+                needsFollowUp = true
+            } else if !diskOn {
+                diskTracked = false
+                diskPrevious = nil
+                snapshot.disk = nil
+                invalidateDiskSpace()
+            }
+        }
         if needsFollowUp { scheduleCPUFollowUp() }
         updateSchedule()
         sample(.extra)
@@ -314,6 +385,10 @@ final class SystemMonitor: ObservableObject {
             networkPrevious = NetworkSampler.read()
             networkReadAt = Date()
         }
+        if diskTracked {
+            diskPrevious = DiskSampler.read()
+            diskReadAt = Date()
+        }
     }
 
     // MARK: Sampling
@@ -324,6 +399,7 @@ final class SystemMonitor: ObservableObject {
         var next = snapshot
         var nextHistory = history
         var nextUpload = uploadHistory
+        var nextWrite = writeHistory
         let appendHistory = kind == .tick
 
         if kind != .extra, active.contains(.cpu) {
@@ -334,7 +410,13 @@ final class SystemMonitor: ObservableObject {
             sampleNetwork(into: &next, history: &nextHistory, upload: &nextUpload)
         }
 
+        if kind != .extra, active.contains(.disk) {
+            sampleDisk(into: &next, history: &nextHistory, write: &nextWrite)
+        }
+
         if kind != .cpuFollowUp {
+            if active.contains(.disk) { refreshDiskSpace() }
+
             if active.contains(.memory), let memory = MemorySampler.read() {
                 next.memory = memory
                 next.pressure = MemorySampler.pressure()
@@ -366,6 +448,7 @@ final class SystemMonitor: ObservableObject {
         snapshot = next
         history = nextHistory
         if nextUpload != uploadHistory { uploadHistory = nextUpload }
+        if nextWrite != writeHistory { writeHistory = nextWrite }
         onSample?()
     }
 
@@ -437,5 +520,52 @@ final class SystemMonitor: ObservableObject {
         next.network = rates
         history[.network]?.append(rates.download)
         upload.append(rates.upload)
+    }
+
+    /// A delta like the network: the first reading is only a baseline.
+    private func sampleDisk(into next: inout StatsSnapshot, history: inout [Metric: RingBuffer],
+                            write: inout RingBuffer) {
+        guard let current = DiskSampler.read() else { return }
+        let now = Date()
+        guard let previous = diskPrevious else {
+            diskPrevious = current
+            diskReadAt = now
+            return
+        }
+        let seconds = now.timeIntervalSince(diskReadAt)
+        // Two reads a few ms apart give meaningless rates.
+        guard seconds >= 0.25, let rates = DiskSampler.rates(previous: previous, current: current, seconds: seconds) else { return }
+        diskPrevious = current
+        diskReadAt = now
+        next.disk = rates
+        history[.disk]?.append(rates.read)
+        write.append(rates.write)
+    }
+
+    /// The free space goes through the file system (7–25 ms), so it is read on a
+    /// background queue and at most every `diskSpaceInterval`: the first sample
+    /// after the disk is switched on reads at once, the rest wait.
+    private func refreshDiskSpace(now: Date = Date()) {
+        guard !diskSpaceReading, now.timeIntervalSince(diskSpaceReadAt) >= Self.diskSpaceInterval else { return }
+        diskSpaceReading = true
+        diskSpaceReadAt = now
+        let generation = diskSpaceGeneration
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let space = DiskSampler.readSpace()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.applyDiskSpace(space, generation: generation) }
+            }
+        }
+    }
+
+    /// Takes a finished free-space read. One that started before the disk was
+    /// switched off, or the monitor stopped, is ignored; a failed one hides the
+    /// space (never a stale or zero value) until the next try, after the usual interval.
+    func applyDiskSpace(_ space: DiskSpace?, generation: Int) {
+        guard generation == diskSpaceGeneration else { return }
+        diskSpaceReading = false
+        guard space != snapshot.diskSpace else { return }
+        snapshot.diskSpace = space
+        onSample?()
     }
 }

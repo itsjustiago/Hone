@@ -32,8 +32,9 @@ struct MenuBarSpec: Hashable {
         var metric: Metric
         var text: String
         var tone: LoadTone
-        /// Second line of the network readout: `text` is the upload (top line),
-        /// this the download (bottom line). Nil for every other metric.
+        /// Second line of the network and disk readouts: for the network `text` is
+        /// the upload (top line) and this the download (bottom line); for the disk,
+        /// the read and the write. Nil for every other metric.
         var secondary: String? = nil
     }
 
@@ -51,6 +52,7 @@ struct MenuBarSpec: Hashable {
             switch item.metric {
             case .fan: return "\(item.metric.spokenName) \(item.text) rpm"
             case .network: return "\(item.metric.spokenName), envio \(item.text), receção \(item.secondary ?? "–")"
+            case .disk: return "\(item.metric.spokenName), leitura \(item.text), escrita \(item.secondary ?? "–")"
             default: return "\(item.metric.spokenName) \(item.text)"
             }
         }.joined(separator: ", ")
@@ -58,8 +60,8 @@ struct MenuBarSpec: Hashable {
 }
 
 /// Draws the menu bar item: small mini widgets side by side, label above value
-/// (or, without labels, a small glyph before the value); the network one is two
-/// lines of throughput, up and down. Template
+/// (or, without labels, a small glyph before the value); the network and disk ones
+/// are two lines of throughput (up and down, read and write). Template
 /// (system-tinted) unless something is in alert with "colour by load" on.
 enum MenuBarRenderer {
     static let spacing: CGFloat = 6
@@ -80,19 +82,41 @@ enum MenuBarRenderer {
         NSAttributedString(string: string, attributes: attributes).size().width
     }
 
-    /// The network readout's two lines (upload above, download below), in a font
-    /// small enough to stack. Identical with and without labels: the arrows say what it is.
+    /// The two-line readouts (network, disk): top line above, bottom line below,
+    /// in a font small enough to stack. Identical with and without labels: the
+    /// prefixes say what it is.
     private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
-    private static let rateArrows = ("↑", "↓")
     private static let rateLineGap: CGFloat = 2
 
-    private static let rateArrowWidth: CGFloat = {
-        let attributes: [NSAttributedString.Key: Any] = [.font: rateFont]
-        return ceil(max(width(of: rateArrows.0, attributes: attributes), width(of: rateArrows.1, attributes: attributes)))
-    }()
+    /// What each line starts with: the network's arrows (upload above, download
+    /// below), the disk's L(eitura) above and E(scrita) below.
+    private static func ratePrefixes(_ metric: Metric) -> (top: String, bottom: String)? {
+        switch metric {
+        case .network: return ("↑", "↓")
+        case .disk: return ("L", "E")
+        case .cpu, .memory, .gpu, .fan, .temperature, .power: return nil
+        }
+    }
 
-    private static let networkWidth: CGFloat =
-        rateArrowWidth + glyphGap + ceil(width(of: Metric.network.widthSample, attributes: [.font: rateFont]))
+    /// Prefix column and total width of a two-line readout, fixed per metric: the
+    /// widest prefix, the gap and the widest value.
+    private struct RateLayout {
+        var prefixWidth: CGFloat
+        var width: CGFloat
+    }
+
+    private static let rateLayouts: [Metric: RateLayout] = {
+        let attributes: [NSAttributedString.Key: Any] = [.font: rateFont]
+        var result: [Metric: RateLayout] = [:]
+        for metric in Metric.allCases {
+            guard let prefixes = ratePrefixes(metric) else { continue }
+            let prefixWidth = ceil(max(width(of: prefixes.top, attributes: attributes),
+                                       width(of: prefixes.bottom, attributes: attributes)))
+            result[metric] = RateLayout(prefixWidth: prefixWidth,
+                                        width: prefixWidth + glyphGap + ceil(width(of: metric.widthSample, attributes: attributes)))
+        }
+        return result
+    }()
 
     /// 9 pt template glyph per metric (nil when no candidate symbol exists).
     private static let glyphs: [Metric: NSImage] = {
@@ -124,7 +148,7 @@ enum MenuBarRenderer {
     /// Fixed per metric and label setting, measured with the widest text it can
     /// show, so the item never changes width from one tick to the next.
     static func widgetWidth(metric: Metric, showLabels: Bool) -> CGFloat {
-        if metric == .network { return networkWidth }
+        if let layout = rateLayouts[metric] { return layout.width }
         let value = valueBoxWidth(metric, showLabels: showLabels)
         if showLabels {
             return max(value, ceil(width(of: metric.shortLabel, attributes: labelAttributes(color: .black))))
@@ -216,8 +240,9 @@ enum MenuBarRenderer {
             labelColor = NSColor.labelColor.withAlphaComponent(labelAlpha)
         }
 
-        if item.metric == .network {
-            drawNetwork(item, in: rect, valueColor: valueColor, labelColor: labelColor)
+        if let prefixes = ratePrefixes(item.metric), let layout = rateLayouts[item.metric] {
+            drawRates(item, prefixes: prefixes, prefixWidth: layout.prefixWidth, in: rect,
+                      valueColor: valueColor, labelColor: labelColor)
             return
         }
 
@@ -262,17 +287,18 @@ enum MenuBarRenderer {
         }
     }
 
-    /// Upload on the top line, download below, values right-aligned so the units
-    /// line up. Baselines come from cap heights, as in the labelled layout.
-    private static func drawNetwork(_ item: MenuBarSpec.Item, in rect: NSRect, valueColor: NSColor, labelColor: NSColor) {
+    /// `text` on the top line, `secondary` below, values right-aligned so the
+    /// units line up. Baselines come from cap heights, as in the labelled layout.
+    private static func drawRates(_ item: MenuBarSpec.Item, prefixes: (top: String, bottom: String),
+                                  prefixWidth: CGFloat, in rect: NSRect, valueColor: NSColor, labelColor: NSColor) {
         let font = rateFont
         let block = 2 * font.capHeight + rateLineGap
         let lower = ((rect.height - block) / 2).rounded(.down)
-        let lines = [(arrow: rateArrows.0, text: item.text, baseline: lower + font.capHeight + rateLineGap),
-                     (arrow: rateArrows.1, text: item.secondary ?? "", baseline: lower)]
+        let lines = [(prefix: prefixes.top, text: item.text, baseline: lower + font.capHeight + rateLineGap),
+                     (prefix: prefixes.bottom, text: item.secondary ?? "", baseline: lower)]
         for line in lines {
-            let arrow = NSAttributedString(string: line.arrow, attributes: [.font: font, .foregroundColor: labelColor])
-            arrow.draw(at: NSPoint(x: rect.minX + (rateArrowWidth - arrow.size().width) / 2, y: line.baseline + font.descender))
+            let prefix = NSAttributedString(string: line.prefix, attributes: [.font: font, .foregroundColor: labelColor])
+            prefix.draw(at: NSPoint(x: rect.minX + (prefixWidth - prefix.size().width) / 2, y: line.baseline + font.descender))
             let value = NSAttributedString(string: line.text, attributes: [.font: font, .foregroundColor: valueColor])
             value.draw(at: NSPoint(x: rect.maxX - value.size().width, y: line.baseline + font.descender))
         }

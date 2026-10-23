@@ -162,7 +162,7 @@ enum Fixture {
              tagline: "Mantém o ecrã aceso e o Mac acordado, mesmo de tampa fechada.",
              icon: "moon.zzz", tint: VibeToolColor.sleepy, panel: true),
         Spec(id: "stats", title: "Stats", shortTitle: "Stats", category: "Sistema",
-             tagline: "CPU, memória, GPU, temperatura e rede em direto na barra de menus.",
+             tagline: "CPU, memória, GPU, temperatura, rede e disco em direto na barra de menus.",
              icon: "cpu", tint: VibeToolColor.stats, panel: true),
         Spec(id: "soundly", title: "Soundly", shortTitle: "Soundly", category: "Som",
              tagline: "O volume de cada app à parte: baixa ou silencia uma sem mexer nas outras.",

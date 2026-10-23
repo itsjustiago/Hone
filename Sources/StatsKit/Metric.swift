@@ -1,10 +1,10 @@
 import AppKit
 
-/// A monitored quantity. Adding one (disk…) means a case here, a sampler, and
+/// A monitored quantity. Adding one means a case here, a sampler, and
 /// a branch in the few `switch`es over `Metric` — nothing else tests for a
 /// specific metric. The case order is the order in the menu bar and the panel.
 enum Metric: String, CaseIterable, Identifiable {
-    case cpu, memory, gpu, fan, temperature, power, network
+    case cpu, memory, gpu, fan, temperature, power, network, disk
 
     var id: String { rawValue }
 
@@ -18,6 +18,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .temperature: return "TEMP"
         case .power: return "PWR"
         case .network: return "NET"
+        case .disk: return "DISK"
         }
     }
 
@@ -31,6 +32,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .temperature: return "Temperatura"
         case .power: return "Energia"
         case .network: return "Rede"
+        case .disk: return "Disco"
         }
     }
 
@@ -44,6 +46,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .temperature: return "temperatura"
         case .power: return "energia"
         case .network: return "rede"
+        case .disk: return "disco"
         }
     }
 
@@ -54,7 +57,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .temperature: return "100°"
         case .power: return "999 W"
         // MB/s is the widest unit a 3-digit rate realistically ends in.
-        case .network: return "999 MB/s"
+        case .network, .disk: return "999 MB/s"
         case .cpu, .memory, .gpu: return "100%"
         }
     }
@@ -69,6 +72,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .temperature: return ["thermometer.medium", "thermometer"]
         case .power: return ["bolt.fill", "bolt"]
         case .network: return ["arrow.up.arrow.down"]
+        case .disk: return ["internaldrive", "externaldrive"]
         }
     }
 
@@ -88,13 +92,13 @@ enum Metric: String, CaseIterable, Identifiable {
     var enabledByDefault: Bool {
         switch self {
         case .cpu, .memory, .gpu, .fan: return true
-        case .temperature, .power, .network: return false
+        case .temperature, .power, .network, .disk: return false
         }
     }
 }
 
 /// Fixed-capacity history, oldest first. CPU, memory, GPU and fans store
-/// fractions (0…1); temperature, power and network store the raw value (°C, W,
+/// fractions (0…1); temperature, power, network and disk store the raw value (°C, W,
 /// B/s) and `HistoryScale` turns it into fractions for drawing.
 struct RingBuffer: Equatable {
     let capacity: Int
@@ -115,11 +119,13 @@ struct RingBuffer: Equatable {
 
 /// Turns stored history into 0…1 fractions for the sparkline.
 enum HistoryScale {
-    /// Power and network have no natural ceiling: they scale to the largest value
-    /// seen (`peak`, or the series' own), but never below a floor, so a quiet
+    /// Power, network and disk have no natural ceiling: they scale to the largest
+    /// value seen (`peak`, or the series' own), but never below a floor, so a quiet
     /// connection or a light load doesn't fill the whole chart.
     static let powerFloor = 10.0
     static let networkFloor = 102_400.0
+    /// Disk traffic comes in bursts of megabytes, so its floor is higher.
+    static let diskFloor = 1_048_576.0
 
     static func fractions(_ values: [Double], for metric: Metric, peak: Double? = nil) -> [Double] {
         func scaled(floor: Double) -> [Double] {
@@ -131,6 +137,7 @@ enum HistoryScale {
         case .temperature: return values.map { $0 / 100 }
         case .power: return scaled(floor: powerFloor)
         case .network: return scaled(floor: networkFloor)
+        case .disk: return scaled(floor: diskFloor)
         }
     }
 }

@@ -315,7 +315,7 @@ final class PresentationTests: XCTestCase {
         XCTAssertEqual(MenuBarRenderer.segment(atX: gap + 1, in: spec)?.metric, .cpu)
         XCTAssertEqual(MenuBarRenderer.segment(atX: gap + MenuBarRenderer.spacing - 1, in: spec)?.metric, .memory)
         XCTAssertEqual(MenuBarRenderer.segment(atX: -20, in: spec)?.metric, .cpu)
-        XCTAssertEqual(MenuBarRenderer.segment(atX: 10_000, in: spec)?.metric, .network)
+        XCTAssertEqual(MenuBarRenderer.segment(atX: 10_000, in: spec)?.metric, .disk)
         XCTAssertNil(MenuBarRenderer.segment(atX: 5, in: MenuBarSpec(items: [], showLabels: true, colorize: false)))
     }
 
