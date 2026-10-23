@@ -166,6 +166,10 @@ final class EmbeddedToolModule<Kit: ToolKit>: MenuBarTool {
 
     @ObservationIgnored private let kit: Kit
 
+    /// For the few places that reach past the facade to one Kit's own API
+    /// (the What's New screen's switches).
+    var toolKit: Kit { kit }
+
     private(set) var menuBarImageRevision = 0
 
     /// Set while `isEnabled` is put back after a refused stop.

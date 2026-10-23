@@ -27,7 +27,7 @@ enum PreviewRenderer {
             ("blobs-gaze", AnyView(gazeSheet)),
         ]
         // Other surfaces add their pages in their own files.
-        pages += kitPages + settingsPages
+        pages += kitPages + settingsPages + whatsNewPages
 
         var ok = true
         for (name, view) in pages {

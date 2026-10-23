@@ -271,6 +271,27 @@ public final class SleepyTool {
         AnyView(SleepySettingsView(model: settingsModel))
     }
 
+    // MARK: - Single switches (Hone's What's New)
+
+    /// A contagem ao lado do ícone está ligada (a mesma opção das definições).
+    public var showsCountdown: Bool { MenuBarIconSettings.showsCountdown }
+
+    /// Como nas definições: o ícone redesenha-se e o timer da contagem acerta-se.
+    public func setShowsCountdown(_ on: Bool) {
+        settingsModel.setShowsCountdown(on)
+    }
+
+    /// O "Mexer o rato" está ligado (qualquer intervalo acima de «Nunca»).
+    public var nudgesMouse: Bool { SleepController.mouseNudgeMinutes > 0 }
+
+    /// Liga com o intervalo sugerido, desliga com «Nunca». Passa pelo modelo das
+    /// definições, que pede ao macOS a permissão de postar eventos ao ligar.
+    /// Já ligado, ligar de novo não mexe no intervalo escolhido.
+    public func setNudgesMouse(_ on: Bool) {
+        guard on != nudgesMouse else { return }
+        settingsModel.setMouseNudgeMinutes(on ? SleepController.suggestedMouseNudgeMinutes : 0)
+    }
+
     // MARK: - Power readout
 
     /// Every 2 s while the panel is visible. Idempotent, so a repeated
