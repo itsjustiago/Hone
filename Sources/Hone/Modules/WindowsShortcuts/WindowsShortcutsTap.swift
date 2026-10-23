@@ -6,16 +6,20 @@ import HoneDesign
 /// The one event tap behind Windows Shortcuts. It listens only to what the
 /// switches that are on need, and installs nothing when they are all off.
 ///
-/// Every shortcut is a rewrite: the original event is swallowed and a fresh one is
+/// Most shortcuts are a rewrite: the original event is swallowed and a fresh one is
 /// inserted in its place, so the app sees the Windows habit as the Mac action it
 /// maps to (⌘X as ⌘C plus a "move" paste, F2 as Return, the side buttons as ⌘[ and
 /// ⌘], a held ⌘Q as one ⌘Q after 0.6 s).
+///
+/// The two window ones are not: ⌥ + arrows and a click on a window's green button
+/// are swallowed and `WindowSnapper` moves the window instead.
 @MainActor
 final class WindowsShortcutsTap {
     private typealias Rules = WindowShortcutRules
 
     private let settings: WindowsShortcutsSettings
     private let hud = QuitHoldHUD()
+    private let snapper = WindowSnapper()
     private let tint = VibeToolColor.windowsShortcuts
 
     private var tap: CFMachPort?
@@ -59,6 +63,7 @@ final class WindowsShortcutsTap {
     func stop() {
         wanted = false
         uninstall()
+        snapper.reset() // a restart begins with no windows to put back
     }
 
     /// A switch changed: listen to the events the new set needs.
@@ -76,7 +81,9 @@ final class WindowsShortcutsTap {
         let mask = Rules.eventMask(finderCutPaste: settings.finderCutPaste,
                                    f2Rename: settings.f2Rename,
                                    mouseButtons: settings.mouseButtons,
-                                   holdToQuit: settings.holdToQuit)
+                                   holdToQuit: settings.holdToQuit,
+                                   snapWindows: settings.snapWindows,
+                                   greenButton: settings.greenButtonMaximizes)
         guard mask != 0 else { return }
 
         // Tail-append runs after the head-insert taps Hone has elsewhere (Key Swap,
@@ -156,6 +163,9 @@ final class WindowsShortcutsTap {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             cancelQuitHold()
+            // A click cut in half: its up must not be swallowed on its own, or the
+            // app would think the button is still down.
+            swallowedButtons.remove(Self.leftButton)
             return Unmanaged.passUnretained(event)
         }
 
@@ -176,6 +186,8 @@ final class WindowsShortcutsTap {
             swallow = false // modifiers always go through
         case .otherMouseDown, .otherMouseUp:
             swallow = handleMouse(proxy: proxy, type: type, event: event)
+        case .leftMouseDown, .leftMouseUp:
+            swallow = handleLeftClick(type: type, event: event)
         default:
             swallow = false
         }
@@ -207,6 +219,17 @@ final class WindowsShortcutsTap {
 
         if settings.holdToQuit, code == Rules.keyQ {
             return handleQuitKey(isDown: isDown, isRepeat: isRepeat, flags: flags, now: now)
+        }
+
+        // ⌥ + arrows snap the focused window. Before the Finder guard below: they
+        // work in every app. A repeat that wasn't already swallowed above was never
+        // ours (the first press passed), so it passes as well.
+        if settings.snapWindows, isDown, !isRepeat,
+           let snapKey = Rules.snapKey(code: code, flags: flags),
+           Rules.snapApplies(bundleID: frontmostBundleID, exceptions: settings.snapExceptions),
+           snapper.snapFocusedWindow(snapKey, pid: frontmostPID) {
+            swallowedKeys.insert(code)
+            return true
         }
 
         guard isDown, !isRepeat, frontmostBundleID == Rules.finderBundleID else { return false }
@@ -349,6 +372,31 @@ final class WindowsShortcutsTap {
 
         // The up of a click whose down was swallowed goes too; any other passes.
         return swallowedButtons.remove(button) != nil
+    }
+
+    // MARK: Green button
+
+    private static let leftButton: Int64 = 0
+
+    /// A click on a window's green button maximizes instead of opening full screen
+    /// (⌥ + click opens it). The down is swallowed so the app never starts the full
+    /// screen transition, and the up goes with it.
+    private func handleLeftClick(type: CGEventType, event: CGEvent) -> Bool {
+        // The up of a click whose down was swallowed goes too; any other passes.
+        if type == .leftMouseUp { return swallowedButtons.remove(Self.leftButton) != nil }
+
+        // A fresh down means the last up never came: forget it, so it can't take the
+        // up of this click with it.
+        swallowedButtons.remove(Self.leftButton)
+
+        guard settings.greenButtonMaximizes,
+              event.getIntegerValueField(.eventSourceUnixProcessID) == 0, // a click replayed by a script is not the user's
+              let mode = Rules.greenButtonMode(flags: event.flags),
+              snapper.handleGreenButtonClick(at: event.location, option: mode == .fullScreen)
+        else { return false }
+
+        swallowedButtons.insert(Self.leftButton)
+        return true
     }
 
     // MARK: Helpers

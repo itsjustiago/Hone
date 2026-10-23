@@ -147,7 +147,7 @@ enum Fixture {
              tagline: "Troca ⌘ com ⌃ para copiares e colares como no Windows.",
              icon: "command.square.fill", tint: VibeToolColor.keySwap),
         Spec(id: "windowsShortcuts", title: "Atalhos do Windows", shortTitle: "Atalhos", category: "Teclado",
-             tagline: "Cortar e colar ficheiros, F2, botões laterais e ⌘Q a segurar, como no Windows.",
+             tagline: "Cortar e colar, F2, botões laterais, ⌘Q a segurar e janelas, como no Windows.",
              icon: "square.grid.2x2.fill", tint: VibeToolColor.windowsShortcuts),
         Spec(id: "lidFold", title: "Dobra da tampa", shortTitle: "Tampa", category: "Ecrã",
              tagline: "O ecrã dobra-se quando fechas ou abres a tampa.",
