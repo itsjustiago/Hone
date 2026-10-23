@@ -43,8 +43,10 @@ final class WindowSnapper {
 
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.25)
-        guard let window = AX.element(app, kAXFocusedWindowAttribute),
-              AX.bool(window, "AXFullScreen") != true, // its own Space; ⌥ + arrows are not ours there
+        guard let window = AX.element(app, kAXFocusedWindowAttribute) else { return false }
+        // The deadline is per element: the window doesn't inherit the app's.
+        AXUIElementSetMessagingTimeout(window, 0.25)
+        guard AX.bool(window, "AXFullScreen") != true, // its own Space; ⌥ + arrows are not ours there
               let frame = readFrame(of: window)
         else { return false }
 
@@ -80,13 +82,17 @@ final class WindowSnapper {
         AXUIElementSetMessagingTimeout(app, 0.2)
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success,
-              let button = hit,
-              let subrole = AX.string(button, kAXSubroleAttribute),
-              subrole == Self.fullScreenButtonSubrole || subrole == Self.zoomButtonSubrole,
-              let window = AX.element(button, kAXWindowAttribute) ?? AX.element(button, kAXParentAttribute),
-              // Already full screen: the click leaves it, which is the macOS way out.
-              AX.bool(window, "AXFullScreen") != true
+              let button = hit
         else { return false }
+        // The deadline is per element: what the app hands back doesn't inherit it.
+        AXUIElementSetMessagingTimeout(button, 0.2)
+        guard let subrole = AX.string(button, kAXSubroleAttribute),
+              subrole == Self.fullScreenButtonSubrole || subrole == Self.zoomButtonSubrole,
+              let window = AX.element(button, kAXWindowAttribute) ?? AX.element(button, kAXParentAttribute)
+        else { return false }
+        AXUIElementSetMessagingTimeout(window, 0.2)
+        // Already full screen: the click leaves it, which is the macOS way out.
+        guard AX.bool(window, "AXFullScreen") != true else { return false }
 
         if option {
             // ⌥ + click keeps the old meaning, but only where the button had it. A
@@ -167,9 +173,11 @@ final class WindowSnapper {
     private func setFrame(of window: AXUIElement, to rect: CGRect) {
         var pid: pid_t = 0
         let app = AXUIElementGetPid(window, &pid) == .success ? AXUIElementCreateApplication(pid) : nil
-        // These run on the main thread: don't let a stuck app hold Hone up for the
-        // default six seconds.
+        // These run on the main thread, where the tap lives too: don't let a stuck
+        // app hold Hone (and every key and click) up for the default six seconds.
+        // Per element, so the window gets its own.
         if let app { AXUIElementSetMessagingTimeout(app, 0.5) }
+        AXUIElementSetMessagingTimeout(window, 0.5)
 
         let enhanced = app.map { AX.bool($0, "AXEnhancedUserInterface") == true } ?? false
         if enhanced, let app { AX.setBool(app, "AXEnhancedUserInterface", false) }
