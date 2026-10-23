@@ -34,6 +34,9 @@ final class IslandModule: HoneModule {
         isEnabled = ModuleDefaults.isEnabled("island", default: false)
     }
 
+    /// Whether the music is being read, for the Settings pane.
+    var sourceStatus: IslandSourceStatus { controller.sourceStatus }
+
     func start() { controller.start() }
 
     func stop() { controller.stop() }

@@ -10,6 +10,7 @@ struct IslandSettingsView: View {
     var body: some View {
         @Bindable var settings = module.settings
         let tint = module.tint
+        let source = module.sourceStatus
 
         VStack(alignment: .leading, spacing: 18) {
             SettingsSection(title: "Comportamento") {
@@ -26,6 +27,13 @@ struct IslandSettingsView: View {
                     tint: tint,
                     isOn: $settings.peekOnTrackChange
                 )
+            }
+
+            SettingsSection(title: "Música") {
+                VibeStatusLine(source.text, color: source.tone.color, wraps: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
             }
 
             SettingsSection(title: "Ecrã") {
@@ -58,6 +66,17 @@ struct IslandSettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
             hasNotch = NotchGeometry.current() != nil
+        }
+    }
+}
+
+private extension IslandSourceStatus.Tone {
+    var color: Color {
+        switch self {
+        case .off: return VibeColor.dotOff
+        case .ok: return VibeColor.success
+        case .idle: return VibeColor.text4
+        case .problem: return VibeColor.danger
         }
     }
 }
