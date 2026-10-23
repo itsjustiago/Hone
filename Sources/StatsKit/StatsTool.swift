@@ -162,6 +162,26 @@ public final class StatsTool {
     public func makeSettingsView() -> AnyView {
         AnyView(StatsSettingsView(settings: settings, monitor: monitor))
     }
+
+    // MARK: - Extra readouts (Hone's What's New)
+
+    /// The readouts that start off — temperature, power and network — as one switch.
+    private static let extraReadouts: Set<Metric> = [.temperature, .power, .network]
+
+    /// All three are on, as Settings' "Métricas" shows them.
+    public var showsExtraReadouts: Bool {
+        Self.extraReadouts.isSubset(of: settings.enabledMetrics)
+    }
+
+    /// Turns the three on or off together, through the settings, so the icon,
+    /// the panel and the Settings page follow.
+    public func setShowsExtraReadouts(_ on: Bool) {
+        if on {
+            settings.enabledMetrics.formUnion(Self.extraReadouts)
+        } else {
+            settings.enabledMetrics.subtract(Self.extraReadouts)
+        }
+    }
 }
 
 /// The panel plus what must not be part of it when rendered off-screen: the

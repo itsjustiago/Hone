@@ -399,6 +399,10 @@ final class SleepController {
         .init(minutes: 10, title: "10 minutos", short: "10 min"),
     ]
 
+    /// O intervalo que um interruptor simples de "Mexer o rato" (o ecrã Novidades do Hone) põe
+    /// ao ligar. Tem de existir em `mouseNudgeOptions`.
+    static let suggestedMouseNudgeMinutes = 5
+
     /// O "Mexer o rato" só corre com a opção ligada, o Sleepy ligado e o tool a correr. Pura.
     static func mouseNudgeWanted(isActive: Bool, toolRunning: Bool, minutes: Int) -> Bool {
         isActive && toolRunning && minutes > 0

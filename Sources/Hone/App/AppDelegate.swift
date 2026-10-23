@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let manager = ModuleManager()
     let updateChecker = UpdateChecker()
     private let onboarding = OnboardingController()
+    private let whatsNew = WhatsNewController()
     private lazy var settingsWindow = SettingsWindowController(manager: manager, updateChecker: updateChecker)
     private lazy var toolStatusItems = ToolStatusItems(
         manager: manager,
@@ -46,10 +47,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         updateChecker.startPeriodicChecks()
 
         // Welcome window on first launch.
-        if !UserDefaults.standard.bool(forKey: "didOnboard") {
+        let didOnboard = UserDefaults.standard.bool(forKey: "didOnboard")
+        if !didOnboard {
             UserDefaults.standard.set(true, forKey: "didOnboard")
             onboarding.show(manager: manager)
         }
+        // What's new, once, after an update (a new install saw the welcome instead).
+        whatsNew.showIfNeeded(manager: manager, didOnboard: didOnboard)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -126,4 +126,12 @@ final class MouseNudgeTests: XCTestCase {
         XCTAssertEqual(minutes, minutes.sorted())
         XCTAssertEqual(Set(SleepController.mouseNudgeOptions.map(\.title)).count, minutes.count)
     }
+
+    /// O ecrã «Novidades» liga o "Mexer o rato" neste valor: tem de ser uma opção que existe.
+    func testSuggestedMinutesIsOneOfTheOptions() {
+        XCTAssertGreaterThan(SleepController.suggestedMouseNudgeMinutes, 0)
+        XCTAssertTrue(SleepController.mouseNudgeOptions.contains {
+            $0.minutes == SleepController.suggestedMouseNudgeMinutes
+        })
+    }
 }

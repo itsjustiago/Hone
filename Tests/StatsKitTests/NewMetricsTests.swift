@@ -248,4 +248,38 @@ final class NewMetricsToolTests: XCTestCase {
             XCTAssertTrue(model.rowsByMetric.isEmpty)
         }
     }
+
+    // MARK: Os três de uma vez (ecrã «Novidades» do Hone)
+
+    func testExtraReadoutsSwitchTurnsTheThreeOnTogetherAndOffAgain() {
+        let store = makeStore()
+        for metric in [Metric.temperature, .power, .network] { store.set(false, forKey: metric.defaultsKey) }
+        store.set(true, forKey: Metric.cpu.defaultsKey)
+        let tool = StatsTool(defaults: store)
+        XCTAssertFalse(tool.showsExtraReadouts)
+
+        tool.setShowsExtraReadouts(true)
+        XCTAssertTrue(tool.showsExtraReadouts)
+        for metric in [Metric.temperature, .power, .network] {
+            XCTAssertEqual(store.object(forKey: metric.defaultsKey) as? Bool, true, "\(metric)")
+        }
+
+        tool.setShowsExtraReadouts(false)
+        XCTAssertFalse(tool.showsExtraReadouts)
+        for metric in [Metric.temperature, .power, .network] {
+            XCTAssertEqual(store.object(forKey: metric.defaultsKey) as? Bool, false, "\(metric)")
+        }
+        XCTAssertEqual(store.object(forKey: Metric.cpu.defaultsKey) as? Bool, true, "as outras ficam como estavam")
+    }
+
+    func testExtraReadoutsSwitchIsOffUnlessAllThreeAreOn() {
+        let store = makeStore()  // as três ligadas
+        let tool = StatsTool(defaults: store)
+        XCTAssertTrue(tool.showsExtraReadouts)
+        store.set(false, forKey: Metric.power.defaultsKey)
+        let partial = StatsTool(defaults: store)
+        XCTAssertFalse(partial.showsExtraReadouts)
+        partial.setShowsExtraReadouts(true)
+        XCTAssertTrue(partial.showsExtraReadouts)
+    }
 }
