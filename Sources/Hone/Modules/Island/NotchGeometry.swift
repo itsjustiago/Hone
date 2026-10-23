@@ -47,6 +47,29 @@ enum IslandMetrics {
     static let expandedMinWidth: CGFloat = 440
     static let expandedExtraHeight: CGFloat = 112
 
+    /// The cover beside the notch (compact, peek) and in the open player.
+    static let smallCover: CGFloat = 22
+    static let smallCoverCorner: CGFloat = 6
+    static let largeCover: CGFloat = 72
+    static let largeCoverCorner: CGFloat = 14
+    /// Space between the open player's content and the island's sides, past the ears.
+    static let expandedPadding: CGFloat = 14
+
+    /// The concave ears where the island meets the top of the screen. Compact
+    /// ears fit in `wingExtra`, so the wings stay as wide as the notch is tall.
+    static func earRadius(for presentation: IslandPresentation) -> CGFloat {
+        presentation == .expanded ? 14 : wingExtra
+    }
+
+    static func bottomRadius(for presentation: IslandPresentation) -> CGFloat {
+        switch presentation {
+        case .hidden: return 8
+        case .compact: return 10
+        case .peek: return 16
+        case .expanded: return 26
+        }
+    }
+
     static func size(for presentation: IslandPresentation, notch: CGSize) -> CGSize {
         let compactWidth = notch.width + 2 * (notch.height + wingExtra)
         switch presentation {
