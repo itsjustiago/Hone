@@ -244,33 +244,45 @@ final class WindowShortcutRulesTests: XCTestCase {
     private func bit(_ type: CGEventType) -> CGEventMask { 1 << type.rawValue }
 
     func testNothingOnMeansNoTap() {
-        XCTAssertEqual(Rules.eventMask(finderCutPaste: false, f2Rename: false, mouseButtons: false, holdToQuit: false), 0)
+        XCTAssertEqual(Rules.eventMask(finderCutPaste: false, f2Rename: false, mouseButtons: false, holdToQuit: false, snapWindows: false, greenButton: false), 0)
     }
 
     func testOnlyTheMouseListensToTheMouse() {
-        let mask = Rules.eventMask(finderCutPaste: false, f2Rename: false, mouseButtons: true, holdToQuit: false)
+        let mask = Rules.eventMask(finderCutPaste: false, f2Rename: false, mouseButtons: true, holdToQuit: false, snapWindows: false, greenButton: false)
         XCTAssertEqual(mask, bit(.otherMouseDown) | bit(.otherMouseUp))
         XCTAssertEqual(mask & bit(.keyDown), 0)
     }
 
     func testF2AloneListensToKeysButNotModifiers() {
-        let mask = Rules.eventMask(finderCutPaste: false, f2Rename: true, mouseButtons: false, holdToQuit: false)
+        let mask = Rules.eventMask(finderCutPaste: false, f2Rename: true, mouseButtons: false, holdToQuit: false, snapWindows: false, greenButton: false)
         XCTAssertEqual(mask, bit(.keyDown) | bit(.keyUp))
         XCTAssertEqual(mask & bit(.flagsChanged), 0)
     }
 
     func testFinderCutPasteListensToKeysOnly() {
-        let mask = Rules.eventMask(finderCutPaste: true, f2Rename: false, mouseButtons: false, holdToQuit: false)
+        let mask = Rules.eventMask(finderCutPaste: true, f2Rename: false, mouseButtons: false, holdToQuit: false, snapWindows: false, greenButton: false)
         XCTAssertEqual(mask, bit(.keyDown) | bit(.keyUp))
     }
 
     func testHoldToQuitAlsoFollowsTheModifiers() {
-        let mask = Rules.eventMask(finderCutPaste: false, f2Rename: false, mouseButtons: false, holdToQuit: true)
+        let mask = Rules.eventMask(finderCutPaste: false, f2Rename: false, mouseButtons: false, holdToQuit: true, snapWindows: false, greenButton: false)
         XCTAssertEqual(mask, bit(.keyDown) | bit(.keyUp) | bit(.flagsChanged))
     }
 
     func testEverythingOnListensToEverything() {
-        let mask = Rules.eventMask(finderCutPaste: true, f2Rename: true, mouseButtons: true, holdToQuit: true)
-        XCTAssertEqual(mask, bit(.keyDown) | bit(.keyUp) | bit(.flagsChanged) | bit(.otherMouseDown) | bit(.otherMouseUp))
+        let mask = Rules.eventMask(finderCutPaste: true, f2Rename: true, mouseButtons: true, holdToQuit: true, snapWindows: true, greenButton: true)
+        XCTAssertEqual(mask, bit(.keyDown) | bit(.keyUp) | bit(.flagsChanged) | bit(.otherMouseDown) | bit(.otherMouseUp)
+                       | bit(.leftMouseDown) | bit(.leftMouseUp))
+    }
+
+    func testSnapWindowsListensToKeysOnly() {
+        let mask = Rules.eventMask(finderCutPaste: false, f2Rename: false, mouseButtons: false, holdToQuit: false, snapWindows: true, greenButton: false)
+        XCTAssertEqual(mask, bit(.keyDown) | bit(.keyUp))
+    }
+
+    func testTheGreenButtonListensToLeftClicksOnly() {
+        let mask = Rules.eventMask(finderCutPaste: false, f2Rename: false, mouseButtons: false, holdToQuit: false, snapWindows: false, greenButton: true)
+        XCTAssertEqual(mask, bit(.leftMouseDown) | bit(.leftMouseUp))
+        XCTAssertEqual(mask & bit(.keyDown), 0)
     }
 }

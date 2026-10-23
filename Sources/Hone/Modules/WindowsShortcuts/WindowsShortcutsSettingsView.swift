@@ -52,6 +52,34 @@ struct WindowsShortcutsSettingsView: View {
                 }
             }
 
+            SettingsSection(title: "Janelas") {
+                ToggleRow(
+                    title: "Encaixar janelas",
+                    subtitle: "⌥ + ← → encosta a janela a um lado, ↑ maximiza, ↓ repõe ou minimiza. O ⌥ é a tecla na posição do Windows.",
+                    tint: tint,
+                    isOn: $settings.snapWindows
+                )
+                RowDivider()
+                ToggleRow(
+                    title: "Botão verde maximiza",
+                    subtitle: "Ocupa o ecrã sem abrir o ecrã inteiro. ⌥ + clique abre o ecrã inteiro.",
+                    tint: tint,
+                    isOn: $settings.greenButtonMaximizes
+                )
+            }
+
+            if settings.snapWindows {
+                SettingsSection(title: "Exceções do encaixe") {
+                    AppExceptionList(
+                        bundleIDs: settings.snapExceptions,
+                        emptyText: "Sem exceções — ⌥ + setas encaixa em todas as apps.",
+                        tint: tint,
+                        onAdd: { settings.addSnapException($0) },
+                        onRemove: { settings.removeSnapException($0) }
+                    )
+                }
+            }
+
             SettingsSection(title: "Permissão") {
                 SettingsRow(title: "Acessibilidade",
                             subtitle: "Necessária para ler o teclado e o rato.") {
@@ -67,7 +95,7 @@ struct WindowsShortcutsSettingsView: View {
                 }
             }
 
-            Label("Com o **Comando ⇄ Controlo** ligado, ⌃X, ⌃V e ⌃Q fazem o mesmo. No teclado do Mac, o F2 pede **fn**. Firefox, VS Code, Xcode e máquinas virtuais recebem os botões do rato como estão.",
+            Label("Com o **Comando ⇄ Controlo** ligado, ⌃X, ⌃V e ⌃Q fazem o mesmo. No teclado do Mac, o F2 pede **fn**. Firefox, VS Code, Xcode e máquinas virtuais recebem os botões do rato como estão. Nas apps das exceções e nas máquinas virtuais, ⌥ + setas fica como no Mac.",
                   systemImage: "info.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
