@@ -90,6 +90,8 @@ public enum VibeToolColor {
     public static let lidFold = VibePalette.teal
     /// Shares Stats' green: the palette is fully assigned, and a tweak and an app sit far apart in the list.
     public static let windowsShortcuts = VibePalette.green
+    /// Shares Clippy's pink: the palette is fully assigned, and a tweak and an app sit far apart in the list.
+    public static let island = VibePalette.pink
 }
 
 // MARK: - Shape & space

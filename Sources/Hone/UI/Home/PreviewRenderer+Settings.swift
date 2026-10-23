@@ -37,6 +37,9 @@ extension PreviewRenderer {
             ("settings-windowsshortcuts", window("windowsShortcuts", off: off) {
                 tool("windowsShortcuts", settings: AnyView(WindowsShortcutsSettingsView(module: WindowsShortcutsModule())))
             }),
+            ("settings-island", window("island", off: off) {
+                tool("island", settings: AnyView(IslandSettingsView(module: IslandModule())))
+            }),
             ("settings-lidfold", window("lidFold", off: off) {
                 tool("lidFold", settings: lidFoldSettings(status: .running, hasScreenAccess: true))
             }),
