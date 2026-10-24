@@ -25,8 +25,7 @@ enum IslandFullScreen {
         let alpha: Double
     }
 
-    /// The app in front and whether it put the system in full screen
-    /// (`NSApp.currentSystemPresentationOptions` has `.fullScreen` or `.hideMenuBar`).
+    /// The app in front and whether it put the system in full screen (see `isFullScreen(_:)`).
     struct Frontmost: Equatable {
         let pid: pid_t
         let isFullScreen: Bool
@@ -37,8 +36,10 @@ enum IslandFullScreen {
     static let tolerance: CGFloat = 1
 
     /// Anything smaller is a helper, a shadow or a 1×1 blip, not a window in front of
-    /// the full screen (as in `QuitRules`).
+    /// the full screen. Same limits as `QuitRules`.
     static let smallestSide: CGFloat = 50
+    /// Fainter than this is a window fading in or out, not one that hides the screen.
+    static let faintestAlpha: Double = 0.05
 
     /// Whether a window of another app fills `screen`. `screen` is in CG coordinates
     /// and `topInset` is the notch's height; `windows` come front to back, as the
@@ -50,27 +51,42 @@ enum IslandFullScreen {
     ///
     /// - A window that holds the whole screen covers it. Above layer 0 any such
     ///   window counts (Wine puts its full-screen windows over the menu bar). At
-    ///   layer 0 only the one in front decides, so a game left full screen behind
-    ///   Safari after ⌘Tab does not hide the island.
+    ///   layer 0 only the app in front on this screen decides — its front windows,
+    ///   so a dialog or a sheet over its full screen still counts — and a game left
+    ///   full screen behind Safari after ⌘Tab does not hide the island.
     /// - Native full screen stops below the notch: it covers only when the app in
-    ///   front says it is in full screen and that window is the one in front.
+    ///   front says it is in full screen and its front window is on this screen. With
+    ///   the focus on a full-screen window on another display, a maximized window of
+    ///   the same app here is just a window.
     static func covers(screen: CGRect, topInset: CGFloat, windows: [Window], ownPID: pid_t,
                        frontmost: Frontmost?, islandLevel: Int) -> Bool {
-        let seen = windows.filter {
-            $0.pid != ownPID && $0.alpha > 0 && (0..<islandLevel).contains($0.layer)
+        let drawn = windows.filter {
+            $0.pid != ownPID && $0.alpha > faintestAlpha && (0..<islandLevel).contains($0.layer)
                 && $0.bounds.width >= smallestSide && $0.bounds.height >= smallestSide
-                && !$0.bounds.intersection(screen).isEmpty
         }
+        let here = drawn.filter { !$0.bounds.intersection(screen).isEmpty }
         let whole = screen.insetBy(dx: tolerance, dy: tolerance)
-        if seen.contains(where: { $0.layer > 0 && $0.bounds.contains(whole) }) { return true }
+        if here.contains(where: { $0.layer > 0 && $0.bounds.contains(whole) }) { return true }
 
-        guard let front = seen.first(where: { $0.layer == 0 }) else { return false }
-        if front.bounds.contains(whole) { return true }
+        let normal = here.filter { $0.layer == 0 }
+        guard let first = normal.first else { return false }
+        let front = normal.prefix { $0.pid == first.pid }
+        if front.contains(where: { $0.bounds.contains(whole) }) { return true }
 
-        guard let frontmost, frontmost.isFullScreen, front.pid == frontmost.pid else { return false }
+        guard let frontmost, frontmost.isFullScreen, first.pid == frontmost.pid,
+              let systemFront = drawn.first(where: { $0.layer == 0 }),
+              !systemFront.bounds.intersection(screen).isEmpty
+        else { return false }
         let belowNotch = CGRect(x: screen.minX, y: screen.minY + topInset,
                                 width: screen.width, height: screen.height - topInset)
-        return front.bounds.contains(belowNotch.insetBy(dx: tolerance, dy: tolerance))
+            .insetBy(dx: tolerance, dy: tolerance)
+        return front.contains { $0.bounds.contains(belowNotch) }
+    }
+
+    /// Whether the presentation options of the app in front say full screen: native
+    /// full screen, or a menu bar it hides or lets hide itself (games, Keynote).
+    static func isFullScreen(_ options: NSApplication.PresentationOptions) -> Bool {
+        !options.isDisjoint(with: [.fullScreen, .hideMenuBar, .autoHideMenuBar])
     }
 
     /// A rect from global AppKit coordinates (origin at the bottom-left of the main
@@ -106,16 +122,23 @@ extension IslandFullScreen {
               let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                     kCGNullWindowID) as? [[String: Any]]
         else { return false }
-        let inFullScreen = !NSApp.currentSystemPresentationOptions.isDisjoint(with: [.fullScreen, .hideMenuBar])
+        let options = NSApp.currentSystemPresentationOptions
         let frontmost = NSWorkspace.shared.frontmostApplication.map {
-            Frontmost(pid: $0.processIdentifier, isFullScreen: inFullScreen)
+            Frontmost(pid: $0.processIdentifier, isFullScreen: isFullScreen(options))
         }
-        return covers(
+        let covered = covers(
             screen: cgRect(fromAppKit: geometry.screenFrame, primaryScreenHeight: primaryHeight),
             topInset: geometry.notchRect.height,
             windows: windows(from: info),
             ownPID: ProcessInfo.processInfo.processIdentifier,
             frontmost: frontmost,
             islandLevel: IslandPanel.level.rawValue)
+        // Testing by hand: `HONE_DEBUG_ISLAND=1` logs every look, to tell a miss of this
+        // check from one of the window server's (native full screen, see `IslandPanel`).
+        if ProcessInfo.processInfo.environment["HONE_DEBUG_ISLAND"] != nil {
+            NSLog("Hone island: covered=%d options=%lu frontmost=%d",
+                  covered ? 1 : 0, options.rawValue, frontmost?.pid ?? -1)
+        }
+        return covered
     }
 }

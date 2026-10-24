@@ -57,9 +57,20 @@ final class IslandFullScreenTests: XCTestCase {
         }
     }
 
-    func testATransparentWindowDoesNotCover() {
+    func testATransparentOrFadingWindowDoesNotCover() {
         XCTAssertFalse(covers([window(player, alone, alpha: 0)]))
-        XCTAssertTrue(covers([window(player, alone, alpha: 0.01)]))
+        XCTAssertFalse(covers([window(player, alone, alpha: 0.05)]))
+        XCTAssertTrue(covers([window(player, alone, alpha: 0.06)]))
+    }
+
+    func testAWindowOfHoneItselfAboveTheMenuBarDoesNotCover() {
+        // Clippy's panel floats, and it lives in this process.
+        XCTAssertFalse(covers([window(hone, alone, layer: 3)]))
+    }
+
+    @MainActor
+    func testTheIslandLevelUsedHereIsThePanels() {
+        XCTAssertEqual(IslandPanel.level.rawValue, islandLevel)
     }
 
     func testNoWindowsAndNoFrontmostMeansNotCovered() {
@@ -167,7 +178,38 @@ final class IslandFullScreenTests: XCTestCase {
         }
     }
 
+    // MARK: Dialogs and sheets of the app in front
+
+    func testADialogOverABorderlessFullScreenStillCovers() {
+        let windows = [window(player, rect(700, 400, 400, 300)), window(player, alone)]
+        XCTAssertTrue(covers(windows))
+    }
+
+    func testASheetOverNativeFullScreenStillCovers() {
+        // ⌘S in Pages in full screen: the sheet is a window of its own, in front.
+        let windows = [window(browser, rect(600, 38, 600, 400)), window(browser, belowNotch(alone))]
+        XCTAssertTrue(covers(windows, frontmost: .init(pid: browser, isFullScreen: true)))
+    }
+
+    func testAnotherAppBetweenTheDialogAndTheFullScreenWindowEndsTheFront() {
+        let windows = [window(player, rect(700, 400, 400, 300)), window(browser, rect(100, 100, 600, 600)),
+                       window(player, alone)]
+        XCTAssertFalse(covers(windows))
+    }
+
     // MARK: Other screens
+
+    func testFullScreenOnTheMonitorDoesNotMakeAMaximizedWindowHereCount() {
+        // Safari in full screen on the monitor, with the focus, and a maximized Safari
+        // window on the built-in screen: the system is "in full screen", this screen is not.
+        let windows = [window(browser, monitor), window(browser, maximized(besideMonitor))]
+        XCTAssertFalse(covers(windows, on: besideMonitor, frontmost: .init(pid: browser, isFullScreen: true)))
+    }
+
+    func testFullScreenHereWithAWindowOfTheSameAppOnTheMonitorCovers() {
+        let windows = [window(browser, belowNotch(besideMonitor)), window(browser, rect(100, 100, 800, 600))]
+        XCTAssertTrue(covers(windows, on: besideMonitor, frontmost: .init(pid: browser, isFullScreen: true)))
+    }
 
     func testAWindowOnTheExternalMonitorOnlyDoesNotCoverTheBuiltIn() {
         XCTAssertFalse(covers([window(player, monitor)], on: besideMonitor))
@@ -197,6 +239,17 @@ final class IslandFullScreenTests: XCTestCase {
         XCTAssertTrue(covers([window(player, rect(0, 0, 1799, 1169))]))
         XCTAssertTrue(covers([window(player, rect(1, 1, 1799, 1168))]))
         XCTAssertTrue(covers([window(player, rect(0, 0, 1800, 1168))]))
+    }
+
+    // MARK: Presentation options
+
+    func testThePresentationOptionsThatMeanFullScreen() {
+        XCTAssertTrue(IslandFullScreen.isFullScreen([.fullScreen, .autoHideMenuBar, .autoHideDock]))
+        XCTAssertTrue(IslandFullScreen.isFullScreen([.hideMenuBar, .hideDock]))
+        XCTAssertTrue(IslandFullScreen.isFullScreen(.autoHideMenuBar))
+        XCTAssertFalse(IslandFullScreen.isFullScreen([]))
+        XCTAssertFalse(IslandFullScreen.isFullScreen([.autoHideDock, .hideDock]))
+        XCTAssertFalse(IslandFullScreen.isFullScreen(.disableProcessSwitching))
     }
 
     // MARK: Coordinates

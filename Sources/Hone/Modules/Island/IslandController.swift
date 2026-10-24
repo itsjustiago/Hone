@@ -164,7 +164,13 @@ final class IslandController {
 
     /// Looks at the screen again and, if the answer changed, shows or hides the panel.
     private func refreshCover() {
-        guard isRunning, updateCover() else { return }
+        guard isRunning else { return }
+        guard updateCover() else {
+            // The window server can hide the panel on its own (native full screen) and
+            // then sends no "exited": a hover held that long is checked against the pointer.
+            if hovering { confirmPointer() }
+            return
+        }
         apply()
         // The panel comes back under a pointer that may be resting on the notch.
         if !covered { confirmPointer() }
