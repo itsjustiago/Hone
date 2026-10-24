@@ -392,3 +392,79 @@ final class NowPlayingAdapterLocateTests: XCTestCase {
         XCTAssertNil(NowPlayingAdapter.locate(privateFrameworks: nil, executableDirectory: nil, fileExists: { _ in true }))
     }
 }
+
+// MARK: - Quarantine
+
+/// A browser-unzipped Hone.app is quarantined file by file, and perl's dlopen of the
+/// dylib then hangs on Gatekeeper. These run on plain files in a temporary folder.
+final class NowPlayingAdapterQuarantineTests: XCTestCase {
+    private var directory: URL!
+    private let attribute = "com.apple.quarantine"
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hone-qtn-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func file(_ relative: String) throws -> URL {
+        let url = directory.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: url)
+        return url
+    }
+
+    private func quarantine(_ url: URL) {
+        let value = "0083;6adcfa2e;Safari;00000000-0000-0000-0000-000000000000"
+        XCTAssertEqual(setxattr(url.path, attribute, value, value.utf8.count, 0, 0), 0)
+    }
+
+    private func isQuarantined(_ url: URL) -> Bool {
+        getxattr(url.path, attribute, nil, 0, 0, 0) >= 0
+    }
+
+    func testLiftsTheFlagFromTheWholeAppBundle() throws {
+        let library = try file("Hone.app/Contents/Frameworks/libHoneNowPlaying.dylib")
+        let others = [
+            try file("Hone.app/Contents/MacOS/Hone"),
+            try file("Hone.app/Contents/Info.plist"),
+            directory.appendingPathComponent("Hone.app/Contents"),
+            directory.appendingPathComponent("Hone.app"),
+        ]
+        let outside = try file("Hone.zip")
+        ([library, outside] + others).forEach(quarantine)
+
+        XCTAssertTrue(NowPlayingAdapter.clearQuarantine(around: library))
+        for url in [library] + others { XCTAssertFalse(isQuarantined(url), url.path) }
+        XCTAssertTrue(isQuarantined(outside), "only the bundle is touched")
+    }
+
+    func testOutsideABundleOnlyTheLibrary() throws {
+        let library = try file(".build/debug/libHoneNowPlaying.dylib")
+        let sibling = try file(".build/debug/Hone")
+        [library, sibling].forEach(quarantine)
+
+        XCTAssertTrue(NowPlayingAdapter.clearQuarantine(around: library))
+        XCTAssertFalse(isQuarantined(library))
+        XCTAssertTrue(isQuarantined(sibling))
+    }
+
+    func testNothingToLiftIsFine() throws {
+        let library = try file("Hone.app/Contents/Frameworks/libHoneNowPlaying.dylib")
+        XCTAssertTrue(NowPlayingAdapter.clearQuarantine(around: library))
+    }
+
+    func testAFlagThatCannotBeLiftedIsReported() throws {
+        let library = try file("Hone.app/Contents/Frameworks/libHoneNowPlaying.dylib")
+        quarantine(library)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: library.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: library.path) }
+
+        XCTAssertFalse(NowPlayingAdapter.clearQuarantine(around: library))
+        XCTAssertTrue(isQuarantined(library))
+    }
+}
