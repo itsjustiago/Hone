@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import os
@@ -38,6 +39,10 @@ enum NowPlayingAdapter {
 /// Runs the "now playing" adapter and publishes what it reports. Starts nothing
 /// until `start()`; `stop()` leaves nothing behind. The adapter also dies by itself
 /// when this process does (it exits on EOF of its stdin).
+///
+/// Giving up is not forever: waking the Mac tries again from scratch (the failures
+/// that exhausted the policy were often a sleep in the middle of a start), and while
+/// it stays given up one slow retry runs every few minutes.
 @MainActor
 @Observable
 final class NowPlayingClient {
@@ -49,8 +54,10 @@ final class NowPlayingClient {
         case unavailable(String)
     }
 
-    static let missingAdapterText = "Falta o adaptador de música"
-    static let failedText = "Não consegui ler a música"
+    nonisolated static let missingAdapterText = "Falta o adaptador de música"
+    nonisolated static let failedText = "Não consegui ler a música"
+    /// While given up, how long to wait between slow retries.
+    nonisolated static let slowRetryInterval: TimeInterval = 300
 
     private(set) var track: NowPlayingTrack?
     private(set) var status: Status = .stopped
@@ -70,22 +77,36 @@ final class NowPlayingClient {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var policy = NowPlayingRestartPolicy()
     @ObservationIgnored private var restartWork: DispatchWorkItem?
+    /// The one slow retry while given up. Nil in every other state.
+    @ObservationIgnored private var slowRetry: Timer?
+    @ObservationIgnored private var wakeObserver: NSObjectProtocol?
+    @ObservationIgnored private let wakeCenter: NotificationCenter
+    @ObservationIgnored private let slowRetryInterval: TimeInterval
 
-    /// `adapterURL` overrides the lookup (tests).
-    init(adapterURL: URL? = nil) {
+    /// `adapterURL` overrides the lookup; `wakeCenter` and `slowRetryInterval` are
+    /// there for the tests.
+    init(
+        adapterURL: URL? = nil,
+        wakeCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        slowRetryInterval: TimeInterval = NowPlayingClient.slowRetryInterval
+    ) {
         self.adapterURL = adapterURL
+        self.wakeCenter = wakeCenter
+        self.slowRetryInterval = slowRetryInterval
     }
 
     func start() {
         guard status != .running else { return }
-        policy = NowPlayingRestartPolicy()
-        status = .running
-        launch()
+        observeWake()
+        restartFromScratch()
     }
 
     func stop() {
         restartWork?.cancel()
         restartWork = nil
+        stopSlowRetry()
+        if let wakeObserver { wakeCenter.removeObserver(wakeObserver) }
+        wakeObserver = nil
         tearDown()
         track = nil
         status = .stopped
@@ -101,6 +122,47 @@ final class NowPlayingClient {
     }
 
     // MARK: Process
+
+    /// A clean slate: the policy forgets earlier failures and the adapter is launched.
+    private func restartFromScratch() {
+        stopSlowRetry()
+        policy = NowPlayingRestartPolicy()
+        status = .running
+        launch()
+    }
+
+    private func observeWake() {
+        guard wakeObserver == nil else { return }
+        wakeObserver = wakeCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) {
+            [weak self] _ in
+            MainActor.assumeIsolated { self?.systemDidWake() }
+        }
+    }
+
+    /// Whatever made the adapter fail before the sleep may be gone: try again.
+    private func systemDidWake() {
+        guard case .unavailable = status else { return }
+        journal.info("Woke up with the adapter unavailable: trying again")
+        restartFromScratch()
+    }
+
+    private func startSlowRetry() {
+        stopSlowRetry()
+        let timer = Timer(timeInterval: slowRetryInterval, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, case .unavailable = self.status else { return }
+                self.restartFromScratch()
+            }
+        }
+        // Common modes, like the island's other timers: it must fire with a menu open too.
+        RunLoop.main.add(timer, forMode: .common)
+        slowRetry = timer
+    }
+
+    private func stopSlowRetry() {
+        slowRetry?.invalidate()
+        slowRetry = nil
+    }
 
     private func launch() {
         restartWork = nil
@@ -195,6 +257,7 @@ final class NowPlayingClient {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
         case .giveUp:
             status = .unavailable(Self.failedText)
+            startSlowRetry()
         }
     }
 
