@@ -8,7 +8,7 @@
 //
 // Hone -> adapter (stdin, one command per line):
 //   toggle | play | pause | next | previous | seek <seconds>
-// EOF on stdin makes the adapter exit(0): that is how it dies with the Hone, even
+// EOF on stdin makes the adapter _exit(0): that is how it dies with the Hone, even
 // if the Hone crashes.
 //
 // Adapter -> Hone (stdout, one JSON object per line, UTF-8, "\n"-terminated).
@@ -52,6 +52,8 @@ enum { kHNPPlay = 0, kHNPPause = 1, kHNPToggle = 2, kHNPNext = 4, kHNPPrevious =
 static const double kCoalesceSeconds = 0.1;
 // A MediaRemote callback that never comes must not wedge the reader for good.
 static const int64_t kFetchTimeoutNanos = 3 * NSEC_PER_SEC;
+// ...but it is worth asking again: after a timeout the next read comes this much later.
+static const int64_t kRetryAfterTimeoutNanos = 2 * NSEC_PER_SEC;
 
 static void (*gRegister)(dispatch_queue_t);
 static void (*gGetInfo)(dispatch_queue_t, void (^)(CFDictionaryRef));
@@ -108,8 +110,10 @@ static void writeLine(NSData *json) {
     fwrite(json.bytes, 1, json.length, stdout);
     fputc('\n', stdout);
     fflush(stdout);
-    // The Hone went away (or closed the pipe): nobody is listening any more.
-    if (ferror(stdout)) exit(0);
+    // The Hone went away (or closed the pipe): nobody is listening any more. _exit,
+    // not exit: this runs on a secondary thread, possibly while another one is
+    // leaving too, and exit() running the atexit handlers twice at once is undefined.
+    if (ferror(stdout)) _exit(0);
 }
 
 static NSData *serialize(NSDictionary *object) {
@@ -220,6 +224,11 @@ static void refresh(void) {
 
     if (dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, kFetchTimeoutNanos)) != 0) {
         fprintf(stderr, "HoneNowPlaying: MediaRemote did not answer in time\n");
+        // Nothing else would wake the reader (it waits for notifications), so ask
+        // again later; the delay plus the timeout keeps this from becoming a tight loop.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, kRetryAfterTimeoutNanos), queue, ^{
+            dispatch_semaphore_signal(gWake);
+        });
         return;
     }
     if (info.count == 0) emitEmpty();
@@ -276,7 +285,8 @@ static void commandLoop(void) {
             if (line.length > 0) runCommand(line);
         }
     }
-    exit(0);
+    // EOF: the Hone is gone. _exit for the same reason as in writeLine.
+    _exit(0);
 }
 
 __attribute__((visibility("default")))
