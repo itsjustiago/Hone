@@ -25,7 +25,9 @@
 //                                     else the client itself; omitted when unknown
 //    "contentID":str,                 omitted when unknown
 //    "artwork":base64}                only when the bytes changed since the last line
-//                                     for this track (and always on a new track)
+//                                     for this track (and always on a new track). At
+//                                     most 300 px a side (bigger covers are shrunk and
+//                                     sent as PNG); omitted if the image won't decode.
 // The Hone's track id is contentID, or title + U+001F + artist when there is none;
 // `trackKey` below must stay identical, because the artwork is re-sent exactly when
 // that key changes.
@@ -33,6 +35,7 @@
 // stderr carries diagnostics only. Fatal setup problem: one line and exit(3).
 
 #import <Foundation/Foundation.h>
+#import <ImageIO/ImageIO.h>
 #include <dlfcn.h>
 #include <math.h>
 #include <signal.h>
@@ -54,6 +57,12 @@ static const double kCoalesceSeconds = 0.1;
 static const int64_t kFetchTimeoutNanos = 3 * NSEC_PER_SEC;
 // ...but it is worth asking again: after a timeout the next read comes this much later.
 static const int64_t kRetryAfterTimeoutNanos = 2 * NSEC_PER_SEC;
+// The cover is drawn at a few dozen points. Originals can be many MB (4K, TIFF) and
+// every line carries it as base64, so anything over this is shrunk before it is sent.
+static const double kMaxArtworkPixels = 300;
+static const NSUInteger kMaxArtworkBytes = 1024 * 1024;
+// Refuse to decode anything bigger than this (a decompression bomb).
+static const double kMaxArtworkSourcePixels = 64e6;
 
 static void (*gRegister)(dispatch_queue_t);
 static void (*gGetInfo)(dispatch_queue_t, void (^)(CFDictionaryRef));
@@ -137,6 +146,48 @@ static void emitEmpty(void) {
     }
 }
 
+// The bytes to send for a cover: the original when it is already small, else a PNG
+// thumbnail of at most kMaxArtworkPixels. nil when the image does not decode (or is
+// absurdly big): better no cover than megabytes the Hone cannot use.
+static NSData *artworkForWire(NSData *original) {
+    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)original, NULL);
+    if (!source) return nil;
+    NSData *result = nil;
+    if (CGImageSourceGetCount(source) > 0) {
+        NSDictionary *properties = CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, 0, NULL));
+        NSNumber *width = properties[(__bridge id)kCGImagePropertyPixelWidth];
+        NSNumber *height = properties[(__bridge id)kCGImagePropertyPixelHeight];
+        double w = [width isKindOfClass:[NSNumber class]] ? width.doubleValue : 0;
+        double h = [height isKindOfClass:[NSNumber class]] ? height.doubleValue : 0;
+        if (w >= 1 && h >= 1 && w * h <= kMaxArtworkSourcePixels) {
+            if (fmax(w, h) <= kMaxArtworkPixels && original.length <= kMaxArtworkBytes) {
+                result = original;
+            } else {
+                NSDictionary *options = @{
+                    (__bridge id)kCGImageSourceCreateThumbnailFromImageAlways: @YES,
+                    (__bridge id)kCGImageSourceThumbnailMaxPixelSize: @(kMaxArtworkPixels),
+                    (__bridge id)kCGImageSourceCreateThumbnailWithTransform: @YES,
+                };
+                CGImageRef thumbnail = CGImageSourceCreateThumbnailAtIndex(
+                    source, 0, (__bridge CFDictionaryRef)options);
+                if (thumbnail) {
+                    NSMutableData *png = [NSMutableData data];
+                    CGImageDestinationRef destination = CGImageDestinationCreateWithData(
+                        (__bridge CFMutableDataRef)png, CFSTR("public.png"), 1, NULL);
+                    if (destination) {
+                        CGImageDestinationAddImage(destination, thumbnail, NULL);
+                        if (CGImageDestinationFinalize(destination) && png.length > 0) result = png;
+                        CFRelease(destination);
+                    }
+                    CGImageRelease(thumbnail);
+                }
+            }
+        }
+    }
+    CFRelease(source);
+    return result;
+}
+
 static void emit(NSDictionary *info, BOOL playing, int pid, NSString *bundleID) {
     NSString *title = text(info, @"kMRMediaRemoteNowPlayingInfoTitle");
     NSString *artist = text(info, @"kMRMediaRemoteNowPlayingInfoArtist");
@@ -177,10 +228,15 @@ static void emit(NSDictionary *info, BOOL playing, int pid, NSString *bundleID) 
 
     gLastBody = body;
     if (newArtwork) {
+        // Remember the ORIGINAL bytes: that is what the next read is compared with, so
+        // a cover is shrunk once, not on every update (and a bad one is not retried).
         gLastArtwork = art;
-        line[@"artwork"] = [art base64EncodedStringWithOptions:0];
-        body = serialize(line);
-        if (!body) return;
+        NSData *cover = artworkForWire(art);
+        if (cover) {
+            line[@"artwork"] = [cover base64EncodedStringWithOptions:0];
+            body = serialize(line);
+            if (!body) return;
+        }
     }
     writeLine(body);
 }

@@ -77,7 +77,11 @@ let package = Package(
         .target(
             name: "HoneNowPlaying",
             path: "Sources/HoneNowPlaying",
-            linkerSettings: [.linkedFramework("Foundation")]
+            linkerSettings: [
+                .linkedFramework("Foundation"),
+                .linkedFramework("ImageIO"),
+                .linkedFramework("CoreGraphics")
+            ]
         ),
         // Hone's own pure logic (Quit on Close's decisions). The Kits have their own.
         .testTarget(
