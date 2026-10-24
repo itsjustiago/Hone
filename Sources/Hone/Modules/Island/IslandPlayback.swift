@@ -41,6 +41,20 @@ enum IslandHover {
         !hadTrack && hasTrack && pointerInside
     }
 
+    /// What the controller must tell the state to bring its idea of the pointer in
+    /// line with where the pointer really is.
+    enum Correction: Equatable { case none, enter, exit }
+
+    /// Used when the panel leaves the screen or comes back (lid closed with an
+    /// external display, screen layout change). A hover the state still holds for a
+    /// panel that is gone would bring the island back open and stuck, and a pointer
+    /// resting where the panel reappears gets no "entered" from AppKit.
+    static func correction(hovering: Bool, hasTrack: Bool, pointerInside: Bool) -> Correction {
+        if hovering && !pointerInside { return .exit }
+        if !hovering && hasTrack && pointerInside { return .enter }
+        return .none
+    }
+
     /// Whether the pointer is over `frame` (global AppKit coordinates). `CGRect.contains`
     /// leaves out the top edge, and that is exactly the row the pointer sits on when
     /// it is pushed to the top of the screen (`mouseLocation.y == maxY`), where the

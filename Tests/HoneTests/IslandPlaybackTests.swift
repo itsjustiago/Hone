@@ -81,6 +81,37 @@ final class IslandPlaybackTests: XCTestCase {
         XCTAssertFalse(IslandHover.shouldReenter(hadTrack: false, hasTrack: false, pointerInside: true))
     }
 
+    func testAHoverIsReleasedWhenThePointerIsNotThereAnyMore() {
+        // The panel left (no geometry): nothing is under the pointer, whatever the state holds.
+        XCTAssertEqual(IslandHover.correction(hovering: true, hasTrack: true, pointerInside: false), .exit)
+        XCTAssertEqual(IslandHover.correction(hovering: true, hasTrack: false, pointerInside: false), .exit)
+    }
+
+    func testAPointerThatRestsWhereThePanelReturnsIsReported() {
+        XCTAssertEqual(IslandHover.correction(hovering: false, hasTrack: true, pointerInside: true), .enter)
+    }
+
+    func testNoCorrectionWhenTheStateAlreadyAgrees() {
+        XCTAssertEqual(IslandHover.correction(hovering: true, hasTrack: true, pointerInside: true), .none)
+        XCTAssertEqual(IslandHover.correction(hovering: false, hasTrack: true, pointerInside: false), .none)
+        // Without a track the state ignores hover; reporting it would swallow the real one.
+        XCTAssertEqual(IslandHover.correction(hovering: false, hasTrack: false, pointerInside: true), .none)
+    }
+
+    func testReleasingTheHoverLeavesAStateThatReopensClosed() {
+        // What the controller does when the panel leaves while open: hover exit, then
+        // (later) the panel comes back: the island must not still be expanded.
+        let t0 = Date(timeIntervalSinceReferenceDate: 1_000)
+        var state = IslandState()
+        state.handle(.track(id: "a", isPlaying: true), at: t0.addingTimeInterval(-100))
+        state.handle(.hoverEntered, at: t0)
+        state.handle(.clicked, at: t0)
+        XCTAssertEqual(state.presentation(at: t0.addingTimeInterval(1)), .expanded)
+        state.handle(.hoverExited, at: t0.addingTimeInterval(1))
+        XCTAssertEqual(state.presentation(at: t0.addingTimeInterval(60)), .compact)
+        XCTAssertNil(state.nextChange(after: t0.addingTimeInterval(60)))
+    }
+
     func testThePointerPushedToTheTopOfTheScreenIsInsideTheIsland() {
         // The island is glued to the top: its maxY is the screen's maxY, which is
         // also where `mouseLocation.y` lands on the top row. CGRect.contains says no.

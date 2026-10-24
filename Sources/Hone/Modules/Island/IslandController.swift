@@ -124,6 +124,29 @@ final class IslandController {
         guard isRunning else { return }
         geometry = NotchGeometry.current()
         apply()
+        confirmPointer()
+    }
+
+    /// Tells the state where the pointer really is, after the panel moved or came
+    /// back: what it was told earlier may no longer be true.
+    private func confirmPointer() {
+        guard isRunning, let geometry else { return }
+        let now = Date()
+        let frame = geometry.islandFrame(for: state.presentation(at: now))
+        switch IslandHover.correction(hovering: hovering, hasTrack: hasTrack,
+                                      pointerInside: IslandHover.pointerInside(NSEvent.mouseLocation, frame: frame)) {
+        case .none:
+            return
+        case .enter:
+            hovering = true
+            state.handle(.hoverEntered, at: now)
+        case .exit:
+            hoverCheck?.invalidate()
+            hoverCheck = nil
+            hovering = false
+            state.handle(.hoverExited, at: now)
+        }
+        apply()
     }
 
     private func trackChanged(_ track: NowPlayingTrack?) {
@@ -192,6 +215,15 @@ final class IslandController {
         }
     }
 
+    private func releaseHover() {
+        hoverCheck?.invalidate()
+        hoverCheck = nil
+        guard IslandHover.correction(hovering: hovering, hasTrack: hasTrack, pointerInside: false) == .exit
+        else { return }
+        hovering = false
+        state.handle(.hoverExited, at: Date())
+    }
+
     private func scheduleHoverCheck() {
         hoverCheck?.invalidate()
         let check = Timer(timeInterval: 0.2, repeats: false) { [weak self] _ in
@@ -222,7 +254,10 @@ final class IslandController {
         timer = nil
         guard isRunning, let panel else { return }
         guard let geometry else {
-            // No notch to draw on (another Mac, the lid closed, the screen off).
+            // No notch to draw on (another Mac, the lid closed, the screen off). The
+            // panel leaves, and the pointer can no longer be over it: let go of the
+            // hover too, or the island would come back open and stuck.
+            releaseHover()
             panel.hide()
             return
         }
