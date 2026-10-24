@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// The player's time maths: labels, the bar's fill and where a click on it lands.
 /// Pure, so it is tested without a view.
@@ -39,6 +39,14 @@ enum IslandHover {
     /// a pointer that is already over the notch, the controller reports it again.
     static func shouldReenter(hadTrack: Bool, hasTrack: Bool, pointerInside: Bool) -> Bool {
         !hadTrack && hasTrack && pointerInside
+    }
+
+    /// Whether the pointer is over `frame` (global AppKit coordinates). `CGRect.contains`
+    /// leaves out the top edge, and that is exactly the row the pointer sits on when
+    /// it is pushed to the top of the screen (`mouseLocation.y == maxY`), where the
+    /// island lives. `NSMouseInRect` counts that edge in.
+    static func pointerInside(_ pointer: CGPoint, frame: CGRect) -> Bool {
+        NSMouseInRect(pointer, frame, false)
     }
 }
 

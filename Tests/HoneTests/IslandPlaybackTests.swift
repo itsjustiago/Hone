@@ -81,6 +81,24 @@ final class IslandPlaybackTests: XCTestCase {
         XCTAssertFalse(IslandHover.shouldReenter(hadTrack: false, hasTrack: false, pointerInside: true))
     }
 
+    func testThePointerPushedToTheTopOfTheScreenIsInsideTheIsland() {
+        // The island is glued to the top: its maxY is the screen's maxY, which is
+        // also where `mouseLocation.y` lands on the top row. CGRect.contains says no.
+        let frame = CGRect(x: 100, y: 868, width: 200, height: 32)
+        let topRow = CGPoint(x: 150, y: frame.maxY)
+        XCTAssertFalse(frame.contains(topRow))
+        XCTAssertTrue(IslandHover.pointerInside(topRow, frame: frame))
+    }
+
+    func testThePointerOutsideTheIslandIsOutside() {
+        let frame = CGRect(x: 100, y: 868, width: 200, height: 32)
+        XCTAssertTrue(IslandHover.pointerInside(CGPoint(x: 150, y: 880), frame: frame))
+        XCTAssertFalse(IslandHover.pointerInside(CGPoint(x: 99, y: 880), frame: frame))
+        XCTAssertFalse(IslandHover.pointerInside(CGPoint(x: 150, y: 867), frame: frame))
+        XCTAssertFalse(IslandHover.pointerInside(CGPoint(x: 150, y: 901), frame: frame))
+        XCTAssertFalse(IslandHover.pointerInside(CGPoint(x: 301, y: 880), frame: frame))
+    }
+
     // MARK: Settings line
 
     func testTheSourceLineFollowsTheClient() {

@@ -110,7 +110,8 @@ final class IslandPanel {
     /// the ground truth.
     var containsMouse: Bool {
         guard let window, window.isVisible, let geometry else { return false }
-        return geometry.islandFrame(for: model.presentation).contains(NSEvent.mouseLocation)
+        return IslandHover.pointerInside(NSEvent.mouseLocation,
+                                         frame: geometry.islandFrame(for: model.presentation))
     }
 
     // MARK: Private

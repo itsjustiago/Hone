@@ -141,7 +141,8 @@ final class IslandController {
         // A pointer already resting on the notch gets no new "entered" from AppKit.
         if let geometry, IslandHover.shouldReenter(
             hadTrack: hadTrack, hasTrack: hasTrack,
-            pointerInside: geometry.islandFrame(for: state.presentation(at: now)).contains(NSEvent.mouseLocation)
+            pointerInside: IslandHover.pointerInside(
+                NSEvent.mouseLocation, frame: geometry.islandFrame(for: state.presentation(at: now)))
         ) {
             hovering = true
             state.handle(.hoverEntered, at: now)
