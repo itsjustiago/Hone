@@ -23,9 +23,13 @@ final class IslandController {
     private var timer: Timer?
     /// Re-checks the pointer after a hover exit that the pointer never made.
     private var hoverCheck: Timer?
+    /// Polls for an app in full screen while there is a track to show. See `startCoverPoll`.
+    private var coverTimer: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     private var hasTrack = false
+    /// An app in full screen covers the notch: the panel stays away until it ends.
+    private var covered = false
     /// What the state was last told about the pointer.
     private var hovering = false
     /// The cover and app name are worked out once per track, not per render.
@@ -56,6 +60,7 @@ final class IslandController {
         ))
         geometry = NotchGeometry.current()
         observeScreens()
+        observeFullScreen()
         observeSettings(mine)
         client.start()
         observeTrack(mine)
@@ -70,12 +75,14 @@ final class IslandController {
         timer = nil
         hoverCheck?.invalidate()
         hoverCheck = nil
+        stopCoverPoll()
         for (center, token) in observers { center.removeObserver(token) }
         observers.removeAll()
         panel?.close()
         panel = nil
         geometry = nil
         hasTrack = false
+        covered = false
         hovering = false
         artworkKey = nil
         appKey = nil
@@ -120,17 +127,89 @@ final class IslandController {
         }
     }
 
+    /// An app can go full screen on its own Space (the Space changes, or the app in
+    /// front does) or with no sign at all, which the poll catches.
+    private func observeFullScreen() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        let names: [(NSNotification.Name, Bool)] = [
+            (NSWorkspace.activeSpaceDidChangeNotification, true),
+            (NSWorkspace.didActivateApplicationNotification, false),
+        ]
+        for (name, spaceChanged) in names {
+            let token = workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.frontChanged(spaceChanged: spaceChanged) }
+            }
+            observers.append((workspace, token))
+        }
+    }
+
     private func screensChanged() {
         guard isRunning else { return }
         geometry = NotchGeometry.current()
+        updateCover()
         apply()
         confirmPointer()
+    }
+
+    private func frontChanged(spaceChanged: Bool) {
+        // Without a track the panel is off the screen anyway: nothing to hide or show.
+        guard isRunning, hasTrack else { return }
+        refreshCover()
+        // Back from a full-screen Space the window server hid the panel without telling
+        // us, so what the state holds about the pointer may be stale.
+        if spaceChanged { confirmPointer() }
+        // The notification comes while the Space is still sliding: look again once it settles.
+        coverTimer?.fireDate = Date().addingTimeInterval(0.7)
+    }
+
+    /// Looks at the screen again and, if the answer changed, shows or hides the panel.
+    private func refreshCover() {
+        guard isRunning else { return }
+        guard updateCover() else {
+            // The window server can hide the panel on its own (native full screen) and
+            // then sends no "exited": a hover held that long is checked against the pointer.
+            if hovering { confirmPointer() }
+            return
+        }
+        apply()
+        // The panel comes back under a pointer that may be resting on the notch.
+        if !covered { confirmPointer() }
+    }
+
+    /// Whether an app in full screen covers the notch now. Returns whether that
+    /// changed; the caller decides when to `apply()`.
+    @discardableResult
+    private func updateCover() -> Bool {
+        let now = geometry.map { IslandFullScreen.current(on: $0) } ?? false
+        guard now != covered else { return false }
+        covered = now
+        return true
+    }
+
+    /// A borderless window can go full screen with no Space change and no change of
+    /// the app in front (a game when it finishes loading, a player's own full screen,
+    /// Keynote), so nothing announces it: the screen is looked at every few seconds.
+    /// Only while there is a track to show; without one the panel is away anyway.
+    private func startCoverPoll() {
+        guard coverTimer == nil else { return }
+        let poll = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshCover() }
+        }
+        poll.tolerance = 0.5
+        RunLoop.main.add(poll, forMode: .common)
+        coverTimer = poll
+    }
+
+    private func stopCoverPoll() {
+        coverTimer?.invalidate()
+        coverTimer = nil
     }
 
     /// Tells the state where the pointer really is, after the panel moved or came
     /// back: what it was told earlier may no longer be true.
     private func confirmPointer() {
-        guard isRunning, let geometry else { return }
+        // No hover for an island that isn't there.
+        guard isRunning, !covered, let geometry else { return }
         let now = Date()
         let frame = geometry.islandFrame(for: state.presentation(at: now))
         switch IslandHover.correction(hovering: hovering, hasTrack: hasTrack,
@@ -161,8 +240,18 @@ final class IslandController {
             hasTrack = false
             hovering = false
         }
+        if hasTrack != hadTrack {
+            if hasTrack {
+                // Look before the first `apply()`: a track that starts while an app is in
+                // full screen must not flash the island over it.
+                updateCover()
+                startCoverPoll()
+            } else {
+                stopCoverPoll()
+            }
+        }
         // A pointer already resting on the notch gets no new "entered" from AppKit.
-        if let geometry, IslandHover.shouldReenter(
+        if let geometry, !covered, IslandHover.shouldReenter(
             hadTrack: hadTrack, hasTrack: hasTrack,
             pointerInside: IslandHover.pointerInside(
                 NSEvent.mouseLocation, frame: geometry.islandFrame(for: state.presentation(at: now)))
@@ -253,10 +342,10 @@ final class IslandController {
         timer?.invalidate()
         timer = nil
         guard isRunning, let panel else { return }
-        guard let geometry else {
-            // No notch to draw on (another Mac, the lid closed, the screen off). The
-            // panel leaves, and the pointer can no longer be over it: let go of the
-            // hover too, or the island would come back open and stuck.
+        guard let geometry, !covered else {
+            // No notch to draw on (another Mac, the lid closed, the screen off), or an app
+            // in full screen covers it. The panel leaves, and the pointer can no longer be
+            // over it: let go of the hover too, or the island would come back open and stuck.
             releaseHover()
             panel.hide()
             return

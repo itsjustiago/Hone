@@ -44,6 +44,11 @@ final class IslandPanel {
     /// Long enough for the spring to look settled before the frame is cut.
     static let settle: TimeInterval = 0.5
 
+    /// Above the menu bar (24) and the status items (25), below menus (101):
+    /// a menu opened from the bar still draws over the island. `IslandFullScreen`
+    /// reads it too: a window at or above this level is drawn over the island anyway.
+    static let level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+
     init(actions: IslandActions) {
         self.actions = actions
     }
@@ -165,10 +170,12 @@ final class IslandPanel {
                                   styleMask: [.borderless, .nonactivatingPanel],
                                   backing: .buffered,
                                   defer: true)
-        // Above the menu bar (24) and the status items (25), below menus (101):
-        // a menu opened from the bar still draws over the island.
-        window.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        window.level = Self.level
+        // No `.fullScreenAuxiliary` on purpose: without it the window server keeps a
+        // `.canJoinAllSpaces` panel out of another app's full-screen Space, display by
+        // display and with no flash while the Space slides in. With it the island
+        // would sit on top of the video, the game or the Keynote.
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
