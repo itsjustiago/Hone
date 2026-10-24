@@ -32,6 +32,31 @@ enum IslandTime {
     }
 }
 
+/// The equaliser's bars as a function of time, so the view only has to sample it.
+/// Each bar is a sine between its own low and high, with its own period and phase,
+/// so the four never move in step.
+enum IslandEqualizerMotion {
+    /// Low and high height (fraction of the full height), seconds for one full
+    /// up-and-down, and where in that cycle the bar starts (radians).
+    static let bars: [(low: Double, high: Double, period: Double, phase: Double)] = [
+        (0.30, 0.85, 0.92, 0.0), (0.55, 1.00, 0.76, 2.1), (0.25, 0.70, 1.06, 4.0), (0.45, 0.92, 0.84, 5.3),
+    ]
+    static var barCount: Int { bars.count }
+
+    /// How tall bar `index` is at `time`, 0…1 of the full height; always between its low and high.
+    static func fraction(bar index: Int, at time: TimeInterval) -> Double {
+        let bar = bars[index]
+        let angle = 2 * Double.pi * time / bar.period + bar.phase
+        let wave = 0.5 + 0.5 * sin(angle)
+        return bar.low + (bar.high - bar.low) * (wave.isFinite ? wave : 0.5)
+    }
+
+    /// Where a bar stands when it must not move (Reduce Motion): halfway.
+    static func restingFraction(bar index: Int) -> Double {
+        (bars[index].low + bars[index].high) / 2
+    }
+}
+
 /// Hover rules the state machine leaves to the controller.
 enum IslandHover {
     /// `IslandState` ignores a hover while no track is loaded, and AppKit sends no

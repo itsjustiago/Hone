@@ -29,52 +29,51 @@ struct IslandCover: View {
 /// Four bars that dance while the music plays. Pure animation, no audio is read:
 /// each bar breathes at its own pace so they never move in step. Paused (or with
 /// Reduce Motion on) they stand still, low when paused.
+///
+/// The motion is a function of the clock (`IslandEqualizerMotion`) drawn by a
+/// `TimelineView` a dozen times a second, and only while playing: no animation
+/// loop of SwiftUI's own, which would redraw at the display's rate (120 Hz) for as
+/// long as the compact island is up.
 struct IslandEqualizer: View {
     let isPlaying: Bool
     let tint: Color
 
     static let barWidth: CGFloat = 3
     static let maxHeight: CGFloat = 14
-    /// Low and high heights (fraction of `maxHeight`) and the period of each bar.
-    private static let bars: [(low: CGFloat, high: CGFloat, period: Double)] = [
-        (0.30, 0.85, 0.46), (0.55, 1.00, 0.38), (0.25, 0.70, 0.53), (0.45, 0.92, 0.42),
-    ]
+    /// Height of a bar of a paused track.
+    private static let pausedHeight: CGFloat = 3
+    /// Frames per second while playing.
+    private static let tick: TimeInterval = 1.0 / 12
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(Self.bars.indices, id: \.self) { index in
-                let bar = Self.bars[index]
-                if isPlaying && !reduceMotion {
-                    BouncingBar(low: bar.low * Self.maxHeight, high: bar.high * Self.maxHeight,
-                                period: bar.period, tint: tint)
-                } else {
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: Self.barWidth,
-                               height: isPlaying ? (bar.low + bar.high) / 2 * Self.maxHeight : 3)
+        Group {
+            if isPlaying && !reduceMotion {
+                TimelineView(.animation(minimumInterval: Self.tick)) { context in
+                    let time = context.date.timeIntervalSinceReferenceDate
+                    bars(IslandEqualizerMotion.bars.indices.map {
+                        CGFloat(IslandEqualizerMotion.fraction(bar: $0, at: time)) * Self.maxHeight
+                    })
                 }
+            } else {
+                bars(IslandEqualizerMotion.bars.indices.map {
+                    isPlaying ? CGFloat(IslandEqualizerMotion.restingFraction(bar: $0)) * Self.maxHeight
+                              : Self.pausedHeight
+                })
             }
         }
         .frame(height: Self.maxHeight)
         .accessibilityHidden(true)
     }
 
-    private struct BouncingBar: View {
-        let low: CGFloat
-        let high: CGFloat
-        let period: Double
-        let tint: Color
-        @State private var up = false
-
-        var body: some View {
-            Capsule()
-                .fill(tint)
-                .frame(width: IslandEqualizer.barWidth, height: up ? high : low)
-                .onAppear {
-                    withAnimation(.easeInOut(duration: period).repeatForever(autoreverses: true)) { up = true }
-                }
+    private func bars(_ heights: [CGFloat]) -> some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(heights.indices, id: \.self) { index in
+                Capsule()
+                    .fill(tint)
+                    .frame(width: Self.barWidth, height: heights[index])
+            }
         }
     }
 }

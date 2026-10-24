@@ -67,6 +67,40 @@ final class IslandPlaybackTests: XCTestCase {
         XCTAssertNil(IslandTime.seconds(atX: .nan, width: 200, duration: 240))
     }
 
+    // MARK: Equaliser
+
+    func testEveryBarStaysBetweenItsLowAndHighAtAnyTime() {
+        for index in 0..<IslandEqualizerMotion.barCount {
+            let bar = IslandEqualizerMotion.bars[index]
+            for step in 0..<400 {
+                let value = IslandEqualizerMotion.fraction(bar: index, at: Double(step) * 0.037)
+                XCTAssertGreaterThanOrEqual(value, bar.low - 1e-9)
+                XCTAssertLessThanOrEqual(value, bar.high + 1e-9)
+            }
+        }
+        // A realistic clock value (seconds since 2001) is just as well behaved.
+        XCTAssertTrue(IslandEqualizerMotion.fraction(bar: 0, at: 800_000_000.123).isFinite)
+    }
+
+    func testABarRepeatsAfterItsPeriodAndBarsDoNotMoveInStep() {
+        for index in 0..<IslandEqualizerMotion.barCount {
+            let period = IslandEqualizerMotion.bars[index].period
+            XCTAssertEqual(IslandEqualizerMotion.fraction(bar: index, at: 3.3),
+                           IslandEqualizerMotion.fraction(bar: index, at: 3.3 + period), accuracy: 1e-9)
+        }
+        let heights = (0..<IslandEqualizerMotion.barCount).map { IslandEqualizerMotion.fraction(bar: $0, at: 1.0) }
+        XCTAssertEqual(Set(heights.map { ($0 * 1000).rounded() }).count, heights.count)
+    }
+
+    func testABarActuallyMovesOverTime() {
+        let samples = (0..<30).map { IslandEqualizerMotion.fraction(bar: 1, at: Double($0) * 0.05) }
+        XCTAssertGreaterThan((samples.max() ?? 0) - (samples.min() ?? 0), 0.3)
+    }
+
+    func testTheRestingHeightIsHalfway() {
+        XCTAssertEqual(IslandEqualizerMotion.restingFraction(bar: 0), 0.575, accuracy: 1e-9)
+    }
+
     // MARK: Hover after a track shows up
 
     func testAPointerAlreadyOnTheNotchIsReportedWhenATrackArrives() {
