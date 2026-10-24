@@ -21,7 +21,9 @@ BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 BIN="$BIN_DIR/Hone"
 # Adaptador de «a tocar agora»: dylib que o /usr/bin/perl carrega (o Hone não a liga).
 NOWPLAYING="$BIN_DIR/libHoneNowPlaying.dylib"
-[ -f "$NOWPLAYING" ] || swift build -c "$CONFIG" --product HoneNowPlaying
+# Sempre, não só quando falta: uma dylib de um build anterior ficava no .app mesmo
+# com o adaptador alterado. É incremental, por isso custa pouco quando nada mudou.
+swift build -c "$CONFIG" --product HoneNowPlaying
 
 APP="Hone.app"
 rm -rf "$APP"
