@@ -45,6 +45,28 @@ enum NowPlayingAdapter {
             .compactMap { $0?.appendingPathComponent(libraryName) }
             .first { fileExists($0.path) }
     }
+
+    /// A Hone.zip unpacked from a browser download is quarantined file by file, and
+    /// perl's dlopen of the dylib then waits on Gatekeeper forever (and pops an alert)
+    /// when the dylib or its bundle still carry the flag. Hone is already running, so
+    /// the user approved the bundle: lift the flag from all of it, as the updater does.
+    /// Outside a .app (`swift run`), only the library itself. False when some file
+    /// keeps the flag (a read-only bundle, e.g. App Translocation).
+    static func clearQuarantine(around library: URL) -> Bool {
+        var root = library
+        var dir = library.deletingLastPathComponent()
+        while dir.pathComponents.count > 1 {
+            if dir.pathExtension == "app" { root = dir; break }
+            dir.deleteLastPathComponent()
+        }
+        var items = [root]
+        if root != library, let walk = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
+            items += walk.compactMap { $0 as? URL }
+        }
+        return items.allSatisfy { item in
+            removexattr(item.path, "com.apple.quarantine", XATTR_NOFOLLOW) == 0 || errno == ENOATTR
+        }
+    }
 }
 
 /// Runs the "now playing" adapter and publishes what it reports. Starts nothing
@@ -67,6 +89,7 @@ final class NowPlayingClient {
 
     nonisolated static let missingAdapterText = "Falta o adaptador de música"
     nonisolated static let failedText = "Não consegui ler a música"
+    nonisolated static let quarantinedText = "O macOS bloqueou o adaptador de música. Move o Hone para Aplicações e volta a abri-lo."
     /// While given up, how long to wait between slow retries.
     nonisolated static let slowRetryInterval: TimeInterval = 300
 
@@ -189,6 +212,11 @@ final class NowPlayingClient {
         if let launchOverride {
             command = launchOverride
         } else if let library = adapterURL ?? NowPlayingAdapter.locate() {
+            guard NowPlayingAdapter.clearQuarantine(around: library) else {
+                journal.error("The adapter is still quarantined: not loading it")
+                status = .unavailable(Self.quarantinedText)
+                return
+            }
             command = NowPlayingAdapter.launch(library: library)
         } else {
             status = .unavailable(Self.missingAdapterText)

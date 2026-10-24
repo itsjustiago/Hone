@@ -210,6 +210,24 @@ final class NowPlayingClientLifecycleTests: XCTestCase {
         XCTAssertEqual(client.status, .stopped)
     }
 
+    /// A quarantined dylib would leave perl waiting on Gatekeeper forever: say so
+    /// instead of launching. The "dylib" is a plain file; perl never runs.
+    func testAQuarantineThatCannotBeLiftedIsShownNotLaunched() throws {
+        let library = directory.appendingPathComponent("Hone.app/Contents/Frameworks/libHoneNowPlaying.dylib")
+        try FileManager.default.createDirectory(at: library.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: library)
+        let value = "0083;6adcfa2e;Safari;00000000-0000-0000-0000-000000000000"
+        XCTAssertEqual(setxattr(library.path, "com.apple.quarantine", value, value.utf8.count, 0, 0), 0)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: library.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: library.path) }
+
+        let client = NowPlayingClient(adapterURL: library, restartPolicy: policy(maxFailures: 3), wakeCenter: NotificationCenter())
+        defer { client.stop() }
+        client.start()
+
+        XCTAssertEqual(client.status, .unavailable(NowPlayingClient.quarantinedText))
+    }
+
     // MARK: Coming back
 
     func testWakingUpRetriesAGivenUpAdapterFromScratch() async {
