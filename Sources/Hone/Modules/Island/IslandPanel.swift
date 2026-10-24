@@ -34,6 +34,13 @@ final class IslandPanel {
     /// Bumped on every change: a delayed resize from an older one is dropped.
     private var generation = 0
 
+    /// What the last `show` asked for.
+    private struct Request: Equatable {
+        let presentation: IslandPresentation
+        let keepsWindow: Bool
+    }
+    private var lastRequest: Request?
+
     /// Long enough for the spring to look settled before the frame is cut.
     static let settle: TimeInterval = 0.5
 
@@ -44,6 +51,13 @@ final class IslandPanel {
     /// Shows `presentation` around the notch of `geometry`. With `keepsWindow`
     /// false (no track), the panel leaves the screen once it has folded away.
     func show(_ presentation: IslandPresentation, on geometry: NotchGeometry, keepsWindow: Bool) {
+        let request = Request(presentation: presentation, keepsWindow: keepsWindow)
+        // A track update that changes nothing the panel draws (the position moved, the
+        // cover is the same) only needs the model, which the controller already filled.
+        // Bumping the generation here would cancel the pending `settle` every time, and
+        // with updates closer than `settle` apart the frame would never shrink back.
+        if let window, window.isVisible, self.geometry == geometry, lastRequest == request { return }
+        lastRequest = request
         generation += 1
         let mine = generation
         let target = geometry.islandFrame(for: presentation)
@@ -93,6 +107,7 @@ final class IslandPanel {
     /// Off the screen at once (no notch any more, or the tool stopped).
     func hide() {
         generation += 1
+        lastRequest = nil
         window?.orderOut(nil)
         withoutAnimation { model.presentation = .hidden }
     }
