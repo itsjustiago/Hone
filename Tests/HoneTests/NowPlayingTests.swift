@@ -349,6 +349,13 @@ final class NowPlayingRestartPolicyTests: XCTestCase {
         XCTAssertEqual(last, .retry(after: 30))
     }
 
+    func testTheLimitsCanBeShrunkForTests() {
+        var policy = NowPlayingRestartPolicy(delays: [0.01, 0.02], maxFailures: 3, window: 60, healthyUptime: 5)
+        XCTAssertEqual(policy.recordFailure(at: t0), .retry(after: 0.01))
+        XCTAssertEqual(policy.recordFailure(at: t0.addingTimeInterval(1)), .retry(after: 0.02))
+        XCTAssertEqual(policy.recordFailure(at: t0.addingTimeInterval(2)), .giveUp)
+    }
+
     func testAHealthyRunStartsTheDelaysOver() {
         var policy = NowPlayingRestartPolicy()
         _ = policy.recordFailure(at: t0)

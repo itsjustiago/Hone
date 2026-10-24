@@ -5,6 +5,12 @@ import os
 
 private let journal = Logger(subsystem: "com.tiagof.hone", category: "island")
 
+/// The process that produces the adapter's stdout.
+struct NowPlayingLaunch: Equatable {
+    var executable: URL
+    var arguments: [String]
+}
+
 /// Where the adapter lives and how it is started.
 enum NowPlayingAdapter {
     static let libraryName = "libHoneNowPlaying.dylib"
@@ -22,6 +28,11 @@ enum NowPlayingAdapter {
     DynaLoader::dl_install_xsub("main::hone_np_stream", $fn);
     main::hone_np_stream();
     """
+
+    /// Perl, told to load `library` and run the adapter.
+    static func launch(library: URL) -> NowPlayingLaunch {
+        NowPlayingLaunch(executable: perl, arguments: ["-e", loaderScript, library.path])
+    }
 
     /// The app bundle first (Contents/Frameworks), then next to the executable
     /// (`swift run` / .build/debug, where SwiftPM drops the dylib).
@@ -71,6 +82,8 @@ final class NowPlayingClient {
     }
 
     @ObservationIgnored private let adapterURL: URL?
+    @ObservationIgnored private let launchOverride: NowPlayingLaunch?
+    @ObservationIgnored private let restartPolicy: NowPlayingRestartPolicy
     @ObservationIgnored private var session: Session?
     /// Bumped on every launch and every teardown: callbacks of a process that is no
     /// longer the current one carry an old number and are dropped.
@@ -83,14 +96,19 @@ final class NowPlayingClient {
     @ObservationIgnored private let wakeCenter: NotificationCenter
     @ObservationIgnored private let slowRetryInterval: TimeInterval
 
-    /// `adapterURL` overrides the lookup; `wakeCenter` and `slowRetryInterval` are
-    /// there for the tests.
+    /// `adapterURL` overrides the lookup of the dylib. The rest is for the tests:
+    /// `launch` replaces perl + dylib altogether (a fake adapter), the others shrink
+    /// the waits and take the wake-up from a private notification center.
     init(
         adapterURL: URL? = nil,
+        launch: NowPlayingLaunch? = nil,
+        restartPolicy: NowPlayingRestartPolicy = NowPlayingRestartPolicy(),
         wakeCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         slowRetryInterval: TimeInterval = NowPlayingClient.slowRetryInterval
     ) {
         self.adapterURL = adapterURL
+        self.launchOverride = launch
+        self.restartPolicy = restartPolicy
         self.wakeCenter = wakeCenter
         self.slowRetryInterval = slowRetryInterval
     }
@@ -126,7 +144,7 @@ final class NowPlayingClient {
     /// A clean slate: the policy forgets earlier failures and the adapter is launched.
     private func restartFromScratch() {
         stopSlowRetry()
-        policy = NowPlayingRestartPolicy()
+        policy = restartPolicy
         status = .running
         launch()
     }
@@ -167,7 +185,12 @@ final class NowPlayingClient {
     private func launch() {
         restartWork = nil
         guard status == .running, session == nil else { return }
-        guard let library = adapterURL ?? NowPlayingAdapter.locate() else {
+        let command: NowPlayingLaunch
+        if let launchOverride {
+            command = launchOverride
+        } else if let library = adapterURL ?? NowPlayingAdapter.locate() {
+            command = NowPlayingAdapter.launch(library: library)
+        } else {
             status = .unavailable(Self.missingAdapterText)
             return
         }
@@ -176,8 +199,8 @@ final class NowPlayingClient {
         let mine = generation
 
         let process = Process()
-        process.executableURL = NowPlayingAdapter.perl
-        process.arguments = ["-e", NowPlayingAdapter.loaderScript, library.path]
+        process.executableURL = command.executable
+        process.arguments = command.arguments
         // Nothing from the user's shell (PERL5OPT, PERL5LIB…) should reach the loader.
         process.environment = ["PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory()]
 
@@ -215,7 +238,7 @@ final class NowPlayingClient {
         do {
             try process.run()
         } catch {
-            journal.error("Could not start perl: \(error.localizedDescription, privacy: .public)")
+            journal.error("Could not start the adapter: \(error.localizedDescription, privacy: .public)")
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
             handleFailure(uptime: 0)

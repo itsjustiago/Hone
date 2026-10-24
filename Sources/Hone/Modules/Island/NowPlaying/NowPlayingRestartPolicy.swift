@@ -16,16 +16,34 @@ struct NowPlayingRestartPolicy {
     /// An adapter that lived this long was healthy: its death starts the delays over.
     static let healthyUptime: TimeInterval = 60
 
+    // The numbers above by default; the lifecycle tests shrink them.
+    private let delays: [TimeInterval]
+    private let maxFailures: Int
+    private let window: TimeInterval
+    private let healthyUptime: TimeInterval
+
     private var recent: [Date] = []
     private var consecutive = 0
 
+    init(
+        delays: [TimeInterval] = NowPlayingRestartPolicy.delays,
+        maxFailures: Int = NowPlayingRestartPolicy.maxFailures,
+        window: TimeInterval = NowPlayingRestartPolicy.window,
+        healthyUptime: TimeInterval = NowPlayingRestartPolicy.healthyUptime
+    ) {
+        self.delays = delays.isEmpty ? Self.delays : delays
+        self.maxFailures = maxFailures
+        self.window = window
+        self.healthyUptime = healthyUptime
+    }
+
     /// `uptime` is how long the process that just died had been running.
     mutating func recordFailure(at now: Date, uptime: TimeInterval = 0) -> Decision {
-        if uptime >= Self.healthyUptime { consecutive = 0 }
+        if uptime >= healthyUptime { consecutive = 0 }
         consecutive += 1
-        recent = recent.filter { now.timeIntervalSince($0) < Self.window }
+        recent = recent.filter { now.timeIntervalSince($0) < window }
         recent.append(now)
-        if recent.count >= Self.maxFailures { return .giveUp }
-        return .retry(after: Self.delays[min(consecutive, Self.delays.count) - 1])
+        if recent.count >= maxFailures { return .giveUp }
+        return .retry(after: delays[min(consecutive, delays.count) - 1])
     }
 }
