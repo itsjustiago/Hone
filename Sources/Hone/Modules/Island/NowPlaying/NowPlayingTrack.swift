@@ -28,15 +28,15 @@ struct NowPlayingTrack: Equatable {
     }
 
     /// Where the playhead is at `now`: it only moves while playing, scaled by the
-    /// rate, and never leaves [0, duration]. Clocks drift, so a sample "from the
-    /// future" counts as no time elapsed.
+    /// rate, and never leaves [0, duration] (or [0, `maxSeconds`] without a duration).
+    /// Clocks drift, so a sample "from the future" counts as no time elapsed.
     func position(at now: Date) -> TimeInterval {
         var value = elapsed
         if isPlaying {
             value += max(0, now.timeIntervalSince(elapsedSampledAt)) * playbackRate
         }
         if let duration { value = min(value, duration) }
-        return max(value, 0)
+        return min(max(value, 0), NowPlayingProtocol.maxSeconds)
     }
 }
 

@@ -22,6 +22,15 @@ final class IslandPlaybackTests: XCTestCase {
         XCTAssertEqual(IslandTime.format(-12), "0:00")
         XCTAssertEqual(IslandTime.format(.nan), "0:00")
         XCTAssertEqual(IslandTime.format(.infinity), "0:00")
+        XCTAssertEqual(IslandTime.format(-.infinity), "0:00")
+    }
+
+    func testAbsurdlyLongTimesStopAtTheCapInsteadOfTrapping() {
+        XCTAssertEqual(IslandTime.format(359_999), "99:59:59")
+        XCTAssertEqual(IslandTime.format(360_000), "99:59:59")
+        XCTAssertEqual(IslandTime.format(1e300), "99:59:59")
+        XCTAssertEqual(IslandTime.format(Double.greatestFiniteMagnitude), "99:59:59")
+        XCTAssertEqual(IslandTime.format(9.3e18), "99:59:59")
     }
 
     // MARK: Progress

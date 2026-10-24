@@ -136,6 +136,34 @@ final class NowPlayingProtocolTests: XCTestCase {
         XCTAssertNil(track.bundleID)
     }
 
+    func testAbsurdLengthsMeanUnknownAndPositionsAreCapped() throws {
+        let huge = try XCTUnwrap(decodeTrack(#"{"title":"T","duration":1e300,"elapsed":1e300,"playing":false}"#))
+        XCTAssertNil(huge.duration)
+        XCTAssertEqual(huge.elapsed, NowPlayingProtocol.maxSeconds)
+        let negative = try XCTUnwrap(decodeTrack(#"{"title":"T","duration":-5,"elapsed":-1e300}"#))
+        XCTAssertNil(negative.duration)
+        XCTAssertEqual(negative.elapsed, 0)
+        // Right at the limit still counts; just past it does not.
+        XCTAssertEqual(try XCTUnwrap(decodeTrack(#"{"title":"T","duration":10000000}"#)).duration, 1e7)
+        XCTAssertNil(try XCTUnwrap(decodeTrack(#"{"title":"T","duration":10000001}"#)).duration)
+    }
+
+    func testNonFiniteNumbersAreRefusedNotPassedOn() {
+        // JSON has no NaN or Infinity, and 1e999 overflows: the decoder rejects the
+        // line, so no such value can reach the track.
+        XCTAssertNil(NowPlayingProtocol.decode(line(#"{"title":"T","duration":NaN}"#)))
+        XCTAssertNil(NowPlayingProtocol.decode(line(#"{"title":"T","elapsed":Infinity}"#)))
+        XCTAssertNil(NowPlayingProtocol.decode(line(#"{"title":"T","duration":1e999}"#)))
+    }
+
+    func testAnAbsurdRateCannotRunThePositionAway() throws {
+        let track = try XCTUnwrap(decodeTrack(#"{"title":"T","playing":true,"rate":1e300,"elapsed":5}"#))
+        XCTAssertEqual(track.playbackRate, NowPlayingProtocol.maxRate)
+        let later = track.position(at: track.elapsedSampledAt.addingTimeInterval(1e9))
+        XCTAssertLessThanOrEqual(later, NowPlayingProtocol.maxSeconds)
+        XCTAssertEqual(IslandTime.format(later), "99:59:59")
+    }
+
     func testDecodesTheArtwork() throws {
         let bytes = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00])
         let track = try XCTUnwrap(decodeTrack(#"{"title":"T","artwork":"\#(bytes.base64EncodedString())"}"#))

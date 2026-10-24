@@ -19,6 +19,12 @@ enum NowPlayingUpdate: Equatable {
 ///      "pid":int, "bundleID":str, "contentID":str, omitted when unknown
 ///      "artwork":base64}                           only when the bytes changed
 enum NowPlayingProtocol {
+    /// Longest length or position taken at face value (about 115 days). An app can
+    /// publish any number; beyond this it is nonsense and counts as unknown.
+    static let maxSeconds: TimeInterval = 1e7
+    /// Fastest playback rate believed. Anything above would only overflow the maths.
+    static let maxRate: Double = 100
+
     private struct Wire: Decodable {
         var empty: Bool?
         var title: String?
@@ -48,7 +54,7 @@ enum NowPlayingProtocol {
         let playing = wire.playing ?? false
         // A playing track whose rate says 0 would freeze the progress bar; the
         // apps that report it are wrong, so play it at normal speed.
-        let reported = wire.rate ?? 0
+        let reported = wire.rate.flatMap { $0.isFinite ? min($0, maxRate) : nil } ?? 0
         let rate = playing && reported <= 0 ? 1 : reported
         let artwork = wire.artwork.flatMap { Data(base64Encoded: $0) }.flatMap { $0.isEmpty ? nil : $0 }
 
@@ -57,8 +63,8 @@ enum NowPlayingProtocol {
             title: title,
             artist: artist,
             album: wire.album ?? "",
-            duration: wire.duration.flatMap { $0 > 0 ? $0 : nil },
-            elapsed: max(0, wire.elapsed ?? 0),
+            duration: wire.duration.flatMap { $0.isFinite && $0 > 0 && $0 <= maxSeconds ? $0 : nil },
+            elapsed: min(max(0, wire.elapsed ?? 0), maxSeconds),
             elapsedSampledAt: wire.elapsedAt.map { Date(timeIntervalSince1970: $0) } ?? receivedAt,
             playbackRate: rate,
             isPlaying: playing,

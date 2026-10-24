@@ -3,10 +3,14 @@ import Foundation
 /// The player's time maths: labels, the bar's fill and where a click on it lands.
 /// Pure, so it is tested without a view.
 enum IslandTime {
+    /// The longest time the player shows (99:59:59). `Int(_:)` traps on a Double it
+    /// cannot hold, and an app may publish any number, so it is capped first.
+    static let maxLabelSeconds: TimeInterval = 359_999
+
     /// `m:ss` under an hour, `h:mm:ss` from there. Anything not a real, positive
-    /// number of seconds reads as `0:00`.
+    /// number of seconds reads as `0:00`; an absurdly long one reads as the cap.
     static func format(_ seconds: TimeInterval) -> String {
-        let total = seconds.isFinite ? Int(max(0, seconds).rounded(.down)) : 0
+        let total = seconds.isFinite ? Int(min(max(0, seconds), maxLabelSeconds).rounded(.down)) : 0
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
         return h > 0
             ? String(format: "%d:%02d:%02d", h, m, s)
