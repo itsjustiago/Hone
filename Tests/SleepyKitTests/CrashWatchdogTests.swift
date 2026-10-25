@@ -218,11 +218,8 @@ final class CrashWatchdogTests: XCTestCase {
         let pid = try XCTUnwrap(CrashWatchdog.spawn(script: script, hostPID: host.processIdentifier))
         XCTAssertGreaterThan(pid, 1)
 
-        let deadline = Date().addingTimeInterval(10)
-        while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path), "o watchdog não correu o comando")
+        let ran = waitAwake(10, poll: 0.1) { FileManager.default.fileExists(atPath: marker.path) }
+        XCTAssertTrue(ran, "o watchdog não correu o comando")
     }
 
     /// Com o host vivo o watchdog fica à espera e é reconhecido pelos argumentos;
@@ -269,12 +266,7 @@ final class CrashWatchdogTests: XCTestCase {
 
         CrashWatchdog.terminate(pid: pid)
         // Só ao `sh` o `sleep 2` aguentava-se mais de 1 s: aqui o grupo cai todo.
-        let deadline = Date().addingTimeInterval(1)
-        var gone = false
-        while Date() < deadline {
-            if kill(-pid, 0) == -1, errno == ESRCH { gone = true; break }
-            Thread.sleep(forTimeInterval: 0.05)
-        }
+        let gone = waitAwake(1, poll: 0.05) { kill(-pid, 0) == -1 && errno == ESRCH }
         XCTAssertTrue(gone, "sobrou alguém do grupo do watchdog")
     }
 
@@ -290,5 +282,21 @@ final class CrashWatchdogTests: XCTestCase {
         CrashWatchdog.terminate(pid: 1)
         Thread.sleep(forTimeInterval: 0.2)
         XCTAssertTrue(other.isRunning, "um processo alheio nunca é morto")
+    }
+
+    // MARK: - Esperar
+
+    /// Espera que `condition` se cumpra durante até `seconds` de tempo **acordado**.
+    /// O prazo conta pelo uptime, o relógio do `sleep` do watchdog: o Mac adormece
+    /// com os testes a correr sozinhos, e pelo relógio de parede (`Date`) um sono a
+    /// meio gastava o prazo enquanto o `sleep 2` do ciclo estava parado — o teste
+    /// falhava ao acordar sem haver bug. Volta a olhar uma vez depois do prazo.
+    private func waitAwake(_ seconds: TimeInterval, poll: TimeInterval, until condition: () -> Bool) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + seconds
+        while !condition() {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return condition() }
+            Thread.sleep(forTimeInterval: poll)
+        }
+        return true
     }
 }
