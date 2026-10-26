@@ -7,22 +7,35 @@ struct IslandCover: View {
     let size: CGFloat
     let corner: CGFloat
 
+    /// Which picture is up: a new one crossfades over the old one.
+    private var key: ObjectIdentifier? { artwork.map { ObjectIdentifier($0.image) } }
+
     var body: some View {
         ZStack {
-            if let artwork {
-                Image(nsImage: artwork.image)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fill)
-            } else {
+            picture
+                .id(key)
+                .transition(.opacity)
+        }
+        .animation(IslandMotion.trackChange, value: key)
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var picture: some View {
+        if let artwork {
+            Image(nsImage: artwork.image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fill)
+        } else {
+            ZStack {
                 IslandPalette.placeholder
                 Image(systemName: "music.note")
                     .font(.system(size: size * 0.42, weight: .semibold))
                     .foregroundStyle(IslandPalette.tertiaryText)
             }
         }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
     }
 }
 

@@ -11,7 +11,7 @@ struct IslandActions {
 
 /// The island in one presentation, from plain values so the preview renderer can
 /// draw it offscreen. It draws itself at the top centre of whatever space it is
-/// given: the panel may be larger for a moment while it grows or shrinks.
+/// given: the panel gives it a fixed canvas centred on the notch.
 struct IslandView: View {
     let presentation: IslandPresentation
     let notch: CGSize
@@ -21,6 +21,7 @@ struct IslandView: View {
     var actions = IslandActions()
 
     @Namespace private var namespace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var size: CGSize { IslandMetrics.size(for: presentation, notch: notch) }
     private var ear: CGFloat { IslandMetrics.earRadius(for: presentation) }
@@ -43,29 +44,37 @@ struct IslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    /// The wings stay put from compact to expanded (only the cover leaves them for
+    /// the player); what sits under the notch comes in and out on its own.
     @ViewBuilder
     private var content: some View {
-        if let track {
-            switch presentation {
-            case .hidden:
-                EmptyView()
-            case .compact:
-                wings(showsCover: true)
-                    .transition(.opacity)
-            case .peek:
-                VStack(spacing: 0) {
-                    wings(showsCover: true)
+        if let track, presentation != .hidden {
+            VStack(spacing: 0) {
+                wings(showsCover: presentation != .expanded)
+                switch presentation {
+                case .peek:
                     peekLine(track)
-                        .transition(.opacity)
-                }
-            case .expanded:
-                VStack(spacing: 0) {
-                    wings(showsCover: false)
+                        .transition(contentTransition)
+                case .expanded:
                     player(track)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                        .transition(contentTransition)
+                case .hidden, .compact:
+                    EmptyView()
                 }
             }
+            .transition(contentTransition)
         }
+    }
+
+    /// Comes in a beat after the shape, out of a blur and from a touch smaller,
+    /// anchored at the top; leaves at once with a quick fade.
+    private var contentTransition: AnyTransition {
+        let insertion: AnyTransition = reduceMotion
+            ? AnyTransition.opacity.animation(IslandMotion.reduced)
+            : AnyTransition.modifier(active: IslandContentEntrance(progress: 0),
+                                     identity: IslandContentEntrance(progress: 1))
+                .animation(IslandMotion.contentIn)
+        return .asymmetric(insertion: insertion, removal: AnyTransition.opacity.animation(IslandMotion.contentOut))
     }
 
     // MARK: Beside the notch
@@ -86,6 +95,7 @@ struct IslandView: View {
             .frame(width: wing, alignment: .leading)
             Spacer(minLength: 0)
             IslandEqualizer(isPlaying: isPlaying, tint: tint)
+                .animation(IslandMotion.trackChange, value: tint)
                 .padding(.trailing, inset)
                 .frame(width: wing, alignment: .trailing)
         }
@@ -95,12 +105,17 @@ struct IslandView: View {
 
     /// «Título — Artista» on one line, under the notch.
     private func peekLine(_ track: NowPlayingTrack) -> some View {
-        Text(Self.peekText(track))
-            .font(.system(size: 12))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, ear + 16)
-            .frame(width: size.width, height: IslandMetrics.peekExtraHeight - 4, alignment: .center)
+        ZStack {
+            Text(Self.peekText(track))
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .id(track.id)
+                .transition(.opacity)
+        }
+        .animation(IslandMotion.trackChange, value: track.id)
+        .padding(.horizontal, ear + 16)
+        .frame(width: size.width, height: IslandMetrics.peekExtraHeight - 4, alignment: .center)
     }
 
     static func peekText(_ track: NowPlayingTrack) -> AttributedString {
@@ -127,13 +142,20 @@ struct IslandView: View {
                 .buttonStyle(IslandPressStyle())
                 .accessibilityLabel(appName.map { "Abrir \($0)" } ?? "Abrir o leitor")
 
-                titles(track)
+                // Both titles overlap while a new track crossfades in: no jump in width.
+                ZStack(alignment: .leading) {
+                    titles(track)
+                        .id(track.id)
+                        .transition(.opacity)
+                }
+                .animation(IslandMotion.trackChange, value: track.id)
                 Spacer(minLength: 4)
                 controls(track)
             }
             if let duration = track.duration {
                 IslandProgressRow(track: track, duration: duration, tint: tint,
                                   ticking: track.isPlaying, seek: { actions.send(.seek($0)) })
+                    .animation(IslandMotion.trackChange, value: tint)
             }
             Spacer(minLength: 0)
         }
@@ -176,5 +198,18 @@ struct IslandView: View {
                 actions.send(.next)
             }
         }
+    }
+}
+
+/// The content's way in: blurred, transparent and a touch smaller at 0, as it is at
+/// 1. The blur is 0 at rest, so it only costs while the content arrives.
+private struct IslandContentEntrance: ViewModifier {
+    let progress: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(1 - (1 - progress) * (1 - IslandMotion.contentScale), anchor: .top)
+            .blur(radius: (1 - progress) * IslandMotion.contentBlur)
+            .opacity(progress)
     }
 }
