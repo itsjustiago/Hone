@@ -39,9 +39,10 @@ struct IslandCover: View {
     }
 }
 
-/// Four bars that dance while the music plays. Pure animation, no audio is read:
-/// each bar breathes at its own pace so they never move in step. Paused (or with
-/// Reduce Motion on) they stand still, low when paused.
+/// Four bars that dance while the music plays, centred in a box the size of the
+/// small cover so the right wing mirrors the cover in the left one. Pure animation,
+/// no audio is read: each bar breathes at its own pace so they never move in step.
+/// Paused, they fade out; with Reduce Motion on they stand still while playing.
 ///
 /// The motion is a function of the clock (`IslandEqualizerMotion`) drawn by a
 /// `TimelineView` a dozen times a second, and only while playing: no animation
@@ -53,8 +54,6 @@ struct IslandEqualizer: View {
 
     static let barWidth: CGFloat = 3
     static let maxHeight: CGFloat = 14
-    /// Height of a bar of a paused track.
-    private static let pausedHeight: CGFloat = 3
     /// Frames per second while playing.
     private static let tick: TimeInterval = 1.0 / 12
 
@@ -71,12 +70,13 @@ struct IslandEqualizer: View {
                 }
             } else {
                 bars(IslandEqualizerMotion.bars.indices.map {
-                    isPlaying ? CGFloat(IslandEqualizerMotion.restingFraction(bar: $0)) * Self.maxHeight
-                              : Self.pausedHeight
+                    CGFloat(IslandEqualizerMotion.restingFraction(bar: $0)) * Self.maxHeight
                 })
             }
         }
-        .frame(height: Self.maxHeight)
+        .frame(width: IslandMetrics.smallCover, height: IslandMetrics.smallCover)
+        .opacity(isPlaying ? 1 : 0)
+        .animation(IslandMotion.trackChange, value: isPlaying)
         .accessibilityHidden(true)
     }
 
@@ -105,7 +105,7 @@ struct IslandControlButton: View {
             Image(systemName: systemName)
                 .font(.system(size: glyphSize, weight: .semibold))
                 .foregroundStyle(IslandPalette.primaryText)
-                .frame(width: 34, height: 34)
+                .frame(width: IslandMetrics.controlHitSize, height: IslandMetrics.controlHitSize)
                 .background(Circle().fill(hovering ? IslandPalette.hover : .clear))
                 .contentShape(Circle())
         }
@@ -147,19 +147,22 @@ struct IslandProgressRow: View {
     private func row(at date: Date) -> some View {
         let position = scrub.map { $0 * duration } ?? track.position(at: date)
         let fraction = scrub ?? IslandTime.fraction(position: position, duration: duration)
+        // The labels hug the row's ends: the elapsed time's text starts at its left
+        // edge and the length's ends at its right edge, in line with what is above.
         return HStack(spacing: 8) {
-            timeLabel(position, alignment: .trailing)
+            timeLabel(position, alignment: .leading)
             bar(fraction: fraction)
-            timeLabel(duration, alignment: .leading)
+            timeLabel(duration, alignment: .trailing)
         }
+        .frame(height: IslandMetrics.progressRowHeight)
     }
 
     private func timeLabel(_ seconds: TimeInterval, alignment: Alignment) -> some View {
         Text(IslandTime.format(seconds))
-            .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+            .font(.system(size: IslandMetrics.timeLabelFontSize, weight: .medium).monospacedDigit())
             .foregroundStyle(IslandPalette.tertiaryText)
             .lineLimit(1)
-            .frame(minWidth: 34, alignment: alignment)
+            .frame(minWidth: IslandMetrics.timeLabelMinWidth, alignment: alignment)
     }
 
     private func bar(fraction: Double) -> some View {
@@ -187,7 +190,7 @@ struct IslandProgressRow: View {
             )
             .animation(VibeMotion.quick, value: scrub == nil)
         }
-        .frame(height: 14)
+        .frame(height: IslandMetrics.progressRowHeight)
         .accessibilityElement()
         .accessibilityLabel("Progresso")
         .accessibilityValue("\(IslandTime.format(fraction * duration)) de \(IslandTime.format(duration))")

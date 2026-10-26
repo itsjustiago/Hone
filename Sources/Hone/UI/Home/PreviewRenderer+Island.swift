@@ -28,6 +28,7 @@ extension PreviewRenderer {
             ("ilha-compacta-pausa-sem-capa", stage(.compact, paused, nil, app: "Música")),
             ("ilha-peek", stage(.peek, long, night, app: "Spotify")),
             ("ilha-aberta", stage(.expanded, song, sunset, app: "Música")),
+            ("ilha-aberta-pausa", stage(.expanded, paused, sunset, app: "Música")),
             ("ilha-aberta-titulo-longo", stage(.expanded, long, night, app: "Spotify")),
             ("ilha-aberta-radio-sem-capa", stage(.expanded, radio, nil, app: "Safari")),
         ]
