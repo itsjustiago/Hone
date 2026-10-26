@@ -49,6 +49,10 @@ final class IslandPanel {
     }
     private var lastRequest: Request?
 
+    /// `IslandFrameProbe` only: the window's opacity, set before it first shows, and
+    /// with it a click-through panel with no haptics. `nil` in the app.
+    var probeAlpha: CGFloat?
+
     /// Above the menu bar (24) and the status items (25), below menus (101):
     /// a menu opened from the bar still draws over the island. `IslandFullScreen`
     /// reads it too: a window at or above this level is drawn over the island anyway.
@@ -162,7 +166,7 @@ final class IslandPanel {
         DispatchQueue.main.asyncAfter(deadline: .now() + IslandMotion.settleFallback) { [weak self] in
             self?.settle(at: target, keepsWindow: keepsWindow, generation: mine)
         }
-        if presentation == .expanded && from != .expanded {
+        if presentation == .expanded && from != .expanded && probeAlpha == nil {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
     }
@@ -215,6 +219,10 @@ final class IslandPanel {
         window.isMovable = false
         window.isReleasedWhenClosed = false
         window.animationBehavior = .none
+        if let probeAlpha {
+            window.alphaValue = probeAlpha
+            window.ignoresMouseEvents = true
+        }
 
         let hosting = NSHostingView(rootView: IslandRootView(model: model, actions: actions))
         // The panel sizes the window; the view must not push its own size on it, nor
