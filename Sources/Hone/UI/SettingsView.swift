@@ -3,7 +3,7 @@ import HoneDesign
 
 /// Sizes the Settings window and its pages agree on.
 enum SettingsLayout {
-    static let size = CGSize(width: 680, height: 540)
+    static let size = CGSize(width: 680, height: 680)
     static let sidebarWidth: CGFloat = 216
     /// The window has no visible title bar; content starts below its buttons.
     static let titlebar: CGFloat = 40
@@ -55,6 +55,7 @@ struct SettingsShell<Detail: View>: View {
 
     /// The sidebar holds the keyboard focus so ↑ and ↓ work from the first click.
     @FocusState private var sidebarFocused: Bool
+    @Environment(\.settingsPageScrolls) private var scrolls
 
     var body: some View {
         HStack(spacing: 0) {
@@ -76,13 +77,22 @@ struct SettingsShell<Detail: View>: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            VStack(alignment: .leading, spacing: 2) {
-                group("Ajustes", tools.filter { !$0.isApp })
-                group("Apps", tools.filter(\.isApp), gap: 8)
-                row(.general).padding(.top, 10)
+            // The list scrolls under the header: taller than the window, a plain
+            // stack got centred, sliding the header under the window's buttons
+            // and cutting off the bottom rows.
+            if scrolls {
+                ScrollViewReader { proxy in
+                    ScrollView { rows }
+                        .scrollIndicators(.never)
+                        .scrollBounceBehavior(.basedOnSize)
+                        .onChange(of: selection) { _, id in
+                            withAnimation(VibeMotion.standard) { proxy.scrollTo(id) }
+                        }
+                }
+            } else {
+                rows
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            Spacer(minLength: 0)
         }
         .focusable()
         .focusEffectDisabled()
@@ -109,6 +119,16 @@ struct SettingsShell<Detail: View>: View {
         .padding(.bottom, 14)
     }
 
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            group("Ajustes", tools.filter { !$0.isApp })
+            group("Apps", tools.filter(\.isApp), gap: 8)
+            row(.general).padding(.top, 10)
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 12)
+    }
+
     /// A titled run of rows; left out when empty.
     @ViewBuilder
     private func group(_ title: String, _ entries: [SettingsEntry], gap: CGFloat = 0) -> some View {
@@ -123,6 +143,7 @@ struct SettingsShell<Detail: View>: View {
             selection = entry.id
             sidebarFocused = true
         }
+        .id(entry.id)
     }
 
     /// ↑ and ↓ walk the sidebar, as in a list.

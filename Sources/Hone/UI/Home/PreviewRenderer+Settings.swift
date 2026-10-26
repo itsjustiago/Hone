@@ -28,6 +28,11 @@ extension PreviewRenderer {
             ("settings-scroll", window("scroll", off: off) {
                 tool("scroll", settings: AnyView(ScrollSettingsView(module: ScrollModule())))
             }),
+            // At the window's real height: the whole sidebar has to fit, header
+            // clear of the window's buttons and "Geral" whole at the bottom.
+            ("settings-window", window("scroll", off: off, height: SettingsLayout.size.height) {
+                tool("scroll", settings: AnyView(ScrollSettingsView(module: ScrollModule())))
+            }),
             ("settings-alttab", window("altTab", off: off) {
                 tool("altTab", settings: AnyView(AltTabSettingsView(module: AltTabModule())))
             }),
