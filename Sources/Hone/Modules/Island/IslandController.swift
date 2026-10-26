@@ -27,6 +27,14 @@ final class IslandController {
     private var coverTimer: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
+    /// What the island may show of the raw now-playing: music apps only.
+    private var filter = IslandMusicFilter()
+    /// The last raw now-playing, with its app resolved: what the filter runs on again
+    /// when an app quits.
+    private var lastRaw: NowPlayingTrack?
+    /// Whether the filter holds music, observable for the Settings line.
+    private let presence = MusicPresence()
+
     private var hasTrack = false
     /// An app in full screen covers the notch: the panel stays away until it ends.
     private var covered = false
@@ -42,7 +50,7 @@ final class IslandController {
 
     /// The Settings line about the music source.
     var sourceStatus: IslandSourceStatus {
-        IslandSourceStatus(status: client.status, hasTrack: client.track != nil)
+        IslandSourceStatus(status: client.status, hasTrack: presence.hasMusic)
     }
 
     func start() {
@@ -55,12 +63,13 @@ final class IslandController {
         panel = IslandPanel(actions: IslandActions(
             hover: { [weak self] inside in self?.hoverChanged(inside) },
             click: { [weak self] in self?.clicked() },
-            send: { [weak self] command in self?.client.send(command) },
+            send: { [weak self] command in self?.send(command) },
             openApp: { [weak self] in self?.openPlayer() }
         ))
         geometry = NotchGeometry.current()
         observeScreens()
         observeFullScreen()
+        observeAppQuits()
         observeSettings(mine)
         client.start()
         observeTrack(mine)
@@ -81,6 +90,9 @@ final class IslandController {
         panel?.close()
         panel = nil
         geometry = nil
+        filter = IslandMusicFilter()
+        lastRaw = nil
+        presence.hasMusic = false
         hasTrack = false
         covered = false
         hovering = false
@@ -92,10 +104,27 @@ final class IslandController {
 
     private func observeTrack(_ mine: Int) {
         guard isRunning, mine == generation else { return }
-        let track = withObservationTracking { client.track } onChange: { [weak self] in
+        let raw = withObservationTracking { client.track } onChange: { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.observeTrack(mine) } }
         }
-        trackChanged(track)
+        var track = raw
+        // The adapter may know the pid but not the app.
+        if let pid = track?.pid, track?.bundleID == nil {
+            track?.bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        }
+        lastRaw = track
+        filterChanged()
+    }
+
+    /// Runs the filter on the last raw now-playing. Only a change of what it shows
+    /// reaches the state: a video that takes over now-playing never does.
+    private func filterChanged() {
+        let changed = filter.update(raw: lastRaw) { bundleID in
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).contains { !$0.isTerminated }
+        }
+        guard changed else { return }
+        presence.hasMusic = filter.shown != nil
+        trackChanged(filter.shown)
     }
 
     private func observeSettings(_ mine: Int) {
@@ -141,6 +170,20 @@ final class IslandController {
             }
             observers.append((workspace, token))
         }
+    }
+
+    /// A held track goes when its music app quits: the raw now-playing has no word
+    /// about it while something else holds it.
+    private func observeAppQuits() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        let token = workspace.addObserver(forName: NSWorkspace.didTerminateApplicationNotification,
+                                          object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isRunning, self.filter.shown != nil else { return }
+                self.filterChanged()
+            }
+        }
+        observers.append((workspace, token))
     }
 
     private func screensChanged() {
@@ -330,8 +373,15 @@ final class IslandController {
         apply()
     }
 
+    /// MediaRemote sends commands to whoever holds now-playing: with a video on top,
+    /// they would pause the video, not the music.
+    private func send(_ command: NowPlayingCommand) {
+        guard filter.ownsNowPlaying else { return }
+        client.send(command)
+    }
+
     private func openPlayer() {
-        guard let track = client.track else { return }
+        guard let track = filter.shown else { return }
         IslandPlayerApp.activate(bundleID: track.bundleID, pid: track.pid)
     }
 
@@ -360,6 +410,13 @@ final class IslandController {
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
+}
+
+/// Whether the island holds music, as something the Settings line can observe.
+@MainActor
+@Observable
+private final class MusicPresence {
+    var hasMusic = false
 }
 
 /// The app behind the music: its name for the player, and bringing it forward.
