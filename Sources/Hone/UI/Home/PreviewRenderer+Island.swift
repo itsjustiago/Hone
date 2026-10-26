@@ -56,7 +56,7 @@ extension PreviewRenderer {
         )
     }
 
-    private static func fakeTrack(title: String, artist: String, duration: TimeInterval?,
+    static func fakeTrack(title: String, artist: String, duration: TimeInterval?,
                                   elapsed: TimeInterval) -> NowPlayingTrack {
         NowPlayingTrack(id: title, title: title, artist: artist, album: "", duration: duration,
                         elapsed: elapsed, elapsedSampledAt: Date(), playbackRate: 1, isPlaying: true,
@@ -64,7 +64,7 @@ extension PreviewRenderer {
     }
 
     /// A 300×300 PNG: a diagonal gradient with a pale disc, like a simple sleeve.
-    private static func fakeCover(_ from: NSColor, _ to: NSColor) -> Data? {
+    static func fakeCover(_ from: NSColor, _ to: NSColor) -> Data? {
         let side = 300
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8,

@@ -8,12 +8,17 @@ struct NotchShape: Shape {
     var earRadius: CGFloat
     var bottomRadius: CGFloat
 
+    /// `IslandFrameProbe` only: told of every outline SwiftUI asks for, as it is
+    /// that frame (the rect and both radii). `nil` in the app: one check a call.
+    nonisolated(unsafe) static var probe: ((CGRect, CGFloat, CGFloat) -> Void)?
+
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(earRadius, bottomRadius) }
         set { earRadius = newValue.first; bottomRadius = newValue.second }
     }
 
     func path(in rect: CGRect) -> Path {
+        Self.probe?(rect, earRadius, bottomRadius)
         // Radii never exceed what the rect can hold, so tiny sizes stay a valid shape.
         let ear = max(0, min(earRadius, rect.width / 4, rect.height / 2))
         let body = rect.width - 2 * ear

@@ -7,7 +7,10 @@ import SwiftUI
 /// almost none when it folds back. The content arrives a beat after the shape and
 /// leaves before it, so the shape grows into place and shrinks already empty.
 enum IslandMotion {
-    // MARK: The shape (frame, ears and bottom corners, all in one transaction)
+    // MARK: The shape (size, ears and bottom corners: one `IslandOutline`)
+    //
+    // The panel steps the outline on these springs itself, at the notch screen's
+    // refresh (see `IslandOutlineMotion`); the content still moves with SwiftUI.
 
     /// Opening the player: lands with a little bounce.
     static let open = Spring(duration: 0.45, bounce: 0.2)
@@ -17,10 +20,18 @@ enum IslandMotion {
     static let morph = Spring(duration: 0.4, bounce: 0.12)
     /// Reduce Motion: a short ease, no bounce, no blur.
     static let reduced = Animation.easeOut(duration: 0.18)
+    /// The shape under Reduce Motion: `reduced` as a spring with no bounce, so the
+    /// panel steps it like the others. Always from rest, so it never overshoots.
+    static let reducedShape = Spring(duration: 0.18, bounce: 0)
 
     /// Every spring the shape can move on: the canvas and the window make room
     /// for the worst overshoot among them.
     static let shapeSprings = [open, close, morph]
+
+    /// The shape is at rest once every value of its outline is this close to the
+    /// target (points) and this slow (points a second); it then jumps the rest.
+    static let restDistance: CGFloat = 0.1
+    static let restSpeed: CGFloat = 2
 
     // MARK: The content
 
@@ -47,6 +58,11 @@ enum IslandMotion {
 
     static func animation(from: IslandPresentation, to: IslandPresentation, reduceMotion: Bool) -> Animation {
         reduceMotion ? reduced : .spring(spring(from: from, to: to))
+    }
+
+    /// The spring the panel moves the outline on (`animation` is the content's).
+    static func shapeSpring(from: IslandPresentation, to: IslandPresentation, reduceMotion: Bool) -> Spring {
+        reduceMotion ? reducedShape : spring(from: from, to: to)
     }
 
     // MARK: Overshoot
