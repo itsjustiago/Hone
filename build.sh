@@ -47,9 +47,9 @@ DEST="/Applications/Hone.app"
 # Relançamento, não saída: as ferramentas embebidas (ex.: o Sleepy ligado)
 # mantêm o estado para o arranque seguinte. O Hone limpa a flag ao arrancar.
 defaults write com.tiagof.hone relaunchingForUpdate -bool true
-osascript -e 'quit app "Hone"' >/dev/null 2>&1 || true
-pkill -f "Hone.app/Contents/MacOS/Hone" 2>/dev/null || true
-sleep 1
+# Pede ao Hone que saia como pelo menu (pelo bundle id, nunca pelo nome: matar
+# processos por nome já fechou outras apps do Tiago) e espera que saia mesmo.
+swift quit-hone.swift || echo "⚠ O Hone não saiu a tempo; a instalação continua."
 if rm -rf "$DEST" 2>/dev/null && cp -R "$APP" "$DEST" 2>/dev/null; then
   sign "$DEST"
   # Remove o staging da pasta do projeto: duas .app com o mesmo bundle-id no
