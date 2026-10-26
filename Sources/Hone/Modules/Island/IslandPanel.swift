@@ -23,13 +23,21 @@ final class IslandWindow: NSPanel {
 
 /// The borderless panel over the notch. Its frame is the island's frame, so
 /// nothing beside the visible shape blocks a click. To change size it grows the
-/// frame first and then animates the shape; to shrink it animates the shape and
-/// then cuts the frame, unless a newer change came in meanwhile.
+/// frame first (with room for the spring's overshoot) and then animates the shape;
+/// once the spring is over it cuts the frame to the shape, unless a newer change
+/// came in meanwhile.
+///
+/// The SwiftUI view never changes size: it is the geometry's `canvas`, fixed on the
+/// screen around the notch, and each frame change moves it the other way inside the
+/// window. So the island always grows and shrinks from the notch's centre, however
+/// the window around it moves.
 @MainActor
 final class IslandPanel {
     let model = IslandViewModel()
     private let actions: IslandActions
     private var window: IslandWindow?
+    /// The SwiftUI view, `geometry.canvas` in size for good (see `place`).
+    private var hosting: NSView?
     private var geometry: NotchGeometry?
     /// Bumped on every change: a delayed resize from an older one is dropped.
     private var generation = 0
@@ -40,9 +48,6 @@ final class IslandPanel {
         let keepsWindow: Bool
     }
     private var lastRequest: Request?
-
-    /// Long enough for the spring to look settled before the frame is cut.
-    static let settle: TimeInterval = 0.5
 
     /// Above the menu bar (24) and the status items (25), below menus (101):
     /// a menu opened from the bar still draws over the island. `IslandFullScreen`
@@ -60,7 +65,7 @@ final class IslandPanel {
         // A track update that changes nothing the panel draws (the position moved, the
         // cover is the same) only needs the model, which the controller already filled.
         // Bumping the generation here would cancel the pending `settle` every time, and
-        // with updates closer than `settle` apart the frame would never shrink back.
+        // with updates closer than a spring lasts the frame would never shrink back.
         if let window, window.isVisible, self.geometry == geometry, lastRequest == request { return }
         lastRequest = request
         generation += 1
@@ -73,17 +78,20 @@ final class IslandPanel {
             let window = self.window ?? makeWindow()
             self.window = window
             self.geometry = geometry
-            // Come out of the notch: start at the hover zone's size, then grow.
+            // Come out of the notch: the hover zone is drawn first, at rest, so the
+            // spring has something to grow from instead of showing up already open.
             withoutAnimation {
                 model.notch = geometry.notchRect.size
                 model.presentation = .hidden
             }
-            window.setFrame(geometry.islandFrame(for: .hidden).union(target), display: false)
+            place(window, frame: geometry.windowFrame(current: geometry.islandFrame(for: .hidden), target: target),
+                  on: geometry)
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
             window.orderFrontRegardless()
             DispatchQueue.main.async { [weak self] in
                 guard let self, mine == self.generation else { return }
-                self.animate(to: presentation)
-                self.settle(at: target, keepsWindow: keepsWindow, generation: mine)
+                self.animate(to: presentation, settlingAt: target, keepsWindow: keepsWindow, generation: mine)
             }
             return
         }
@@ -98,15 +106,13 @@ final class IslandPanel {
             if !keepsWindow && presentation == .hidden {
                 window.orderOut(nil)
             } else {
-                window.setFrame(target, display: true)
+                place(window, frame: target, on: geometry)
             }
             return
         }
 
-        let union = window.frame.union(target)
-        if union != window.frame { window.setFrame(union, display: true) }
-        animate(to: presentation)
-        settle(at: target, keepsWindow: keepsWindow, generation: mine)
+        place(window, frame: geometry.windowFrame(current: window.frame, target: target), on: geometry)
+        animate(to: presentation, settlingAt: target, keepsWindow: keepsWindow, generation: mine)
     }
 
     /// Off the screen at once (no notch any more, or the tool stopped).
@@ -122,6 +128,7 @@ final class IslandPanel {
         window?.contentView = nil
         window?.close()
         window = nil
+        hosting = nil
         geometry = nil
     }
 
@@ -136,27 +143,51 @@ final class IslandPanel {
 
     // MARK: Private
 
-    private func animate(to presentation: IslandPresentation) {
-        let opens = presentation == .expanded && model.presentation != .expanded
-        withAnimation(Self.animation) { model.presentation = presentation }
-        if opens { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
-    }
-
-    private func settle(at target: CGRect, keepsWindow: Bool, generation mine: Int) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settle) { [weak self] in
-            guard let self, mine == self.generation, let window = self.window else { return }
-            if !keepsWindow && self.model.presentation == .hidden {
-                window.orderOut(nil)
-            } else if window.frame != target {
-                window.setFrame(target, display: true)
-            }
+    /// Animates the shape to `presentation` and cuts the window to `target` once
+    /// the spring is over, not after a guess: cut early, the frame would clip the
+    /// shape while it still moves.
+    private func animate(to presentation: IslandPresentation, settlingAt target: CGRect,
+                         keepsWindow: Bool, generation mine: Int) {
+        let from = model.presentation
+        let animation = IslandMotion.animation(
+            from: from, to: presentation,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        withAnimation(animation, completionCriteria: .removed) {
+            model.presentation = presentation
+        } completion: { [weak self] in
+            self?.settle(at: target, keepsWindow: keepsWindow, generation: mine)
+        }
+        // A completion can stay away (the window left the screen mid-spring): the frame
+        // is cut anyway, or the larger window would keep taking clicks.
+        DispatchQueue.main.asyncAfter(deadline: .now() + IslandMotion.settleFallback) { [weak self] in
+            self?.settle(at: target, keepsWindow: keepsWindow, generation: mine)
+        }
+        if presentation == .expanded && from != .expanded {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
     }
 
-    private static var animation: Animation {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            ? .easeOut(duration: 0.18)
-            : .spring(response: 0.38, dampingFraction: 0.8)
+    /// Only for the latest change: `hide`, `close` and every new `show` bump the
+    /// generation, so an older spring ending never touches the window.
+    private func settle(at target: CGRect, keepsWindow: Bool, generation mine: Int) {
+        guard mine == generation, let window, window.isVisible, let geometry else { return }
+        if !keepsWindow && model.presentation == .hidden {
+            window.orderOut(nil)
+        } else {
+            place(window, frame: target, on: geometry)
+        }
+    }
+
+    /// Sets the window's frame and moves the canvas-sized view the other way in the
+    /// same step, so the island stays exactly where it is on the screen.
+    private func place(_ window: NSWindow, frame: CGRect, on geometry: NotchGeometry) {
+        let canvas = geometry.canvas
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if window.frame != frame { window.setFrame(frame, display: false) }
+        hosting?.frame = CGRect(origin: NotchGeometry.hostOrigin(canvas: canvas, window: frame), size: canvas.size)
+        window.displayIfNeeded()
+        CATransaction.commit()
     }
 
     private func withoutAnimation(_ body: () -> Void) {
@@ -186,9 +217,14 @@ final class IslandPanel {
         window.animationBehavior = .none
 
         let hosting = NSHostingView(rootView: IslandRootView(model: model, actions: actions))
-        // The panel sizes the window; the view must not push its own size on it.
+        // The panel sizes the window; the view must not push its own size on it, nor
+        // follow the window's: `place` gives it the canvas and moves it.
         hosting.sizingOptions = []
-        window.contentView = hosting
+        hosting.autoresizingMask = []
+        let container = NSView()
+        container.addSubview(hosting)
+        window.contentView = container
+        self.hosting = hosting
         return window
     }
 }

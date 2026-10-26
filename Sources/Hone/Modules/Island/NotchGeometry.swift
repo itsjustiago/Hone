@@ -86,6 +86,42 @@ enum IslandMetrics {
     }
 }
 
+// MARK: - The panel's canvas and window
+
+/// The panel draws the island in a SwiftUI view of one fixed size, the canvas, and
+/// only moves that view inside a window that is as small as the shape: SwiftUI never
+/// sees its container change, so the island, drawn at the top centre of the canvas,
+/// grows and shrinks from the notch whatever the window does around it.
+extension NotchGeometry {
+    /// Room for every presentation plus the springs' overshoot, centred on the notch
+    /// and glued to the top of the screen. Not held inside the screen: on a real notch
+    /// it never reaches an edge, and holding it would take the island off the notch.
+    var canvas: CGRect {
+        let slack = IslandMotion.overshootSlack(notch: notchRect.size)
+        let sizes = IslandPresentation.allCases.map { IslandMetrics.size(for: $0, notch: notchRect.size) }
+        let width = (sizes.map(\.width).max() ?? 0) + 2 * slack.width
+        let height = (sizes.map(\.height).max() ?? 0) + slack.height
+        return CGRect(x: notchRect.midX - width / 2, y: screenFrame.maxY - height, width: width, height: height)
+    }
+
+    /// The window while the island moves from `current` (the window now) to
+    /// `target`: both, plus the overshoot past the target, cut to the screen. Calling
+    /// it again with its own answer changes nothing, so quick changes never pile up.
+    func windowFrame(current: CGRect, target: CGRect) -> CGRect {
+        let slack = IslandMotion.overshootSlack(notch: notchRect.size)
+        let room = CGRect(x: target.minX - slack.width, y: target.minY - slack.height,
+                          width: target.width + 2 * slack.width, height: target.height + slack.height)
+        let frame = current.union(room).intersection(screenFrame)
+        return frame.isNull || frame.isEmpty ? target : frame
+    }
+
+    /// Where the canvas-sized view goes inside a window at `window` (both in screen
+    /// coordinates), so the canvas stays put on the screen.
+    static func hostOrigin(canvas: CGRect, window: CGRect) -> CGPoint {
+        CGPoint(x: canvas.minX - window.minX, y: canvas.minY - window.minY)
+    }
+}
+
 // MARK: - The real screen (AppKit, not pure)
 
 extension NotchGeometry {

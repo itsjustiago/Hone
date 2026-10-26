@@ -1,7 +1,7 @@
 import Foundation
 
 /// What the island shows, from nothing to the full player.
-enum IslandPresentation: Equatable {
+enum IslandPresentation: Equatable, CaseIterable {
     /// Only the hover zone inside the notch: nothing to see.
     case hidden
     /// Cover and equaliser in the wings beside the notch.
