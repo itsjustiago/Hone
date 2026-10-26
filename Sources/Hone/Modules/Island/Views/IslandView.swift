@@ -19,29 +19,36 @@ struct IslandView: View {
     let artwork: IslandArtwork?
     let appName: String?
     var actions = IslandActions()
+    /// The shape as it is this frame: the panel moves it on its own spring. `nil`
+    /// (the previews) draws `presentation`'s at rest.
+    var outline: IslandOutline?
 
     @Namespace private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// The content's layout: always `presentation`'s, so SwiftUI moves it as it
+    /// always has, while the shape around it follows `outline`.
     private var size: CGSize { IslandMetrics.size(for: presentation, notch: notch) }
     private var ear: CGFloat { IslandMetrics.earRadius(for: presentation) }
+    private var drawn: IslandOutline { outline ?? IslandOutline(presentation, notch: notch) }
     private var shape: NotchShape {
-        NotchShape(earRadius: ear, bottomRadius: IslandMetrics.bottomRadius(for: presentation))
+        NotchShape(earRadius: drawn.earRadius, bottomRadius: drawn.bottomRadius)
     }
     private var tint: Color { artwork?.tint ?? IslandPalette.fallbackTint }
     private var isPlaying: Bool { track?.isPlaying ?? false }
 
+    /// The fill is sized by the outline alone; the content, laid out at its own size,
+    /// sits over it. In a stack with the content, the fill would take the larger of
+    /// the two while the island grows, and be drawn again on SwiftUI's clock.
     var body: some View {
-        ZStack(alignment: .top) {
-            shape.fill(IslandPalette.island)
-            content
-        }
-        .frame(width: size.width, height: size.height, alignment: .top)
-        .clipShape(shape)
-        .contentShape(shape)
-        .onHover { actions.hover($0) }
-        .onTapGesture { actions.click() }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        shape.fill(IslandPalette.island)
+            .frame(width: drawn.width, height: drawn.height)
+            .overlay(alignment: .top) { content }
+            .clipShape(shape)
+            .contentShape(shape)
+            .onHover { actions.hover($0) }
+            .onTapGesture { actions.click() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// The wings stay put from compact to expanded (only the cover leaves them for

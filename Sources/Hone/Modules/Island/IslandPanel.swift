@@ -1,13 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// What the island's view draws. The controller fills it; the panel animates
-/// `presentation`.
+/// What the island's view draws. The controller fills it; the panel sets
+/// `presentation` (the content follows it with SwiftUI) and moves `outline`.
 @MainActor
 @Observable
 final class IslandViewModel {
     var presentation: IslandPresentation = .hidden
     var notch = CGSize(width: 185, height: 32)
+    /// The shape as drawn this frame, on its way to `presentation`'s.
+    var outline = IslandOutline(.hidden, notch: CGSize(width: 185, height: 32))
     var track: NowPlayingTrack?
     var artwork: IslandArtwork?
     var appName: String?
@@ -23,9 +25,14 @@ final class IslandWindow: NSPanel {
 
 /// The borderless panel over the notch. Its frame is the island's frame, so
 /// nothing beside the visible shape blocks a click. To change size it grows the
-/// frame first (with room for the spring's overshoot) and then animates the shape;
-/// once the spring is over it cuts the frame to the shape, unless a newer change
+/// frame first (with room for the spring's overshoot) and then moves the shape;
+/// once the spring is at rest it cuts the frame to the shape, unless a newer change
 /// came in meanwhile.
+///
+/// The shape's spring is stepped here, on the display link of the window's screen,
+/// one value per refresh taken at the moment that refresh shows. Left to SwiftUI it
+/// was drawn whenever the main run loop woke, on the main screen's clock as well as
+/// this one's, so the frames that reached the notch were unevenly spaced in time.
 ///
 /// The SwiftUI view never changes size: it is the geometry's `canvas`, fixed on the
 /// screen around the notch, and each frame change moves it the other way inside the
@@ -48,6 +55,18 @@ final class IslandPanel {
         let keepsWindow: Bool
     }
     private var lastRequest: Request?
+
+    /// The shape on its way to the latest presentation, and how to settle once it
+    /// is at rest. `nil` while the shape is still.
+    private struct Flight {
+        var motion: IslandOutlineMotion
+        let target: CGRect
+        let keepsWindow: Bool
+        let generation: Int
+    }
+    private var flight: Flight?
+    /// Steps `flight` on every refresh of the window's screen; there only while it flies.
+    private var displayLink: CADisplayLink?
 
     /// `IslandFrameProbe` only: the window's opacity, set before it first shows, and
     /// with it a click-through panel with no haptics. `nil` in the app.
@@ -84,9 +103,11 @@ final class IslandPanel {
             self.geometry = geometry
             // Come out of the notch: the hover zone is drawn first, at rest, so the
             // spring has something to grow from instead of showing up already open.
+            land()
             withoutAnimation {
                 model.notch = geometry.notchRect.size
                 model.presentation = .hidden
+                model.outline = IslandOutline(.hidden, notch: geometry.notchRect.size)
             }
             place(window, frame: geometry.windowFrame(current: geometry.islandFrame(for: .hidden), target: target),
                   on: geometry)
@@ -103,9 +124,11 @@ final class IslandPanel {
         if self.geometry != geometry {
             // Another screen layout: jump, nothing to animate from.
             self.geometry = geometry
+            land()
             withoutAnimation {
                 model.notch = geometry.notchRect.size
                 model.presentation = presentation
+                model.outline = IslandOutline(presentation, notch: geometry.notchRect.size)
             }
             if !keepsWindow && presentation == .hidden {
                 window.orderOut(nil)
@@ -123,8 +146,12 @@ final class IslandPanel {
     func hide() {
         generation += 1
         lastRequest = nil
+        land()
         window?.orderOut(nil)
-        withoutAnimation { model.presentation = .hidden }
+        withoutAnimation {
+            model.presentation = .hidden
+            model.outline = IslandOutline(.hidden, notch: model.notch)
+        }
     }
 
     func close() {
@@ -147,24 +174,33 @@ final class IslandPanel {
 
     // MARK: Private
 
-    /// Animates the shape to `presentation` and cuts the window to `target` once
-    /// the spring is over, not after a guess: cut early, the frame would clip the
-    /// shape while it still moves.
+    /// Moves the shape to `presentation` and cuts the window to `target` once the
+    /// spring is at rest, not after a guess: cut early, the frame would clip the
+    /// shape while it still moves. The content changes with SwiftUI, on the same
+    /// spring, as it always has.
     private func animate(to presentation: IslandPresentation, settlingAt target: CGRect,
                          keepsWindow: Bool, generation mine: Int) {
         let from = model.presentation
-        let animation = IslandMotion.animation(
-            from: from, to: presentation,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        withAnimation(animation, completionCriteria: .removed) {
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        withAnimation(IslandMotion.animation(from: from, to: presentation, reduceMotion: reduceMotion)) {
             model.presentation = presentation
-        } completion: { [weak self] in
-            self?.settle(at: target, keepsWindow: keepsWindow, generation: mine)
         }
-        // A completion can stay away (the window left the screen mid-spring): the frame
-        // is cut anyway, or the larger window would keep taking clicks.
+        // From wherever the shape is now; a change that interrupts another keeps its
+        // speed, so the shape bends towards the new target instead of jumping.
+        let now = CACurrentMediaTime()
+        let spring = IslandMotion.shapeSpring(from: from, to: presentation, reduceMotion: reduceMotion)
+        let goal = IslandOutline(presentation, notch: model.notch)
+        let motion = flight?.motion.retargeted(to: goal, spring: spring, at: now, keepsSpeed: !reduceMotion)
+            ?? IslandOutlineMotion(from: model.outline, velocity: .zero, target: goal, spring: spring, start: now)
+        flight = Flight(motion: motion, target: target, keepsWindow: keepsWindow, generation: mine)
+        startDisplayLink()
+        // The display link can stay away (the window left the screen mid-spring): the
+        // shape lands and the frame is cut anyway, or the larger window would keep
+        // taking clicks.
         DispatchQueue.main.asyncAfter(deadline: .now() + IslandMotion.settleFallback) { [weak self] in
-            self?.settle(at: target, keepsWindow: keepsWindow, generation: mine)
+            guard let self, mine == self.generation else { return }
+            self.land()
+            self.settle(at: target, keepsWindow: keepsWindow, generation: mine)
         }
         if presentation == .expanded && from != .expanded && probeAlpha == nil {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -181,6 +217,48 @@ final class IslandPanel {
             place(window, frame: target, on: geometry)
         }
     }
+
+    // MARK: The shape's spring
+
+    /// One refresh: the outline as it will be when this frame shows, written with no
+    /// SwiftUI animation. At rest, it lands on the target and the window is cut.
+    fileprivate func step(_ link: CADisplayLink) {
+        guard let flight else { return stopDisplayLink() }
+        let time = link.targetTimestamp
+        let atRest = flight.motion.isSettled(at: time)
+        let outline = atRest ? flight.motion.target : flight.motion.value(at: time)
+        withoutAnimation { model.outline = outline }
+        guard atRest else { return }
+        self.flight = nil
+        stopDisplayLink()
+        settle(at: flight.target, keepsWindow: flight.keepsWindow, generation: flight.generation)
+    }
+
+    /// The shape at its target at once, and no more stepping.
+    private func land() {
+        if let flight { withoutAnimation { model.outline = flight.motion.target } }
+        flight = nil
+        stopDisplayLink()
+    }
+
+    private func startDisplayLink() {
+        guard displayLink == nil, let hosting else { return }
+        let link = hosting.displayLink(target: IslandOutlineStepper(panel: self),
+                                       selector: #selector(IslandOutlineStepper.step(_:)))
+        // Every refresh the screen can make: a ProMotion screen would otherwise pick a
+        // lower rate on its own.
+        let top = Float(hosting.window?.screen?.maximumFramesPerSecond ?? 120)
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: top, maximum: top, preferred: top)
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    private func stopDisplayLink() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    // MARK: The window
 
     /// Sets the window's frame and moves the canvas-sized view the other way in the
     /// same step, so the island stays exactly where it is on the screen.
@@ -237,13 +315,31 @@ final class IslandPanel {
     }
 }
 
+/// The display link's target. A link keeps its target, so this one holds the panel
+/// weakly: the link never keeps the panel alive, and stops itself if it is gone.
+private final class IslandOutlineStepper: NSObject {
+    weak var panel: IslandPanel?
+
+    init(panel: IslandPanel) {
+        self.panel = panel
+    }
+
+    @objc func step(_ link: CADisplayLink) {
+        MainActor.assumeIsolated {
+            guard let panel else { return link.invalidate() }
+            panel.step(link)
+        }
+    }
+}
+
 private struct IslandRootView: View {
     let model: IslandViewModel
     let actions: IslandActions
 
     var body: some View {
         IslandView(presentation: model.presentation, notch: model.notch, track: model.track,
-                   artwork: model.artwork, appName: model.appName, actions: actions)
+                   artwork: model.artwork, appName: model.appName, actions: actions,
+                   outline: model.outline)
             .ignoresSafeArea()
     }
 }
