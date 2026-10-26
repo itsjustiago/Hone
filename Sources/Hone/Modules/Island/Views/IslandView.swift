@@ -45,12 +45,13 @@ struct IslandView: View {
     }
 
     /// The wings stay put from compact to expanded (only the cover leaves them for
-    /// the player); what sits under the notch comes in and out on its own.
+    /// the player, and the equaliser goes: the pause button says the state); what
+    /// sits under the notch comes in and out on its own.
     @ViewBuilder
     private var content: some View {
         if let track, presentation != .hidden {
             VStack(spacing: 0) {
-                wings(showsCover: presentation != .expanded)
+                wings(showsItems: presentation != .expanded)
                 switch presentation {
                 case .peek:
                     peekLine(track)
@@ -80,12 +81,14 @@ struct IslandView: View {
     // MARK: Beside the notch
 
     /// Cover in the left wing, equaliser in the right one, the notch in between.
-    private func wings(showsCover: Bool) -> some View {
+    /// Both sit in a box the size of the small cover, the same distance from the
+    /// island's sides.
+    private func wings(showsItems: Bool) -> some View {
         let wing = max(0, (size.width - notch.width) / 2 - ear)
         let inset = max(0, (notch.height - IslandMetrics.smallCover) / 2)
         return HStack(spacing: 0) {
             ZStack {
-                if showsCover {
+                if showsItems {
                     IslandCover(artwork: artwork, size: IslandMetrics.smallCover,
                                 corner: IslandMetrics.smallCoverCorner)
                         .matchedGeometryEffect(id: "cover", in: namespace)
@@ -94,10 +97,14 @@ struct IslandView: View {
             .padding(.leading, inset)
             .frame(width: wing, alignment: .leading)
             Spacer(minLength: 0)
-            IslandEqualizer(isPlaying: isPlaying, tint: tint)
-                .animation(IslandMotion.trackChange, value: tint)
-                .padding(.trailing, inset)
-                .frame(width: wing, alignment: .trailing)
+            ZStack {
+                if showsItems {
+                    IslandEqualizer(isPlaying: isPlaying, tint: tint)
+                        .animation(IslandMotion.trackChange, value: tint)
+                }
+            }
+            .padding(.trailing, inset)
+            .frame(width: wing, alignment: .trailing)
         }
         .padding(.horizontal, ear)
         .frame(width: size.width, height: notch.height)
@@ -130,9 +137,12 @@ struct IslandView: View {
 
     // MARK: The open player
 
+    /// The cover row and, under it, the progress row, `expandedInset` from the body's
+    /// sides and bottom. A stream with no length has no progress row: the cover row
+    /// then sits in the middle of the space under the notch.
     private func player(_ track: NowPlayingTrack) -> some View {
-        VStack(spacing: 10) {
-            Spacer(minLength: 0)
+        let hasProgress = track.duration != nil
+        return VStack(spacing: IslandMetrics.expandedRowSpacing) {
             HStack(spacing: 12) {
                 Button(action: actions.openApp) {
                     IslandCover(artwork: artwork, size: IslandMetrics.largeCover,
@@ -157,10 +167,10 @@ struct IslandView: View {
                                   ticking: track.isPlaying, seek: { actions.send(.seek($0)) })
                     .animation(IslandMotion.trackChange, value: tint)
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, ear + IslandMetrics.expandedPadding)
-        .padding(.bottom, 8)
+        .padding(.horizontal, ear + IslandMetrics.expandedInset)
+        .padding(.top, hasProgress ? IslandMetrics.expandedTopGap : 0)
+        .padding(.bottom, hasProgress ? IslandMetrics.expandedBottomPadding : 0)
         .frame(width: size.width, height: size.height - notch.height)
     }
 
@@ -185,6 +195,8 @@ struct IslandView: View {
         .truncationMode(.tail)
     }
 
+    /// Their hit areas are round and wider than the glyphs, so the last one reaches
+    /// past the inset: the ⏭ glyph, not its empty margin, sits on it.
     private func controls(_ track: NowPlayingTrack) -> some View {
         HStack(spacing: 2) {
             IslandControlButton(systemName: "backward.fill", glyphSize: 14, label: "Anterior") {
@@ -198,6 +210,7 @@ struct IslandView: View {
                 actions.send(.next)
             }
         }
+        .padding(.trailing, -IslandMetrics.controlGlyphInset)
     }
 }
 

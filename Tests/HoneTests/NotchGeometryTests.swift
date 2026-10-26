@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import CoreGraphics
 @testable import Hone
 
@@ -115,11 +116,40 @@ final class NotchGeometryTests: XCTestCase {
         XCTAssertEqual(IslandMetrics.size(for: .peek, notch: wide).width, 260 + 76)
     }
 
-    func testExpandedIsAtLeast440WideAnd112Taller() {
-        XCTAssertEqual(IslandMetrics.size(for: .expanded, notch: notch), CGSize(width: 440, height: 144))
+    func testExpandedIsAtLeast440WideAnd121Taller() {
+        XCTAssertEqual(IslandMetrics.size(for: .expanded, notch: notch), CGSize(width: 440, height: 153))
         // A wide notch pushes it past the minimum.
         let wide = CGSize(width: 260, height: 32)
         XCTAssertEqual(IslandMetrics.size(for: .expanded, notch: wide).width, 500)
+    }
+
+    // MARK: The open player's parts
+
+    func testTheOpenPlayerIsAsTallAsItsPartsStackedUnderTheNotch() {
+        let parts = IslandMetrics.expandedTopGap + IslandMetrics.largeCover + IslandMetrics.expandedRowSpacing
+            + IslandMetrics.progressRowHeight + IslandMetrics.expandedBottomPadding
+        XCTAssertEqual(IslandMetrics.expandedExtraHeight, parts)
+        XCTAssertEqual(IslandMetrics.size(for: .expanded, notch: notch).height, notch.height + parts)
+    }
+
+    func testTheTimeLabelsDigitsEndTheInsetFromTheBottom() {
+        // The row's own empty band under the digits plus the padding is the inset.
+        XCTAssertEqual(IslandMetrics.expandedBottomPadding + IslandMetrics.progressRowDigitGap,
+                       IslandMetrics.expandedInset)
+    }
+
+    func testTheLastControlsHitAreaReachesPastTheInsetButStaysInsideTheBody() {
+        XCTAssertGreaterThanOrEqual(IslandMetrics.controlHitSize, 34)
+        XCTAssertGreaterThan(IslandMetrics.controlGlyphInset, 0)
+        XCTAssertLessThan(IslandMetrics.controlGlyphInset, IslandMetrics.expandedInset)
+    }
+
+    func testTheTimeLabelsHaveRoomForTenMinutesSoTheBarDoesNotJump() {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: IslandMetrics.timeLabelFontSize, weight: .medium)
+        for text in ["9:59", "10:00", "59:59"] {
+            XCTAssertLessThanOrEqual((text as NSString).size(withAttributes: [.font: font]).width,
+                                     IslandMetrics.timeLabelMinWidth, text)
+        }
     }
 
     func testSizesGrowInOrder() {

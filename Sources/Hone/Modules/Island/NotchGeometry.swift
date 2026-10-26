@@ -45,15 +45,48 @@ enum IslandMetrics {
     static let peekExtraHeight: CGFloat = 30
     static let expandedExtraWidth: CGFloat = 240
     static let expandedMinWidth: CGFloat = 440
-    static let expandedExtraHeight: CGFloat = 112
 
     /// The cover beside the notch (compact, peek) and in the open player.
     static let smallCover: CGFloat = 22
     static let smallCoverCorner: CGFloat = 6
     static let largeCover: CGFloat = 72
     static let largeCoverCorner: CGFloat = 14
-    /// Space between the open player's content and the island's sides, past the ears.
-    static let expandedPadding: CGFloat = 14
+
+    // MARK: The open player
+    //
+    // Below the notch row it stacks, top to bottom: `expandedTopGap`, the cover
+    // row (the large cover, with the titles and the controls centred on it),
+    // `expandedRowSpacing`, the progress row and `expandedBottomPadding`. The
+    // body is the island minus its ears.
+
+    /// From the body's left, right and bottom edges to the visible content: the
+    /// cover's and the left time label's left edge, the ⏭ glyph's and the right
+    /// time label's right edge, the time labels' digits at the bottom.
+    static let expandedInset: CGFloat = 20
+    /// Between the notch row and the cover row.
+    static let expandedTopGap: CGFloat = 8
+    /// Between the cover row and the progress row.
+    static let expandedRowSpacing: CGFloat = 10
+    /// The progress row: tall enough to grab the bar with the pointer.
+    static let progressRowHeight: CGFloat = 14
+    /// The empty band under the time labels' digits inside that row. The bottom
+    /// padding takes it back, so the digits sit at the inset and not the row.
+    static let progressRowDigitGap: CGFloat = 3
+    static var expandedBottomPadding: CGFloat { expandedInset - progressRowDigitGap }
+    /// What the open player adds below the notch row.
+    static var expandedExtraHeight: CGFloat {
+        expandedTopGap + largeCover + expandedRowSpacing + progressRowHeight + expandedBottomPadding
+    }
+
+    /// The time labels' font size, and the room they keep (a hair over "10:00" at
+    /// that size), so the bar does not jump when a track passes ten minutes.
+    static let timeLabelFontSize: CGFloat = 10.5
+    static let timeLabelMinWidth: CGFloat = 32
+    /// The side of a control's round hit area.
+    static let controlHitSize: CGFloat = 34
+    /// The empty margin between the ⏭ glyph and its hit area's edge. The controls
+    /// reach this far past the inset, so the glyph, not the hit area, sits on it.
+    static let controlGlyphInset: CGFloat = 6.5
 
     /// The concave ears where the island meets the top of the screen. Compact
     /// ears fit in `wingExtra`, so the wings stay as wide as the notch is tall.
