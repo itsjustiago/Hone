@@ -105,6 +105,8 @@ enum WhatsNewSwitches {
         case .statsReadouts: return stats(manager)?.toolKit.showsExtraReadouts ?? false
         case .sleepyCountdown: return sleepy(manager)?.toolKit.showsCountdown ?? false
         case .sleepyMouseNudge: return sleepy(manager)?.toolKit.nudgesMouse ?? false
+        case .statsDisk: return stats(manager)?.toolKit.showsDisk ?? false
+        case .windowsSnap: return windowsShortcuts(manager)?.settings.snapWindows ?? false
         }
     }
 
@@ -116,6 +118,8 @@ enum WhatsNewSwitches {
         case .statsReadouts: stats(manager)?.toolKit.setShowsExtraReadouts(on)
         case .sleepyCountdown: sleepy(manager)?.toolKit.setShowsCountdown(on)
         case .sleepyMouseNudge: sleepy(manager)?.toolKit.setNudgesMouse(on)
+        case .statsDisk: stats(manager)?.toolKit.setShowsDisk(on)
+        case .windowsSnap: windowsShortcuts(manager)?.settings.snapWindows = on
         }
         // Turning an app's option on means the app should be on; turning it off leaves the app alone.
         if on, let parentID = toggle.parentModuleID,
@@ -130,6 +134,10 @@ enum WhatsNewSwitches {
 
     private static func sleepy(_ manager: ModuleManager) -> EmbeddedToolModule<SleepyTool>? {
         manager.modules.first { $0.id == "sleepy" } as? EmbeddedToolModule<SleepyTool>
+    }
+
+    private static func windowsShortcuts(_ manager: ModuleManager) -> WindowsShortcutsModule? {
+        manager.modules.first { $0.id == "windowsShortcuts" } as? WindowsShortcutsModule
     }
 }
 

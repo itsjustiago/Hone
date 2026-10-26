@@ -182,6 +182,17 @@ public final class StatsTool {
             settings.enabledMetrics.subtract(Self.extraReadouts)
         }
     }
+
+    /// The disk readout, on its own switch (it came after the other three).
+    public var showsDisk: Bool { settings.enabledMetrics.contains(.disk) }
+
+    public func setShowsDisk(_ on: Bool) {
+        if on {
+            settings.enabledMetrics.insert(.disk)
+        } else {
+            settings.enabledMetrics.remove(.disk)
+        }
+    }
 }
 
 /// The panel plus what must not be part of it when rendered off-screen: the

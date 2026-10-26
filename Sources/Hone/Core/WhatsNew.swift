@@ -12,14 +12,19 @@ enum WhatsNewToggle: Hashable {
     case sleepyCountdown
     /// Sleepy: "Mexer o rato".
     case sleepyMouseNudge
+    /// Stats: the disk readout.
+    case statsDisk
+    /// Atalhos do Windows: snapping windows with ⌥ + arrows.
+    case windowsSnap
 
     /// The app to switch on when one of its options is turned on while the app
     /// is off (`nil` for a module's own switch).
     var parentModuleID: String? {
         switch self {
         case .module: return nil
-        case .statsReadouts: return "stats"
+        case .statsReadouts, .statsDisk: return "stats"
         case .sleepyCountdown, .sleepyMouseNudge: return "sleepy"
+        case .windowsSnap: return "windowsShortcuts"
         }
     }
 }
@@ -60,6 +65,23 @@ enum WhatsNew {
     // Ao lançar uma versão: acrescenta aqui as novidades dela (1–4, só o que o utilizador nota).
     // Mais recente primeiro; uma versão sem novidades visíveis fica de fora.
     static let releases: [WhatsNewRelease] = [
+        WhatsNewRelease(version: "0.9.0", items: [
+            WhatsNewItem(
+                id: "island", symbol: "music.note", tint: VibeToolColor.island,
+                title: "Ilha",
+                detail: "A música a tocar aparece no notch, com capa e controlos ao passar o rato.",
+                toggle: .module("island")),
+            WhatsNewItem(
+                id: "windows-snap", symbol: "rectangle.split.2x1", tint: VibeToolColor.windowsShortcuts,
+                title: "Encaixar janelas",
+                detail: "⌥ + setas encaixa a janela à esquerda, à direita ou no ecrã todo, como Win + setas.",
+                toggle: .windowsSnap),
+            WhatsNewItem(
+                id: "stats-disk", symbol: "internaldrive", tint: VibeToolColor.stats,
+                title: "Disco no Stats",
+                detail: "Leitura e escrita por segundo na barra de menus e o espaço livre no painel.",
+                toggle: .statsDisk),
+        ]),
         WhatsNewRelease(version: "0.8.1", items: [
             WhatsNewItem(
                 id: "soundly-200", symbol: "speaker.wave.3.fill", tint: VibeToolColor.soundly,

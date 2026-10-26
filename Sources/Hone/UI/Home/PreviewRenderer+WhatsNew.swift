@@ -12,12 +12,12 @@ extension PreviewRenderer {
         }
         return [
             // The usual case: one release, nothing to switch.
-            ("novidades-atual", page(lastSeen: "0.8.0", current: "0.8.1", on: [])),
+            ("novidades-atual", page(lastSeen: "0.8.1", current: "0.9.0", on: [.module("island")])),
             // One release with a switch on every row.
             ("novidades", page(lastSeen: "0.6.0", current: "0.7.0",
                                on: [.module("windowsShortcuts"), .sleepyMouseNudge])),
             // Every release at once: a section per version and a scrolling list.
-            ("novidades-todas", page(lastSeen: nil, current: "0.8.1",
+            ("novidades-todas", page(lastSeen: nil, current: "0.9.0",
                                      on: [.module("soundly"), .statsReadouts, .sleepyCountdown])),
         ]
     }
