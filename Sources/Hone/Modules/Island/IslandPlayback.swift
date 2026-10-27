@@ -39,7 +39,7 @@ enum IslandEqualizerMotion {
     /// Low and high height (fraction of the full height), seconds for one full
     /// up-and-down, and where in that cycle the bar starts (radians).
     static let bars: [(low: Double, high: Double, period: Double, phase: Double)] = [
-        (0.30, 0.85, 0.92, 0.0), (0.55, 1.00, 0.76, 2.1), (0.25, 0.70, 1.06, 4.0), (0.45, 0.92, 0.84, 5.3),
+        (0.35, 0.85, 0.92, 0.0), (0.55, 1.00, 0.76, 2.1), (0.35, 0.70, 1.06, 4.0), (0.45, 0.92, 0.84, 5.3),
     ]
     static var barCount: Int { bars.count }
 
@@ -54,6 +54,53 @@ enum IslandEqualizerMotion {
     /// Where a bar stands when it must not move (Reduce Motion): halfway.
     static func restingFraction(bar index: Int) -> Double {
         (bars[index].low + bars[index].high) / 2
+    }
+
+    /// Where every bar stands while paused: all level, as low as any of them dips playing.
+    static var pausedFraction: Double { bars.map(\.low).min() ?? 0 }
+
+    /// How tall bar `index` is at `time` when the music is `level` of the way from
+    /// paused (0) to playing (1). `still` (Reduce Motion) puts the playing end at rest.
+    static func fraction(bar index: Int, at time: TimeInterval, level: Double, still: Bool) -> Double {
+        let playing = still ? restingFraction(bar: index) : fraction(bar: index, at: time)
+        return pausedFraction + (playing - pausedFraction) * min(max(level, 0), 1)
+    }
+}
+
+/// How far the equaliser is from paused (0) to playing (1). A pause or a resume eases
+/// it from wherever it is, so the bars sink to the bottom and rise from it, and a
+/// quick pause-and-resume turns back without a jump.
+struct IslandEqualizerLevel: Equatable {
+    /// Seconds for the whole way; turning back halfway takes half.
+    static let fullDuration: TimeInterval = 0.3
+
+    private(set) var from: Double
+    private(set) var target: Double
+    private(set) var start: TimeInterval
+
+    init(playing: Bool) {
+        from = playing ? 1 : 0
+        target = from
+        start = 0
+    }
+
+    var duration: TimeInterval { Self.fullDuration * abs(target - from) }
+    var end: TimeInterval { start + duration }
+
+    func value(at time: TimeInterval) -> Double {
+        guard duration > 0, time.isFinite else { return target }
+        let progress = min(max((time - start) / duration, 0), 1)
+        return from + (target - from) * progress * progress * (3 - 2 * progress)
+    }
+
+    func isSettled(at time: TimeInterval) -> Bool { time >= end }
+
+    func retargeted(playing: Bool, at time: TimeInterval) -> IslandEqualizerLevel {
+        var next = self
+        next.from = value(at: time)
+        next.target = playing ? 1 : 0
+        next.start = time
+        return next
     }
 }
 

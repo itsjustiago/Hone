@@ -98,7 +98,67 @@ final class IslandPlaybackTests: XCTestCase {
     }
 
     func testTheRestingHeightIsHalfway() {
-        XCTAssertEqual(IslandEqualizerMotion.restingFraction(bar: 0), 0.575, accuracy: 1e-9)
+        XCTAssertEqual(IslandEqualizerMotion.restingFraction(bar: 0), 0.6, accuracy: 1e-9)
+    }
+
+    func testPausedBarsAreAllLevelAtTheBottomWhateverTheTime() {
+        let paused = IslandEqualizerMotion.pausedFraction
+        XCTAssertEqual(paused, IslandEqualizerMotion.bars.map(\.low).min() ?? -1, accuracy: 1e-9)
+        for index in 0..<IslandEqualizerMotion.barCount {
+            for time in [0.0, 0.41, 7.9, 800_000_000.123] {
+                XCTAssertEqual(IslandEqualizerMotion.fraction(bar: index, at: time, level: 0, still: false),
+                               paused, accuracy: 1e-9)
+                XCTAssertEqual(IslandEqualizerMotion.fraction(bar: index, at: time, level: 0, still: true),
+                               paused, accuracy: 1e-9)
+            }
+        }
+    }
+
+    func testFullyPlayingBarsDanceOrRestAsBefore() {
+        for index in 0..<IslandEqualizerMotion.barCount {
+            XCTAssertEqual(IslandEqualizerMotion.fraction(bar: index, at: 2.7, level: 1, still: false),
+                           IslandEqualizerMotion.fraction(bar: index, at: 2.7), accuracy: 1e-9)
+            XCTAssertEqual(IslandEqualizerMotion.fraction(bar: index, at: 2.7, level: 1, still: true),
+                           IslandEqualizerMotion.restingFraction(bar: index), accuracy: 1e-9)
+        }
+    }
+
+    func testTheLevelStartsSettledWhereThePlaybackIs() {
+        XCTAssertEqual(IslandEqualizerLevel(playing: true).value(at: 5), 1)
+        XCTAssertEqual(IslandEqualizerLevel(playing: false).value(at: 5), 0)
+        XCTAssertTrue(IslandEqualizerLevel(playing: false).isSettled(at: 0))
+    }
+
+    func testAPauseSinksTheBarsSmoothlyAndThenStops() {
+        let t = 1000.0
+        let level = IslandEqualizerLevel(playing: true).retargeted(playing: false, at: t)
+        XCTAssertEqual(level.value(at: t), 1, accuracy: 1e-9, "no jump at the pause")
+        XCTAssertEqual(level.end, t + IslandEqualizerLevel.fullDuration, accuracy: 1e-9)
+        var last = 1.0
+        for step in 1...30 {
+            let value = level.value(at: t + level.duration * Double(step) / 30)
+            XCTAssertLessThanOrEqual(value, last + 1e-12)
+            XCTAssertLessThan(last - value, 0.1, "eases, no big step between frames")
+            last = value
+        }
+        XCTAssertEqual(level.value(at: level.end), 0, accuracy: 1e-9)
+        XCTAssertFalse(level.isSettled(at: level.end - 0.01))
+        XCTAssertTrue(level.isSettled(at: level.end))
+    }
+
+    func testAResumeHalfwayTurnsBackFromWhereTheBarsAre() {
+        let t = 50.0
+        let pausing = IslandEqualizerLevel(playing: true).retargeted(playing: false, at: t)
+        let midway = t + pausing.duration / 2
+        let here = pausing.value(at: midway)
+        let resuming = pausing.retargeted(playing: true, at: midway)
+        XCTAssertEqual(resuming.value(at: midway), here, accuracy: 1e-9)
+        XCTAssertEqual(resuming.duration, IslandEqualizerLevel.fullDuration * (1 - here), accuracy: 1e-9)
+        XCTAssertEqual(resuming.value(at: resuming.end), 1, accuracy: 1e-9)
+        // And the bars themselves don't jump when the level turns back.
+        XCTAssertEqual(IslandEqualizerMotion.fraction(bar: 2, at: midway, level: pausing.value(at: midway), still: false),
+                       IslandEqualizerMotion.fraction(bar: 2, at: midway, level: resuming.value(at: midway), still: false),
+                       accuracy: 1e-9)
     }
 
     // MARK: Hover after a track shows up
