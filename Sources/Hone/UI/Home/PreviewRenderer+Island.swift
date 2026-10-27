@@ -47,6 +47,9 @@ extension PreviewRenderer {
                    external: true)),
             ("ilha-externo-aberta",
              stage(.music(.expanded), track: song, artwork: cover, app: "Música", external: true)),
+            // Hidden with something to show (only idle sessions, or a long pause): the strip.
+            ("ilha-externo-escondida",
+             stage(.empty, track: nil, artwork: nil, app: "Música", external: true)),
         ]
     }
 
@@ -153,6 +156,11 @@ extension PreviewRenderer {
                               app: String, claude: ClaudeSnapshot? = nil, external: Bool = false) -> AnyView {
         let notch = CGSize(width: IslandMetrics.virtualNotchWidth, height: external ? 24 : 32)
         let height = max(190, IslandMetrics.size(for: layout, notch: notch).height + 30)
+        // The virtual notch's shape, as its panel draws it (hidden, the strip).
+        let outline = external
+            ? NotchGeometry(screenFrame: CGRect(x: 0, y: 0, width: 600, height: height), menuBarHeight: notch.height)
+                .outline(for: layout)
+            : nil
         return AnyView(
             ZStack(alignment: .top) {
                 LinearGradient(colors: [VibePalette.blue, VibePalette.purple],
@@ -168,7 +176,7 @@ extension PreviewRenderer {
                         .frame(width: notch.width, height: notch.height)
                 }
                 IslandView(layout: layout, notch: notch, track: track,
-                           artwork: artwork, appName: app, claude: claude)
+                           artwork: artwork, appName: app, claude: claude, outline: outline)
             }
             .frame(width: 600, height: height)
             .background(VibeColor.canvas)

@@ -47,12 +47,33 @@ struct NotchGeometry: Equatable {
 
     /// `islandFrame(size:)` for a presentation of the music alone.
     func islandFrame(for presentation: IslandPresentation) -> CGRect {
-        islandFrame(size: IslandMetrics.size(for: presentation, notch: notchRect.size))
+        islandFrame(for: IslandLayout.music(presentation))
     }
 
     /// `islandFrame(size:)` for what the island shows.
     func islandFrame(for layout: IslandLayout) -> CGRect {
-        islandFrame(size: IslandMetrics.size(for: layout, notch: notchRect.size))
+        islandFrame(size: size(for: layout))
+    }
+
+    /// The island's size for `layout`: `IslandMetrics`', except hidden over a virtual
+    /// notch. There is no notch to hide in there, so the hidden island is a strip
+    /// along the top of the screen, as wide as the notch, to hover or click.
+    func size(for layout: IslandLayout) -> CGSize {
+        guard isVirtual, layout.presentation == .hidden else {
+            return IslandMetrics.size(for: layout, notch: notchRect.size)
+        }
+        return CGSize(width: notchRect.width, height: IslandMetrics.stripHeight)
+    }
+
+    /// The shape at rest for `layout`. The strip is a plain rectangle (no ears, no
+    /// rounded corners): every point of it is opaque, so the window server gives it
+    /// the pointer, which passes through a borderless window where it is clear.
+    func outline(for layout: IslandLayout) -> IslandOutline {
+        let outline = IslandOutline(layout, notch: notchRect.size)
+        guard isVirtual, layout.presentation == .hidden else { return outline }
+        let strip = size(for: layout)
+        return IslandOutline(width: strip.width, height: strip.height, earRadius: 0, bottomRadius: 0,
+                             coverSize: outline.coverSize)
     }
 }
 
@@ -63,6 +84,9 @@ enum IslandMetrics {
     /// The hover zone sits this far inside the notch on each side, so the island's
     /// black never shows beside the physical notch.
     static let hiddenInset: CGFloat = 6
+    /// The hidden island over a virtual notch: a black strip this tall along the
+    /// top of the screen. All it covers of the menu bar.
+    static let stripHeight: CGFloat = 3
     /// Compact wings are as wide as the notch is tall, plus this.
     static let wingExtra: CGFloat = 6
     static let peekMinWidth: CGFloat = 300
@@ -246,23 +270,5 @@ extension NotchGeometry {
     /// coordinates), so the canvas stays put on the screen.
     static func hostOrigin(canvas: CGRect, window: CGRect) -> CGPoint {
         CGPoint(x: canvas.minX - window.minX, y: canvas.minY - window.minY)
-    }
-}
-
-// MARK: - The real screen (AppKit, not pure)
-
-extension NotchGeometry {
-    /// The notch of the built-in screen, or `nil` when there is none to draw on:
-    /// another Mac, the lid closed or the built-in screen switched off (it then
-    /// leaves `NSScreen.screens`), or a display mode that hides the notch.
-    @MainActor
-    static func current() -> NotchGeometry? {
-        IslandScreens.current(choice: .notch).first?.geometry
-    }
-
-    @MainActor
-    init?(screen: NSScreen) {
-        self.init(screenFrame: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
-                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea)
     }
 }

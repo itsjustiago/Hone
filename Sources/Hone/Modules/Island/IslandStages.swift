@@ -57,6 +57,13 @@ final class IslandStages {
         stages.first { $0.id == id }
     }
 
+    /// Dropped without `closeAll()`: the poll must not wake the process for nothing.
+    /// The stages go with it and stop their own.
+    deinit {
+        coverTimer?.invalidate()
+        settleCheck?.invalidate()
+    }
+
     /// Every island closed and every timer gone. Idempotent.
     func closeAll() {
         stopCoverPoll()

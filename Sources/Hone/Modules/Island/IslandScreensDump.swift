@@ -29,6 +29,7 @@ enum IslandScreensDump {
             lines.append("  frame \(rect(info.frame)) · visível \(rect(info.visibleFrame))")
             lines.append("  barra de menus \(number(info.menuBarHeight)) pt · área segura no topo \(number(info.safeAreaTop)) pt")
             lines.append("  notch \(geometry.isVirtual ? "virtual" : "real") \(rect(geometry.notchRect))")
+            lines.append("  ilha escondida \(rect(geometry.islandFrame(for: .hidden)))\(geometry.isVirtual ? " (faixa)" : "")")
             lines.append("  ilha compacta \(rect(geometry.islandFrame(for: .compact)))")
             lines.append("  ilha aberta \(rect(geometry.islandFrame(for: .expanded)))")
         }

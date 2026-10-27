@@ -14,21 +14,6 @@ protocol IslandStagePanel: AnyObject {
 
 extension IslandPanel: IslandStagePanel {}
 
-extension NotchGeometry {
-    /// Whether the island keeps its window while hidden with `hasContent`. Over a real
-    /// notch the hidden island is the hover zone inside it. A virtual one hangs over
-    /// the menu bar: hidden, it leaves the screen, so it never covers a menu.
-    func keepsHiddenWindow(hasContent: Bool) -> Bool {
-        hasContent && !isVirtual
-    }
-
-    /// Whether the island in `presentation` takes the pointer: not a virtual one
-    /// with nothing on show, which has no window.
-    func takesPointer(in presentation: IslandPresentation) -> Bool {
-        !isVirtual || presentation != .hidden
-    }
-}
-
 /// The island on one screen: its panel, its own `IslandState` (hover, click, the
 /// open page), whether an app in full screen covers that screen, and the one
 /// wake-up its state asks for. What it shows comes from `IslandStages`, the same on
@@ -84,6 +69,12 @@ final class IslandStage {
             openClaudeSession: { [weak self] session in self?.openClaudeSession(session) },
             selectPage: { [weak self] page in self?.selectPage(page) }
         ))
+    }
+
+    /// Dropped without `close()`: no wake-up outlives it.
+    deinit {
+        timer?.invalidate()
+        hoverCheck?.invalidate()
     }
 
     /// The panel off the screen and every timer gone. Nothing runs for it after this.
@@ -194,10 +185,9 @@ final class IslandStage {
             return
         }
         let now = Date()
-        // A virtual island with nothing on show leaves the screen, and its hover with it.
-        if hovering, !geometry.takesPointer(in: state.presentation(at: now)) { releaseHover() }
-        panel.show(state.layout(at: now), on: geometry,
-                   keepsWindow: geometry.keepsHiddenWindow(hasContent: state.hasContent))
+        // Hidden with something to show, the island keeps its hover zone: inside a
+        // real notch, or the strip along the top of a screen with a virtual one.
+        panel.show(state.layout(at: now), on: geometry, keepsWindow: state.hasContent)
         guard let next = state.nextChange(after: now) else { return }
         let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.apply() }
@@ -211,9 +201,7 @@ final class IslandStage {
 
     /// Whether the pointer is over the island as the state has it at `now`.
     private func pointerInside(at now: Date) -> Bool {
-        let layout = state.layout(at: now)
-        guard geometry.takesPointer(in: layout.presentation) else { return false }
-        return IslandHover.pointerInside(host.pointer(), frame: geometry.islandFrame(for: layout))
+        IslandHover.pointerInside(host.pointer(), frame: geometry.islandFrame(for: state.layout(at: now)))
     }
 
     private func hoverChanged(_ inside: Bool) {
@@ -221,10 +209,8 @@ final class IslandStage {
         if inside {
             cancelHoverCheck()
             // With nothing to show the state ignores it; marking it here would swallow
-            // the real "entered" once something arrives. A virtual island folding away
-            // takes no pointer either.
-            guard state.hasContent, !hovering, geometry.takesPointer(in: state.presentation(at: Date()))
-            else { return }
+            // the real "entered" once something arrives.
+            guard state.hasContent, !hovering else { return }
             // Without the poll (only idle sessions) nobody has looked at the screen:
             // look before the island opens over a full-screen app.
             if !host.isPolling(), setCovered(host.covers(geometry)) {

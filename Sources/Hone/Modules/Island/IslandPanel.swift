@@ -91,7 +91,8 @@ final class IslandPanel {
 
     /// Shows `layout` around the notch of `geometry`. With `keepsWindow` false
     /// (nothing to show: no track, no Claude session), the panel leaves the screen
-    /// once it has folded away.
+    /// once it has folded away. Hidden with something to show, it keeps the hover
+    /// zone: inside a real notch, or the strip along the top of the screen.
     func show(_ layout: IslandLayout, on geometry: NotchGeometry, keepsWindow: Bool) {
         let presentation = layout.presentation
         let request = Request(layout: layout, keepsWindow: keepsWindow)
@@ -117,7 +118,7 @@ final class IslandPanel {
             withoutAnimation {
                 model.notch = geometry.notchRect.size
                 model.layout = .empty
-                model.outline = IslandOutline(.empty, notch: geometry.notchRect.size)
+                model.outline = geometry.outline(for: .empty)
             }
             place(window, frame: geometry.windowFrame(current: geometry.islandFrame(for: .empty), target: target),
                   on: geometry)
@@ -138,7 +139,7 @@ final class IslandPanel {
             withoutAnimation {
                 model.notch = geometry.notchRect.size
                 model.layout = layout
-                model.outline = IslandOutline(layout, notch: geometry.notchRect.size)
+                model.outline = geometry.outline(for: layout)
             }
             if !keepsWindow && presentation == .hidden {
                 window.orderOut(nil)
@@ -160,7 +161,7 @@ final class IslandPanel {
         window?.orderOut(nil)
         withoutAnimation {
             model.layout = .empty
-            model.outline = IslandOutline(.empty, notch: model.notch)
+            model.outline = geometry?.outline(for: .empty) ?? IslandOutline(.empty, notch: model.notch)
         }
     }
 
@@ -201,7 +202,7 @@ final class IslandPanel {
         // speed, so the shape bends towards the new target instead of jumping.
         let now = CACurrentMediaTime()
         let spring = IslandMotion.shapeSpring(from: from, to: presentation, reduceMotion: reduceMotion)
-        let goal = IslandOutline(layout, notch: model.notch)
+        let goal = geometry?.outline(for: layout) ?? IslandOutline(layout, notch: model.notch)
         let motion = flight?.motion.retargeted(to: goal, spring: spring, at: now, keepsSpeed: !reduceMotion)
             ?? IslandOutlineMotion(from: model.outline, velocity: .zero, target: goal, spring: spring, start: now)
         flight = Flight(motion: motion, target: target, keepsWindow: keepsWindow, generation: mine)
