@@ -23,7 +23,6 @@ struct IslandView: View {
     /// (the previews) draws `presentation`'s at rest.
     var outline: IslandOutline?
 
-    @Namespace private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The content's layout: always `presentation`'s, so SwiftUI moves it as it
@@ -36,14 +35,18 @@ struct IslandView: View {
     }
     private var tint: Color { artwork?.tint ?? IslandPalette.fallbackTint }
     private var isPlaying: Bool { track?.isPlaying ?? false }
+    /// The open player has a progress row: a stream with no length has none.
+    private var hasProgress: Bool { track?.duration != nil }
 
     /// The fill is sized by the outline alone; the content, laid out at its own size,
-    /// sits over it. In a stack with the content, the fill would take the larger of
-    /// the two while the island grows, and be drawn again on SwiftUI's clock.
+    /// sits over it, and the cover over both. In a stack with the content, the fill
+    /// would take the larger of the two while the island grows, and be drawn again
+    /// on SwiftUI's clock.
     var body: some View {
         shape.fill(IslandPalette.island)
             .frame(width: drawn.width, height: drawn.height)
             .overlay(alignment: .top) { content }
+            .overlay(alignment: .topLeading) { cover }
             .clipShape(shape)
             .contentShape(shape)
             .onHover { actions.hover($0) }
@@ -51,9 +54,9 @@ struct IslandView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    /// The wings stay put from compact to expanded (only the cover leaves them for
-    /// the player, and the equaliser goes: the pause button says the state); what
-    /// sits under the notch comes in and out on its own.
+    /// The wings stay put from compact to expanded (the equaliser goes: the pause
+    /// button says the state); what sits under the notch comes in and out on its
+    /// own. The cover is not in here: see `cover`.
     @ViewBuilder
     private var content: some View {
         if let track, presentation != .hidden {
@@ -85,24 +88,44 @@ struct IslandView: View {
         return .asymmetric(insertion: insertion, removal: AnyTransition.opacity.animation(IslandMotion.contentOut))
     }
 
+    // MARK: The cover
+
+    /// One cover in every presentation, over the content: beside the notch it is the
+    /// left wing's, in the open player the large one that opens the app. Its frame
+    /// comes from the outline, so it moves on the panel's spring with the shape,
+    /// frame by frame, and grows from the wing into the player as one picture. (Two
+    /// covers matched by SwiftUI moved on another clock, and jumped between them.)
+    @ViewBuilder
+    private var cover: some View {
+        if track != nil, presentation != .hidden {
+            let frame = drawn.coverFrame(notch: notch, hasProgress: hasProgress)
+            let opensApp = presentation == .expanded
+            let _ = IslandCover.probe?(frame)
+            Button(action: actions.openApp) {
+                IslandCover(artwork: artwork, size: frame.width, corner: drawn.coverCorner)
+            }
+            .buttonStyle(IslandPressStyle())
+            .allowsHitTesting(opensApp)
+            .accessibilityHidden(!opensApp)
+            .accessibilityLabel(appName.map { "Abrir \($0)" } ?? "Abrir o leitor")
+            .offset(x: frame.minX, y: frame.minY)
+            // The island's size, so it comes in and goes out with the wings.
+            .frame(width: drawn.width, height: drawn.height, alignment: .topLeading)
+            .transition(contentTransition)
+        }
+    }
+
     // MARK: Beside the notch
 
-    /// Cover in the left wing, equaliser in the right one, the notch in between.
-    /// Both sit in a box the size of the small cover, the same distance from the
-    /// island's sides.
+    /// Room for the cover in the left wing, equaliser in the right one, the notch in
+    /// between. Both sit in a box the size of the small cover, the same distance
+    /// from the island's sides.
     private func wings(showsItems: Bool) -> some View {
         let wing = max(0, (size.width - notch.width) / 2 - ear)
         let inset = max(0, (notch.height - IslandMetrics.smallCover) / 2)
         return HStack(spacing: 0) {
-            ZStack {
-                if showsItems {
-                    IslandCover(artwork: artwork, size: IslandMetrics.smallCover,
-                                corner: IslandMetrics.smallCoverCorner)
-                        .matchedGeometryEffect(id: "cover", in: namespace)
-                }
-            }
-            .padding(.leading, inset)
-            .frame(width: wing, alignment: .leading)
+            Color.clear
+                .frame(width: wing)
             Spacer(minLength: 0)
             ZStack {
                 if showsItems {
@@ -151,13 +174,9 @@ struct IslandView: View {
         let hasProgress = track.duration != nil
         return VStack(spacing: IslandMetrics.expandedRowSpacing) {
             HStack(spacing: 12) {
-                Button(action: actions.openApp) {
-                    IslandCover(artwork: artwork, size: IslandMetrics.largeCover,
-                                corner: IslandMetrics.largeCoverCorner)
-                        .matchedGeometryEffect(id: "cover", in: namespace)
-                }
-                .buttonStyle(IslandPressStyle())
-                .accessibilityLabel(appName.map { "Abrir \($0)" } ?? "Abrir o leitor")
+                // The cover's place: `cover` draws it here at rest.
+                Color.clear
+                    .frame(width: IslandMetrics.largeCover, height: IslandMetrics.largeCover)
 
                 // Both titles overlap while a new track crossfades in: no jump in width.
                 ZStack(alignment: .leading) {

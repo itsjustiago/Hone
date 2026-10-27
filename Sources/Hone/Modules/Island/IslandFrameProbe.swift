@@ -11,8 +11,9 @@ import SwiftUI
 /// click-through (`probeAlpha`), and plays a fixed script on fake tracks: compact,
 /// pause, stay paused, resume, keep playing, peek, compact, expanded, a new track,
 /// compact, hidden; once to warm up, then three times. For each step it records
-/// - the frames SwiftUI drew: every new outline `NotchShape` is asked for, and every
-///   frame of the equaliser's bars (`eq/s` in the table);
+/// - the frames SwiftUI drew: every new outline `NotchShape` is asked for, every new
+///   frame of the cover (`cover` in the table: it must move in the shape's frames and
+///   stop with it) and every frame of the equaliser's bars (`eq/s`);
 /// - the screens' ticks: a display link per screen at its top rate, off the main
 ///   thread. The notch's screen is the one that counts; the others tell whose clock
 ///   woke a frame;
@@ -116,6 +117,7 @@ final class IslandFrameProbe {
 
         NotchShape.probe = { [recorder] rect, ear, bottom in recorder.outline(rect.size, ear, bottom) }
         IslandEqualizer.probe = { [recorder] in recorder.equalizerFrame() }
+        IslandCover.probe = { [recorder] frame in recorder.cover(frame) }
         startTicks()
         observeTurns()
 
@@ -225,6 +227,7 @@ final class IslandFrameProbe {
               + Result.table(results))
         NotchShape.probe = nil
         IslandEqualizer.probe = nil
+        IslandCover.probe = nil
         tickLinks.forEach { $0.invalidate() }
         panel.close()
         try? file.close()
@@ -248,6 +251,10 @@ private final class Recorder: @unchecked Sendable {
         let bottom: CGFloat
         let onMain: Bool
     }
+    struct Cover {
+        let time: Double
+        let frame: CGRect
+    }
     struct Turn {
         let start: Double
         let end: Double
@@ -261,11 +268,13 @@ private final class Recorder: @unchecked Sendable {
         var otherTicks: [String: [Double]]
         var turns: [Turn]
         var bars: [Double]
+        var covers: [Cover]
     }
 
     private let lock = NSLock()
     private var outlines: [Outline] = []
     private var bars: [Double] = []
+    private var covers: [Cover] = []
     private var ticks: [Double] = []
     private var otherTicks: [String: [Double]] = [:]
     private var turns: [Turn] = []
@@ -278,6 +287,15 @@ private final class Recorder: @unchecked Sendable {
         defer { lock.unlock() }
         if let last = outlines.last, last.size == size, last.ear == ear, last.bottom == bottom { return }
         outlines.append(Outline(time: now, size: size, ear: ear, bottom: bottom, onMain: Thread.isMainThread))
+    }
+
+    /// Only a cover that moved counts: the island is drawn again for other reasons.
+    func cover(_ frame: CGRect) {
+        let now = CACurrentMediaTime()
+        lock.lock()
+        defer { lock.unlock() }
+        if let last = covers.last, last.frame == frame { return }
+        covers.append(Cover(time: now, frame: frame))
     }
 
     func equalizerFrame() {
@@ -306,7 +324,8 @@ private final class Recorder: @unchecked Sendable {
                         ticks: ticks.filter { $0 >= start && $0 <= end },
                         otherTicks: otherTicks.mapValues { $0.filter { $0 >= start && $0 <= end } },
                         turns: turns.filter { $0.end >= start && $0.start <= end },
-                        bars: bars.filter { $0 >= start && $0 <= end })
+                        bars: bars.filter { $0 >= start && $0 <= end },
+                        covers: covers.filter { $0.time >= start && $0.time <= end })
     }
 }
 
@@ -353,6 +372,12 @@ private struct Result {
     let turnsOverTick: Int
     /// Equaliser frames per second over the whole step.
     let eqPerSecond: Double
+    /// New cover frames, and how many of them came with no new outline within a few
+    /// ms (a cover moving on some other clock than the shape's).
+    let coverFrames: Int
+    let coverOffShapePct: Double?
+    /// When the cover last moved minus when the shape did: ~0 when they land together.
+    let coverEndMs: Double?
     let raw: String
 
     init(label: String, round: Int, start: Double, called: Double, end: Double, recorder: Recorder) {
@@ -405,6 +430,18 @@ private struct Result {
         busyPct = during.map(\.busy).reduce(0, +) / max(motionEnd - start, 0.001) * 100
         turnsOverTick = during.filter { $0.busy * 1000 > (tick ?? 8.33) }.count
         eqPerSecond = Double(data.bars.count) / max(end - start, 0.001)
+        // The first cover of a step is where it stood before: the step's own come after.
+        let covers = Array(data.covers.drop { $0.time < (times.first ?? start) - 0.001 })
+        coverFrames = covers.count
+        let shapeWindow = 0.004
+        coverOffShapePct = covers.isEmpty || times.isEmpty ? nil
+            : Double(covers.filter { cover in !times.contains { abs($0 - cover.time) < shapeWindow } }.count)
+                / Double(covers.count) * 100
+        if covers.count > 1, let cover = covers.last?.time, let shape = times.last {
+            coverEndMs = (cover - shape) * 1000
+        } else {
+            coverEndMs = nil
+        }
 
         func ms(_ time: Double) -> String { fmt((time - start) * 1000) }
         func opt(_ value: Double?) -> String { value.map(fmt) ?? "-" }
@@ -416,9 +453,13 @@ private struct Result {
             + "· shown spacing p5 \(opt(shownP5)) p95 \(opt(shownP95)) · off clock \(opt(offClockPct)) % "
             + "· max turn \(fmt(maxTurnMs)) ms · busy \(fmt(busyPct)) % · turns over a tick \(turnsOverTick)"
             + " · eq frames \(data.bars.count) (\(fmt(eqPerSecond))/s)"
+            + " · cover frames \(coverFrames), off shape \(opt(coverOffShapePct)) %, end \(opt(coverEndMs)) ms"
             + (offMain > 0 ? " · off-main outlines \(offMain)" : "") + "\n"
         raw += "outlines: " + data.outlines.map {
             "\(ms($0.time)):\(fmt($0.size.width))×\(fmt($0.size.height)) \(fmt($0.ear)) \(fmt($0.bottom))"
+        }.joined(separator: ", ") + "\n"
+        raw += "cover: " + data.covers.map {
+            "\(ms($0.time)):\(fmt($0.frame.minX)),\(fmt($0.frame.minY)) \(fmt($0.frame.width))"
         }.joined(separator: ", ") + "\n"
         raw += "eq: " + data.bars.map(ms).joined(separator: " ") + "\n"
         raw += "ticks: " + ticks.map(ms).joined(separator: " ") + "\n"
@@ -441,7 +482,8 @@ private struct Result {
         per second; missed/double = notch-screen ticks with 0 / 2+ new outlines; shown = spacing
         of the outlines that reach the glass (even motion: one tick at both ends); off clock = not
         within 3 ms of a notch-screen tick; turn = main-thread busy time per run-loop turn;
-        eq/s = equaliser frames per second over the whole step.
+        eq/s = equaliser frames per second over the whole step; cover = new cover frames, off% =
+        those with no new outline within 4 ms, end = cover's last move minus the shape's.
 
         """
 
@@ -453,7 +495,7 @@ private struct Result {
         func worst(_ values: [Double?]) -> String { values.compactMap { $0 }.max().map(fmt) ?? "-" }
         let header = ["transition", "n", "call", "1st", "frames", "fps", "p50", "p95", "max", "tick",
                       "missed%", "double%", "shown p5", "shown p95", "off clock%", "turn", "busy%", "turns>tick",
-                      "eq/s"]
+                      "eq/s", "cover", "cover off%", "cover end"]
         var rows = [header]
         for label in labels {
             let rs = results.filter { $0.label == label }
@@ -463,7 +505,8 @@ private struct Result {
                          median(rs.map(\.missedPct)), median(rs.map(\.doublePct)), median(rs.map(\.shownP5)),
                          median(rs.map(\.shownP95)), median(rs.map(\.offClockPct)), worst(rs.map(\.maxTurnMs)),
                          median(rs.map(\.busyPct)), median(rs.map { Double($0.turnsOverTick) }),
-                         median(rs.map(\.eqPerSecond))])
+                         median(rs.map(\.eqPerSecond)), median(rs.map { Double($0.coverFrames) }),
+                         median(rs.map(\.coverOffShapePct)), worst(rs.map { $0.coverEndMs.map(abs) })])
         }
         let widths = header.indices.map { column in rows.map { $0[column].count }.max() ?? 0 }
         return rows.map { row in
