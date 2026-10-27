@@ -31,7 +31,26 @@ extension PreviewRenderer {
             ("ilha-aberta-pausa", stage(.expanded, paused, sunset, app: "Música")),
             ("ilha-aberta-titulo-longo", stage(.expanded, long, night, app: "Spotify")),
             ("ilha-aberta-radio-sem-capa", stage(.expanded, radio, nil, app: "Safari")),
-        ] + claudeIslandPages(song: song, cover: sunset)
+        ] + claudeIslandPages(song: song, cover: sunset) + externalIslandPages(song: song, cover: sunset)
+    }
+
+    /// The island on an external screen, where there is no notch: the virtual one,
+    /// the width of a real notch and as tall as a plain menu bar, hangs from the
+    /// menu bar (a strip across the top, with no notch cut into it).
+    private static func externalIslandPages(song: NowPlayingTrack, cover: IslandArtwork?) -> [(String, AnyView)] {
+        let working = ClaudeSnapshot(sessions: [onboarding, login, notes], myAgents: myAgents)
+        return [
+            ("ilha-externo-compacta",
+             stage(.music(.compact), track: song, artwork: cover, app: "Música", external: true)),
+            ("ilha-externo-claude-compacta",
+             stage(claudeLayout(.compact, working), track: nil, artwork: nil, app: "Música", claude: working,
+                   external: true)),
+            ("ilha-externo-aberta",
+             stage(.music(.expanded), track: song, artwork: cover, app: "Música", external: true)),
+            // Hidden with something to show (only idle sessions, or a long pause): the strip.
+            ("ilha-externo-escondida",
+             stage(.empty, track: nil, artwork: nil, app: "Música", external: true)),
+        ]
     }
 
     /// The island with Claude Code's sessions, from a fake snapshot of made-up
@@ -131,10 +150,17 @@ extension PreviewRenderer {
     }
 
     /// `stage` for any layout: taller than the music's 190 points when the island is.
+    /// `external`: an external screen, so a plain 24-point menu bar and a virtual
+    /// notch (no physical one drawn: the island itself is the notch).
     private static func stage(_ layout: IslandLayout, track: NowPlayingTrack?, artwork: IslandArtwork?,
-                              app: String, claude: ClaudeSnapshot? = nil) -> AnyView {
-        let notch = CGSize(width: 185, height: 32)
+                              app: String, claude: ClaudeSnapshot? = nil, external: Bool = false) -> AnyView {
+        let notch = CGSize(width: IslandMetrics.virtualNotchWidth, height: external ? 24 : 32)
         let height = max(190, IslandMetrics.size(for: layout, notch: notch).height + 30)
+        // The virtual notch's shape, as its panel draws it (hidden, the strip).
+        let outline = external
+            ? NotchGeometry(screenFrame: CGRect(x: 0, y: 0, width: 600, height: height), menuBarHeight: notch.height)
+                .outline(for: layout)
+            : nil
         return AnyView(
             ZStack(alignment: .top) {
                 LinearGradient(colors: [VibePalette.blue, VibePalette.purple],
@@ -142,16 +168,36 @@ extension PreviewRenderer {
                     .opacity(0.55)
                 VibeColor.canvas.opacity(0.35)
                     .frame(height: notch.height)
-                UnevenRoundedRectangle(bottomLeadingRadius: 8, bottomTrailingRadius: 8)
-                    .fill(VibeColor.canvas)
-                    .frame(width: notch.width, height: notch.height)
+                if external {
+                    fakeMenuItems(height: notch.height)
+                } else {
+                    UnevenRoundedRectangle(bottomLeadingRadius: 8, bottomTrailingRadius: 8)
+                        .fill(VibeColor.canvas)
+                        .frame(width: notch.width, height: notch.height)
+                }
                 IslandView(layout: layout, notch: notch, track: track,
-                           artwork: artwork, appName: app, claude: claude)
+                           artwork: artwork, appName: app, claude: claude, outline: outline)
             }
             .frame(width: 600, height: height)
             .background(VibeColor.canvas)
             .environment(\.islandOffscreen, true)
         )
+    }
+
+    /// A menu bar's items, as pale pills: some on the left, some on the right.
+    private static func fakeMenuItems(height: CGFloat) -> some View {
+        func pills(_ widths: [CGFloat]) -> some View {
+            HStack(spacing: 12) {
+                ForEach(widths.indices, id: \.self) { Capsule().fill(Color.white.opacity(0.4)).frame(width: widths[$0], height: 6) }
+            }
+        }
+        return HStack {
+            pills([10, 34, 26, 30, 38])
+            Spacer()
+            pills([14, 18, 54])
+        }
+        .padding(.horizontal, 14)
+        .frame(height: height)
     }
 
     static func fakeTrack(title: String, artist: String, duration: TimeInterval?,

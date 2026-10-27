@@ -125,30 +125,33 @@ enum IslandCoverPoll {
 // MARK: - The real system (AppKit, not pure)
 
 extension IslandFullScreen {
-    /// Whether an app in full screen covers the screen of `geometry` right now.
-    /// `false` when the system won't list its windows: the island stays.
+    /// Whether an app in full screen covers the screen of each geometry right now,
+    /// in the same order, from one read of the window list. `false` for all when the
+    /// system won't list its windows: the islands stay.
     @MainActor
-    static func current(on geometry: NotchGeometry) -> Bool {
-        guard let primaryHeight = NSScreen.screens.first?.frame.height,
+    static func current(on geometries: [NotchGeometry]) -> [Bool] {
+        guard !geometries.isEmpty, let primaryHeight = NSScreen.screens.first?.frame.height,
               let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                     kCGNullWindowID) as? [[String: Any]]
-        else { return false }
+        else { return geometries.map { _ in false } }
         let options = NSApp.currentSystemPresentationOptions
         let frontmost = NSWorkspace.shared.frontmostApplication.map {
             Frontmost(pid: $0.processIdentifier, isFullScreen: isFullScreen(options))
         }
-        let covered = covers(
-            screen: cgRect(fromAppKit: geometry.screenFrame, primaryScreenHeight: primaryHeight),
-            topInset: geometry.notchRect.height,
-            windows: windows(from: info),
-            ownPID: ProcessInfo.processInfo.processIdentifier,
-            frontmost: frontmost,
-            islandLevel: IslandPanel.level.rawValue)
+        let windows = windows(from: info)
+        let covered = geometries.map { geometry in
+            covers(screen: cgRect(fromAppKit: geometry.screenFrame, primaryScreenHeight: primaryHeight),
+                   topInset: geometry.notchRect.height,
+                   windows: windows,
+                   ownPID: ProcessInfo.processInfo.processIdentifier,
+                   frontmost: frontmost,
+                   islandLevel: IslandPanel.level.rawValue)
+        }
         // Testing by hand: `HONE_DEBUG_ISLAND=1` logs every look, to tell a miss of this
         // check from one of the window server's (native full screen, see `IslandPanel`).
         if ProcessInfo.processInfo.environment["HONE_DEBUG_ISLAND"] != nil {
-            NSLog("Hone island: covered=%d options=%lu frontmost=%d",
-                  covered ? 1 : 0, options.rawValue, frontmost?.pid ?? -1)
+            NSLog("Hone island: covered=%@ options=%lu frontmost=%d",
+                  covered.map { $0 ? "1" : "0" }.joined(separator: ","), options.rawValue, frontmost?.pid ?? -1)
         }
         return covered
     }

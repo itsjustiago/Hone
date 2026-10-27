@@ -95,6 +95,19 @@ struct IslandState {
         self.timing = timing
     }
 
+    /// The state of an island that has just come up (a screen plugged in) beside
+    /// `other`: its settings and what there is to show (the track, how long it has
+    /// been paused, the sessions), but no peek, no notice and no pointer. The next
+    /// different track still peeks.
+    init(contentOf other: IslandState) {
+        self.init(openOnHover: other.openOnHover, peekOnTrackChange: other.peekOnTrackChange, timing: other.timing)
+        trackID = other.trackID
+        lastTrackID = other.lastTrackID
+        isPlaying = other.isPlaying
+        pausedSince = other.pausedSince
+        claude = other.claude
+    }
+
     /// A track, or listed Claude sessions: the island keeps its window and its
     /// hover zone, and the hover and the click can open it.
     var hasContent: Bool { trackID != nil || claude.listed > 0 }
