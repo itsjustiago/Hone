@@ -52,6 +52,11 @@ enum IslandMetrics {
     static let largeCover: CGFloat = 72
     static let largeCoverCorner: CGFloat = 14
 
+    /// The cover's side in `presentation`: the large one only in the open player.
+    static func coverSize(for presentation: IslandPresentation) -> CGFloat {
+        presentation == .expanded ? largeCover : smallCover
+    }
+
     // MARK: The open player
     //
     // Below the notch row it stacks, top to bottom: `expandedTopGap`, the cover

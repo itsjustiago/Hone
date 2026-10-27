@@ -7,6 +7,10 @@ struct IslandCover: View {
     let size: CGFloat
     let corner: CGFloat
 
+    /// Dev tool: told of the island's cover frame each time the island is drawn
+    /// (`IslandFrameProbe`). Nil in the app.
+    nonisolated(unsafe) static var probe: ((CGRect) -> Void)?
+
     /// Which picture is up: a new one crossfades over the old one.
     private var key: ObjectIdentifier? { artwork.map { ObjectIdentifier($0.image) } }
 

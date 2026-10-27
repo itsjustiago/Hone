@@ -6,7 +6,7 @@ import SwiftUI
 /// The shape's spring, stepped by the panel one refresh at a time: it must land
 /// on its target, never carry further than the window has room for, bend (not
 /// jump) when a change interrupts another, come to rest, and never bounce under
-/// Reduce Motion.
+/// Reduce Motion. The cover rides it: one picture from the wing to the player.
 final class IslandOutlineTests: XCTestCase {
     private let notch = CGSize(width: 185, height: 32)
     private let refresh: TimeInterval = 1.0 / 120
@@ -17,7 +17,7 @@ final class IslandOutlineTests: XCTestCase {
     }
 
     private func values(_ outline: IslandOutline) -> [CGFloat] {
-        [outline.width, outline.height, outline.earRadius, outline.bottomRadius]
+        [outline.width, outline.height, outline.earRadius, outline.bottomRadius, outline.coverSize]
     }
 
     private func motion(_ from: IslandPresentation, _ to: IslandPresentation,
@@ -45,6 +45,7 @@ final class IslandOutlineTests: XCTestCase {
             XCTAssertEqual(shape.size, IslandMetrics.size(for: presentation, notch: notch))
             XCTAssertEqual(shape.earRadius, IslandMetrics.earRadius(for: presentation))
             XCTAssertEqual(shape.bottomRadius, IslandMetrics.bottomRadius(for: presentation))
+            XCTAssertEqual(shape.coverSize, IslandMetrics.coverSize(for: presentation))
         }
     }
 
@@ -132,6 +133,64 @@ final class IslandOutlineTests: XCTestCase {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: The cover
+
+    /// At rest the cover is where the layout leaves its place: the left wing's box
+    /// beside the notch, the player's inset in the open island (the cover row
+    /// centred when a stream has no progress row).
+    func testTheCoverAtRestSitsInThePlaceTheLayoutLeaves() {
+        let inset = (notch.height - IslandMetrics.smallCover) / 2
+        for presentation in [IslandPresentation.compact, .peek] {
+            let shape = outline(presentation)
+            for hasProgress in [true, false] {
+                XCTAssertEqual(shape.coverFrame(notch: notch, hasProgress: hasProgress),
+                               CGRect(x: IslandMetrics.earRadius(for: presentation) + inset, y: inset,
+                                      width: IslandMetrics.smallCover, height: IslandMetrics.smallCover),
+                               "\(presentation)")
+            }
+            XCTAssertEqual(shape.coverCorner, IslandMetrics.smallCoverCorner)
+        }
+        let open = outline(.expanded)
+        let x = IslandMetrics.earRadius(for: .expanded) + IslandMetrics.expandedInset
+        XCTAssertEqual(open.coverFrame(notch: notch, hasProgress: true),
+                       CGRect(x: x, y: notch.height + IslandMetrics.expandedTopGap,
+                              width: IslandMetrics.largeCover, height: IslandMetrics.largeCover))
+        let centred = notch.height + (IslandMetrics.expandedExtraHeight - IslandMetrics.largeCover) / 2
+        XCTAssertEqual(open.coverFrame(notch: notch, hasProgress: false).minY, centred, accuracy: 1e-9)
+        XCTAssertEqual(open.coverCorner, IslandMetrics.largeCoverCorner)
+    }
+
+    /// Opening and closing, the cover goes from one place to the other a little each
+    /// refresh (a jump would be tens of points), never out of the shape, and lands
+    /// in the same frame as the shape.
+    func testTheCoverTravelsWithTheShapeWithoutJumping() {
+        let changes: [(IslandPresentation, IslandPresentation)] = [
+            (.compact, .expanded), (.expanded, .compact), (.peek, .expanded), (.expanded, .peek),
+            (.hidden, .compact), (.compact, .peek),
+        ]
+        for (from, to) in changes {
+            for hasProgress in [true, false] {
+                let flight = fly(motion(from, to))
+                let shapes = [outline(from)] + flight.frames
+                let covers = shapes.map { $0.coverFrame(notch: notch, hasProgress: hasProgress) }
+                for (index, (before, after)) in zip(covers, covers.dropFirst()).enumerated() {
+                    let step = max(abs(after.minX - before.minX), abs(after.minY - before.minY),
+                                   abs(after.width - before.width))
+                    XCTAssertLessThan(step, 5, "\(from)→\(to) frame \(index)")
+                }
+                for (shape, cover) in zip(shapes, covers) {
+                    XCTAssertTrue(cover.minX >= 0 && cover.maxX <= shape.width
+                                  && cover.minY >= 0 && cover.maxY <= shape.height,
+                                  "\(from)→\(to): \(cover) out of \(shape.size)")
+                }
+                let landed = outline(to).coverFrame(notch: notch, hasProgress: hasProgress)
+                let last = covers.last ?? .zero
+                XCTAssertLessThan(max(abs(last.minX - landed.minX), abs(last.minY - landed.minY),
+                                      abs(last.width - landed.width)), 0.5, "\(from)→\(to)")
             }
         }
     }
