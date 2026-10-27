@@ -25,6 +25,20 @@ final class IslandPanelLayoutTests: XCTestCase {
     private var geometries: [NotchGeometry] { [internalScreen, screenAtOrigin] }
     private let all = IslandPresentation.allCases
 
+    /// The Claude page with one row, and with every row and the agents' strip.
+    private var claudePages: [IslandLayout] {
+        var smallest = IslandLayout.music(.expanded)
+        smallest.page = .claude
+        smallest.claudeRows = 1
+        var largest = smallest
+        largest.claudeRows = IslandMetrics.claudeMaxRows
+        largest.hasAgentsStrip = true
+        return [smallest, largest]
+    }
+
+    /// Every presentation of the music, and the Claude page at its smallest and largest.
+    private var layouts: [IslandLayout] { all.map(IslandLayout.music) + claudePages }
+
     // MARK: Frames
 
     func testEveryFrameIsCentredOnTheNotchAndGluedToTheTop() {
@@ -46,18 +60,24 @@ final class IslandPanelLayoutTests: XCTestCase {
             let canvas = geometry.canvas
             XCTAssertEqual(canvas.midX, geometry.notchRect.midX)
             XCTAssertEqual(canvas.maxY, geometry.screenFrame.maxY)
-            for presentation in all {
-                XCTAssertTrue(canvas.contains(geometry.islandFrame(for: presentation)), "\(presentation)")
+            for layout in layouts {
+                XCTAssertTrue(canvas.contains(geometry.islandFrame(for: layout)), "\(layout)")
+            }
+            for size in IslandMetrics.allSizes(notch: geometry.notchRect.size) {
+                XCTAssertTrue(canvas.contains(geometry.islandFrame(size: size)), "\(size)")
             }
         }
     }
 
-    func testTheCanvasHasRoomForTheOvershootAroundTheOpenPlayer() {
+    func testTheCanvasHasRoomForTheOvershootAroundTheLargestIsland() {
         let geometry = internalScreen
         let slack = IslandMotion.overshootSlack(notch: geometry.notchRect.size)
-        let open = geometry.islandFrame(for: .expanded)
-        XCTAssertEqual(geometry.canvas.width, open.width + 2 * slack.width)
-        XCTAssertEqual(geometry.canvas.height, open.height + slack.height)
+        // The Claude page with every row and the strip: as wide as the player, taller.
+        let largest = geometry.islandFrame(for: claudePages[1])
+        XCTAssertEqual(largest.width, geometry.islandFrame(for: .expanded).width)
+        XCTAssertGreaterThan(largest.height, geometry.islandFrame(for: .expanded).height)
+        XCTAssertEqual(geometry.canvas.width, largest.width + 2 * slack.width)
+        XCTAssertEqual(geometry.canvas.height, largest.height + slack.height)
     }
 
     // MARK: Window
@@ -167,13 +187,13 @@ final class IslandPanelLayoutTests: XCTestCase {
     func testTheRoomCoversTheOvershootEvenWhenAChangeInterruptsAnother() {
         let geometry = internalScreen
         let notch = geometry.notchRect.size
-        let size = { IslandMetrics.size(for: $0, notch: notch) }
+        let size = { (layout: IslandLayout) in IslandMetrics.size(for: layout, notch: notch) }
         let end = (IslandMotion.shapeSprings.map(\.settlingDuration).max() ?? 1) + 0.5
         var checked = 0
 
-        for a in all {
-            for b in all where b != a {
-                let first = IslandMotion.spring(from: a, to: b)
+        for a in layouts {
+            for b in layouts where b != a {
+                let first = IslandMotion.spring(from: a.presentation, to: b.presentation)
                 let window1 = geometry.windowFrame(current: geometry.islandFrame(for: a),
                                                    target: geometry.islandFrame(for: b))
                 let widths1 = path(from: size(a).width, to: size(b).width, velocity: 0, spring: first, until: end)
@@ -183,8 +203,8 @@ final class IslandPanelLayoutTests: XCTestCase {
                     XCTAssertLessThanOrEqual(h.value, window1.height, "\(a) → \(b)")
                     checked += 1
                 }
-                for c in all where c != b {
-                    let second = IslandMotion.spring(from: b, to: c)
+                for c in layouts where c != b {
+                    let second = IslandMotion.spring(from: b.presentation, to: c.presentation)
                     let window2 = geometry.windowFrame(current: window1, target: geometry.islandFrame(for: c))
                     for cut in stride(from: 6, to: min(widths1.count, 150), by: 12) {
                         let widths2 = path(from: widths1[cut].value, to: size(c).width,

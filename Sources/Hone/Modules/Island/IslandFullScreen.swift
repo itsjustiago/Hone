@@ -111,6 +111,17 @@ enum IslandFullScreen {
     }
 }
 
+/// When the controller looks at the screen on a timer (the full-screen poll).
+enum IslandCoverPoll {
+    /// While something can show up with no hover (`IslandState.canShowOnItsOwn`), and
+    /// while the island is covered: the poll is the only way to see a full screen end
+    /// without a change of Space. With only idle sessions listed and nothing covering,
+    /// the island is hidden and the hover looks for itself.
+    static func isNeeded(canShowOnItsOwn: Bool, covered: Bool) -> Bool {
+        canShowOnItsOwn || covered
+    }
+}
+
 // MARK: - The real system (AppKit, not pure)
 
 extension IslandFullScreen {

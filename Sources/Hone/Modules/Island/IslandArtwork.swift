@@ -99,4 +99,42 @@ enum IslandPalette {
     static let primaryText = VibeColor.text1
     static let secondaryText = VibeColor.text2
     static let tertiaryText = VibeColor.text3
+
+    // MARK: Claude
+
+    /// Claude's terracotta: a session at work.
+    static let claude = Color(.sRGB, red: 0xD9 / 255.0, green: 0x77 / 255.0, blue: 0x57 / 255.0)
+    /// The system's orange: a session waiting for the user.
+    static let claudeWaiting = Color(.sRGB, red: 1, green: 0x9F / 255.0, blue: 0x0A / 255.0)
+    /// Every session idle.
+    static let claudeIdle = Color.white.opacity(0.35)
+
+    /// Claude's colour for `activity`.
+    static func claude(_ activity: IslandClaudeActivity) -> Color {
+        switch activity {
+        case .none: return claudeIdle
+        case .working: return claude
+        case .waiting: return claudeWaiting
+        }
+    }
+
+    /// A session's colour by its state.
+    static func claude(_ state: ClaudeSession.State) -> Color {
+        switch state {
+        case .waiting: return claudeWaiting
+        case .working: return claude
+        case .idle: return claudeIdle
+        }
+    }
+
+    /// Under a hovered row, and under an agent the user has that is not running.
+    static let faintFill = Color.white.opacity(0.06)
+    /// Under a chip, and the page selector's track.
+    static let chipFill = Color.white.opacity(0.08)
+    /// The page selector's chosen segment.
+    static let selectedFill = Color.white.opacity(0.18)
+    /// Under a chip of the user's own agent at work in a session.
+    static let mineChipFill = claude.opacity(0.22)
+    /// Under an agent of the user's that is running somewhere.
+    static let litChipFill = claude.opacity(0.25)
 }

@@ -139,6 +139,91 @@ struct IslandControlButton: View {
     }
 }
 
+/// A dot on the small cover's top right corner, a little past it, ringed in the
+/// island's black: some Claude session waits (orange) or works (terracotta) while
+/// the music has the wings. Still; it fades in and out.
+struct IslandCoverBadge: View {
+    let activity: IslandClaudeActivity
+
+    static let size: CGFloat = 7
+    static let ring: CGFloat = 1.5
+    /// How far the dot reaches past the cover's top and right edges.
+    static let reach: CGFloat = 2
+
+    var body: some View {
+        ZStack {
+            if activity != .none {
+                Circle()
+                    .fill(IslandPalette.claude(activity))
+                    .frame(width: Self.size, height: Self.size)
+                    .padding(Self.ring)
+                    .background(Circle().fill(IslandPalette.island))
+                    .transition(.opacity)
+            }
+        }
+        .offset(x: Self.reach + Self.ring, y: -(Self.reach + Self.ring))
+        .animation(IslandMotion.badge, value: activity)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The open island's two pages, music and Claude, as a small segmented control in
+/// the notch row's right wing. Each segment takes the row's full height to click.
+struct IslandPageSelector: View {
+    let page: IslandPage
+    /// Claude's segment shows its glyph in this state's colour (still).
+    let activity: IslandClaudeActivity
+    /// The notch row's height.
+    let height: CGFloat
+    let select: (IslandPage) -> Void
+
+    static let segment = CGSize(width: 26, height: 20)
+    static let padding: CGFloat = 2
+    static var width: CGFloat { 2 * segment.width + 2 * padding }
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Capsule()
+                .fill(IslandPalette.chipFill)
+                .frame(width: Self.width, height: Self.segment.height + 2 * Self.padding)
+            Capsule()
+                .fill(IslandPalette.selectedFill)
+                .frame(width: Self.segment.width, height: Self.segment.height)
+                .offset(x: Self.padding + (page == .music ? 0 : Self.segment.width))
+                .animation(reduceMotion ? IslandMotion.reduced : IslandMotion.selector, value: page)
+            HStack(spacing: 0) {
+                segment(.music, label: "Música") {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(page == .music ? IslandPalette.primaryText : IslandPalette.secondaryText)
+                }
+                segment(.claude, label: "Claude") {
+                    ClaudeGlyph(color: IslandPalette.claude(activity), size: 11)
+                }
+            }
+            .padding(.horizontal, Self.padding)
+        }
+        .frame(width: Self.width, height: height)
+    }
+
+    private func segment(_ target: IslandPage, label: String,
+                         @ViewBuilder glyph: () -> some View) -> some View {
+        Button {
+            if target != page { select(target) }
+        } label: {
+            glyph()
+                .frame(width: Self.segment.width, height: height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(IslandPressStyle())
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(page == target ? .isSelected : [])
+    }
+}
+
 struct IslandPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

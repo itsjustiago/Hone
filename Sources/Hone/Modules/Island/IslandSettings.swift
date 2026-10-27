@@ -12,9 +12,14 @@ final class IslandSettings {
     /// On a track change, show the title for a few seconds.
     var peekOnTrackChange: Bool { didSet { d.set(peekOnTrackChange, forKey: "island.peekOnTrackChange") } }
 
+    /// Claude Code's sessions and the user's agents in the island. Without
+    /// `~/.claude` nothing shows either way.
+    var showClaudeSessions: Bool { didSet { d.set(showClaudeSessions, forKey: "island.claudeSessions") } }
+
     init() {
         let d = UserDefaults.standard
         openOnHover = d.object(forKey: "island.openOnHover") as? Bool ?? true
         peekOnTrackChange = d.object(forKey: "island.peekOnTrackChange") as? Bool ?? true
+        showClaudeSessions = d.object(forKey: "island.claudeSessions") as? Bool ?? true
     }
 }

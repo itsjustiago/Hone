@@ -46,6 +46,10 @@ enum IslandMotion {
     static let contentScale: CGFloat = 0.96
     /// A new track: the cover, the titles and the tint crossfade.
     static let trackChange = Animation.easeInOut(duration: 0.3)
+    /// The page selector's chosen segment sliding over: short, a hint of bounce.
+    static let selector = Animation.spring(Spring(duration: 0.28, bounce: 0.12))
+    /// Claude's badge on the cover, and its colour, coming and going.
+    static let badge = Animation.easeInOut(duration: 0.2)
 
     // MARK: Choosing
 
@@ -78,11 +82,11 @@ enum IslandMotion {
 
     /// Room past the island's frame for the overshoot: `width` on each side,
     /// `height` at the bottom (the top is the screen's edge). From the largest
-    /// jump between two presentations and the bounciest spring, doubled: a change
+    /// jump between two sizes and the bounciest spring, doubled: a change
     /// that interrupts another keeps its speed and can carry further than one from
     /// rest. Plus a couple of points for rounding.
     static func overshootSlack(notch: CGSize) -> CGSize {
-        let sizes = IslandPresentation.allCases.map { IslandMetrics.size(for: $0, notch: notch) }
+        let sizes = IslandMetrics.allSizes(notch: notch)
         let widths = sizes.map(\.width), heights = sizes.map(\.height)
         let jumpWidth = (widths.max() ?? 0) - (widths.min() ?? 0)
         let jumpHeight = (heights.max() ?? 0) - (heights.min() ?? 0)

@@ -6,6 +6,8 @@ struct IslandSettingsView: View {
     /// Whether the built-in screen has a notch to draw on right now. Re-read when
     /// the screens change (lid closed, display mode switched).
     @State private var hasNotch = NotchGeometry.current() != nil
+    /// Claude Code is used on this Mac: only then the Claude section shows.
+    @State private var hasClaude = ClaudeActivityReader().rootExists
 
     var body: some View {
         @Bindable var settings = module.settings
@@ -34,6 +36,17 @@ struct IslandSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
+            }
+
+            if hasClaude {
+                SettingsSection(title: "Claude") {
+                    ToggleRow(
+                        title: "Sessões do Claude",
+                        subtitle: "Mostra no notch as sessões do Claude Code e os teus agentes.",
+                        tint: tint,
+                        isOn: $settings.showClaudeSessions
+                    )
+                }
             }
 
             SettingsSection(title: "Ecrã") {
