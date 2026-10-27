@@ -1,15 +1,17 @@
 import AppKit
 import Observation
 
-/// Runs the island while the tool is on: reads the music, feeds `IslandState`,
-/// and shows what it decides in the panel over the notch. Off, nothing runs: no
-/// adapter, no panel, no timer, no observer.
+/// Runs the island while the tool is on: reads the music and Claude Code's
+/// sessions, feeds `IslandState`, and shows what it decides in the panel over the
+/// notch. Off, nothing runs: no adapter, no monitor, no panel, no timer, no observer.
 @MainActor
 final class IslandController {
     private let settings: IslandSettings
     /// Starts nothing until `start()` (see `NowPlayingClient`); kept across
     /// restarts so Settings can always read its status.
     let client = NowPlayingClient()
+    /// Claude Code's sessions: on while the island runs and the setting is on.
+    private let claudeMonitor = ClaudeActivityMonitor()
 
     private var panel: IslandPanel?
     private var state = IslandState()
@@ -23,8 +25,11 @@ final class IslandController {
     private var timer: Timer?
     /// Re-checks the pointer after a hover exit that the pointer never made.
     private var hoverCheck: Timer?
-    /// Polls for an app in full screen while there is a track to show. See `startCoverPoll`.
+    /// Polls for an app in full screen while something can show on its own, or the
+    /// island is covered. See `startCoverPoll`.
     private var coverTimer: Timer?
+    /// One look at the screen once a Space has settled, when there is no poll to bring forward.
+    private var settleCheck: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     /// What the island may show of the raw now-playing: music apps only.
@@ -35,7 +40,6 @@ final class IslandController {
     /// Whether the filter holds music, observable for the Settings line.
     private let presence = MusicPresence()
 
-    private var hasTrack = false
     /// An app in full screen covers the notch: the panel stays away until it ends.
     private var covered = false
     /// What the state was last told about the pointer.
@@ -64,7 +68,9 @@ final class IslandController {
             hover: { [weak self] inside in self?.hoverChanged(inside) },
             click: { [weak self] in self?.clicked() },
             send: { [weak self] command in self?.send(command) },
-            openApp: { [weak self] in self?.openPlayer() }
+            openApp: { [weak self] in self?.openPlayer() },
+            openClaudeSession: { [weak self] session in self?.openClaudeSession(session) },
+            selectPage: { [weak self] page in self?.selectPage(page) }
         ))
         geometry = NotchGeometry.current()
         observeScreens()
@@ -73,6 +79,9 @@ final class IslandController {
         observeSettings(mine)
         client.start()
         observeTrack(mine)
+        claudeMonitor.onNotices = { [weak self] notices in self?.claudeChanged(notices: notices) }
+        updateClaudeMonitor()
+        observeClaude(mine)
     }
 
     /// Idempotent: safe to call when stopped or twice in a row.
@@ -80,11 +89,15 @@ final class IslandController {
         isRunning = false
         generation += 1
         client.stop()
+        claudeMonitor.stop()
+        claudeMonitor.onNotices = nil
         timer?.invalidate()
         timer = nil
         hoverCheck?.invalidate()
         hoverCheck = nil
         stopCoverPoll()
+        settleCheck?.invalidate()
+        settleCheck = nil
         for (center, token) in observers { center.removeObserver(token) }
         observers.removeAll()
         panel?.close()
@@ -93,7 +106,6 @@ final class IslandController {
         filter = IslandMusicFilter()
         lastRaw = nil
         presence.hasMusic = false
-        hasTrack = false
         covered = false
         hovering = false
         artworkKey = nil
@@ -129,15 +141,55 @@ final class IslandController {
 
     private func observeSettings(_ mine: Int) {
         guard isRunning, mine == generation else { return }
-        let (openOnHover, peek) = withObservationTracking {
-            (settings.openOnHover, settings.peekOnTrackChange)
+        let (openOnHover, peek, _) = withObservationTracking {
+            (settings.openOnHover, settings.peekOnTrackChange, settings.showClaudeSessions)
         } onChange: { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.observeSettings(mine) } }
         }
+        // Off, the monitor stops and its snapshot goes to nil, which `observeClaude` hears.
+        updateClaudeMonitor()
         // The flags are plain fields of the state: changing them keeps the track.
         guard openOnHover != state.openOnHover || peek != state.peekOnTrackChange else { return }
         state.openOnHover = openOnHover
         state.peekOnTrackChange = peek
+        apply()
+    }
+
+    /// The monitor runs while the island does and the setting is on. Both calls are
+    /// idempotent.
+    private func updateClaudeMonitor() {
+        if isRunning && settings.showClaudeSessions {
+            claudeMonitor.start()
+        } else {
+            claudeMonitor.stop()
+        }
+    }
+
+    private func observeClaude(_ mine: Int) {
+        guard isRunning, mine == generation else { return }
+        withObservationTracking { _ = claudeMonitor.snapshot } onChange: { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.observeClaude(mine) } }
+        }
+        claudeChanged(notices: [])
+    }
+
+    /// A new snapshot, with what it had to say. The monitor hands the notices over
+    /// with `snapshot` already new, before the observation comes back: the summary
+    /// goes to the state first, so a notice never shows on the old one, and the
+    /// observation then finds nothing new.
+    private func claudeChanged(notices: [ClaudeNotice]) {
+        guard isRunning else { return }
+        let snapshot = claudeMonitor.snapshot
+        if let model = panel?.model, model.claude != snapshot { model.claude = snapshot }
+        let summary = IslandClaude(snapshot)
+        guard summary != state.claude || !notices.isEmpty else { return }
+        let now = Date()
+        if summary != state.claude {
+            let hadContent = state.hasContent
+            state.handle(.claude(summary), at: now)
+            contentChanged(hadContent: hadContent, at: now)
+        }
+        if !notices.isEmpty { state.handle(.claudeNotices(notices), at: now) }
         apply()
     }
 
@@ -195,14 +247,33 @@ final class IslandController {
     }
 
     private func frontChanged(spaceChanged: Bool) {
-        // Without a track the panel is off the screen anyway: nothing to hide or show.
-        guard isRunning, hasTrack else { return }
+        // With nothing to show the panel is off the screen anyway: nothing to hide or show.
+        guard isRunning, state.hasContent else { return }
         refreshCover()
         // Back from a full-screen Space the window server hid the panel without telling
         // us, so what the state holds about the pointer may be stale.
         if spaceChanged { confirmPointer() }
-        // The notification comes while the Space is still sliding: look again once it settles.
-        coverTimer?.fireDate = Date().addingTimeInterval(0.7)
+        lookAgainOnceSettled()
+    }
+
+    /// The notification comes while the Space is still sliding: look again once it settles.
+    private func lookAgainOnceSettled() {
+        let settled = Date().addingTimeInterval(0.7)
+        if let coverTimer {
+            coverTimer.fireDate = settled
+            return
+        }
+        // No poll (only idle sessions listed): a single look, then the timer is gone.
+        settleCheck?.invalidate()
+        let check = Timer(fire: settled, interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.settleCheck = nil
+                if self.isRunning, self.state.hasContent { self.refreshCover() }
+            }
+        }
+        RunLoop.main.add(check, forMode: .common)
+        settleCheck = check
     }
 
     /// Looks at the screen again and, if the answer changed, shows or hides the panel.
@@ -226,13 +297,32 @@ final class IslandController {
         let now = geometry.map { IslandFullScreen.current(on: $0) } ?? false
         guard now != covered else { return false }
         covered = now
+        // Covered keeps the poll alive, and ends it when it lifts.
+        updateCoverPoll(lookedJustNow: true)
         return true
+    }
+
+    /// Starts or stops the poll to match `IslandCoverPoll.isNeeded`. Called when the
+    /// content changes and when `covered` does. Covered with nothing to show needs
+    /// no poll: the panel is away anyway.
+    private func updateCoverPoll(lookedJustNow: Bool = false) {
+        if IslandCoverPoll.isNeeded(canShowOnItsOwn: state.canShowOnItsOwn, covered: covered && state.hasContent) {
+            startCoverPoll()
+            return
+        }
+        guard coverTimer != nil else { return }
+        stopCoverPoll()
+        // The poll goes quiet with sessions still listed: one last look, so `covered`
+        // isn't left as it was up to 2 s ago. If the screen is covered, it starts again.
+        if state.hasContent, !lookedJustNow { updateCover() }
     }
 
     /// A borderless window can go full screen with no Space change and no change of
     /// the app in front (a game when it finishes loading, a player's own full screen,
     /// Keynote), so nothing announces it: the screen is looked at every few seconds.
-    /// Only while there is a track to show; without one the panel is away anyway.
+    /// Only while something can show on its own (a track, a session at work) or the
+    /// island is covered; with only idle sessions listed it is hidden, and the hover
+    /// looks for itself.
     private func startCoverPoll() {
         guard coverTimer == nil else { return }
         let poll = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
@@ -254,8 +344,8 @@ final class IslandController {
         // No hover for an island that isn't there.
         guard isRunning, !covered, let geometry else { return }
         let now = Date()
-        let frame = geometry.islandFrame(for: state.presentation(at: now))
-        switch IslandHover.correction(hovering: hovering, hasTrack: hasTrack,
+        let frame = geometry.islandFrame(for: state.layout(at: now))
+        switch IslandHover.correction(hovering: hovering, hasContent: state.hasContent,
                                       pointerInside: IslandHover.pointerInside(NSEvent.mouseLocation, frame: frame)) {
         case .none:
             return
@@ -273,36 +363,45 @@ final class IslandController {
 
     private func trackChanged(_ track: NowPlayingTrack?) {
         let now = Date()
-        let hadTrack = hasTrack
+        let hadContent = state.hasContent
         if let track {
             state.handle(.track(id: track.id, isPlaying: track.isPlaying), at: now)
-            hasTrack = true
             show(track)
         } else {
             state.handle(.trackCleared, at: now)
-            hasTrack = false
-            hovering = false
         }
-        if hasTrack != hadTrack {
-            if hasTrack {
-                // Look before the first `apply()`: a track that starts while an app is in
-                // full screen must not flash the island over it.
+        contentChanged(hadContent: hadContent, at: now)
+        apply()
+    }
+
+    /// After the track or the Claude sessions changed, keeps the rest in step with
+    /// what the island has to show: the full-screen poll, and the pointer.
+    private func contentChanged(hadContent: Bool, at now: Date) {
+        let hasContent = state.hasContent
+        if hasContent != hadContent {
+            if hasContent {
+                // Look before the first `apply()`: something that shows up while an app is
+                // in full screen must not flash the island over it.
                 updateCover()
-                startCoverPoll()
             } else {
-                stopCoverPoll()
+                // The state forgot the pointer with the last thing to show.
+                hoverCheck?.invalidate()
+                hoverCheck = nil
+                hovering = false
             }
         }
+        // Not only when `hasContent` flips: a session going from idle to working, or a
+        // track going away with sessions listed, changes what the poll is for.
+        updateCoverPoll()
         // A pointer already resting on the notch gets no new "entered" from AppKit.
         if let geometry, !covered, IslandHover.shouldReenter(
-            hadTrack: hadTrack, hasTrack: hasTrack,
+            hadContent: hadContent, hasContent: hasContent,
             pointerInside: IslandHover.pointerInside(
-                NSEvent.mouseLocation, frame: geometry.islandFrame(for: state.presentation(at: now)))
+                NSEvent.mouseLocation, frame: geometry.islandFrame(for: state.layout(at: now)))
         ) {
             hovering = true
             state.handle(.hoverEntered, at: now)
         }
-        apply()
     }
 
     /// Fills the view's model, decoding the cover and naming the app only when
@@ -326,9 +425,15 @@ final class IslandController {
         if inside {
             hoverCheck?.invalidate()
             hoverCheck = nil
-            // Without a track the state ignores it; marking it here would swallow
-            // the real "entered" once a track arrives.
-            guard hasTrack, !hovering else { return }
+            // With nothing to show the state ignores it; marking it here would
+            // swallow the real "entered" once something arrives.
+            guard state.hasContent, !hovering else { return }
+            // Without the poll (only idle sessions) nobody has looked at the screen:
+            // look before the island opens over a full-screen app.
+            if coverTimer == nil, updateCover() {
+                apply()
+                if covered { return }
+            }
             hovering = true
             state.handle(.hoverEntered, at: Date())
             apply()
@@ -350,7 +455,7 @@ final class IslandController {
     private func releaseHover() {
         hoverCheck?.invalidate()
         hoverCheck = nil
-        guard IslandHover.correction(hovering: hovering, hasTrack: hasTrack, pointerInside: false) == .exit
+        guard IslandHover.correction(hovering: hovering, hasContent: state.hasContent, pointerInside: false) == .exit
         else { return }
         hovering = false
         state.handle(.hoverExited, at: Date())
@@ -385,6 +490,20 @@ final class IslandController {
         IslandPlayerApp.activate(bundleID: track.bundleID, pid: track.pid)
     }
 
+    private func selectPage(_ page: IslandPage) {
+        guard isRunning else { return }
+        state.handle(.pageSelected(page), at: Date())
+        apply()
+    }
+
+    /// Opens the session in the Claude app, then folds the island: the user is off
+    /// to the app. Without the app, it stays.
+    private func openClaudeSession(_ session: ClaudeSession) {
+        guard isRunning, IslandClaudeApp.open(session) else { return }
+        state.handle(.dismissed, at: Date())
+        apply()
+    }
+
     // MARK: Output
 
     /// Shows what the state says now and sleeps until it may say something else.
@@ -401,7 +520,7 @@ final class IslandController {
             return
         }
         let now = Date()
-        panel.show(state.presentation(at: now), on: geometry, keepsWindow: hasTrack)
+        panel.show(state.layout(at: now), on: geometry, keepsWindow: state.hasContent)
         guard let next = state.nextChange(after: now) else { return }
         let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.apply() }

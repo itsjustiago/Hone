@@ -316,4 +316,14 @@ final class IslandFullScreenTests: XCTestCase {
         XCTAssertTrue(covers(IslandFullScreen.windows(from: info)))
         XCTAssertFalse(covers(IslandFullScreen.windows(from: info.reversed())))
     }
+
+    // MARK: The poll
+
+    func testThePollRunsForSomethingThatCanShowOrACoveredIsland() {
+        XCTAssertTrue(IslandCoverPoll.isNeeded(canShowOnItsOwn: true, covered: false))
+        // Covered with only idle sessions: the poll is how the end of the full screen is seen.
+        XCTAssertTrue(IslandCoverPoll.isNeeded(canShowOnItsOwn: false, covered: true))
+        XCTAssertTrue(IslandCoverPoll.isNeeded(canShowOnItsOwn: true, covered: true))
+        XCTAssertFalse(IslandCoverPoll.isNeeded(canShowOnItsOwn: false, covered: false))
+    }
 }

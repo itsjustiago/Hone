@@ -164,32 +164,32 @@ final class IslandPlaybackTests: XCTestCase {
     // MARK: Hover after a track shows up
 
     func testAPointerAlreadyOnTheNotchIsReportedWhenATrackArrives() {
-        XCTAssertTrue(IslandHover.shouldReenter(hadTrack: false, hasTrack: true, pointerInside: true))
+        XCTAssertTrue(IslandHover.shouldReenter(hadContent: false, hasContent: true, pointerInside: true))
     }
 
     func testNoHoverIsReportedOtherwise() {
-        XCTAssertFalse(IslandHover.shouldReenter(hadTrack: false, hasTrack: true, pointerInside: false))
+        XCTAssertFalse(IslandHover.shouldReenter(hadContent: false, hasContent: true, pointerInside: false))
         // A track that only changed: the hover the state already has stands.
-        XCTAssertFalse(IslandHover.shouldReenter(hadTrack: true, hasTrack: true, pointerInside: true))
-        XCTAssertFalse(IslandHover.shouldReenter(hadTrack: true, hasTrack: false, pointerInside: true))
-        XCTAssertFalse(IslandHover.shouldReenter(hadTrack: false, hasTrack: false, pointerInside: true))
+        XCTAssertFalse(IslandHover.shouldReenter(hadContent: true, hasContent: true, pointerInside: true))
+        XCTAssertFalse(IslandHover.shouldReenter(hadContent: true, hasContent: false, pointerInside: true))
+        XCTAssertFalse(IslandHover.shouldReenter(hadContent: false, hasContent: false, pointerInside: true))
     }
 
     func testAHoverIsReleasedWhenThePointerIsNotThereAnyMore() {
         // The panel left (no geometry): nothing is under the pointer, whatever the state holds.
-        XCTAssertEqual(IslandHover.correction(hovering: true, hasTrack: true, pointerInside: false), .exit)
-        XCTAssertEqual(IslandHover.correction(hovering: true, hasTrack: false, pointerInside: false), .exit)
+        XCTAssertEqual(IslandHover.correction(hovering: true, hasContent: true, pointerInside: false), .exit)
+        XCTAssertEqual(IslandHover.correction(hovering: true, hasContent: false, pointerInside: false), .exit)
     }
 
     func testAPointerThatRestsWhereThePanelReturnsIsReported() {
-        XCTAssertEqual(IslandHover.correction(hovering: false, hasTrack: true, pointerInside: true), .enter)
+        XCTAssertEqual(IslandHover.correction(hovering: false, hasContent: true, pointerInside: true), .enter)
     }
 
     func testNoCorrectionWhenTheStateAlreadyAgrees() {
-        XCTAssertEqual(IslandHover.correction(hovering: true, hasTrack: true, pointerInside: true), .none)
-        XCTAssertEqual(IslandHover.correction(hovering: false, hasTrack: true, pointerInside: false), .none)
+        XCTAssertEqual(IslandHover.correction(hovering: true, hasContent: true, pointerInside: true), .none)
+        XCTAssertEqual(IslandHover.correction(hovering: false, hasContent: true, pointerInside: false), .none)
         // Without a track the state ignores hover; reporting it would swallow the real one.
-        XCTAssertEqual(IslandHover.correction(hovering: false, hasTrack: false, pointerInside: true), .none)
+        XCTAssertEqual(IslandHover.correction(hovering: false, hasContent: false, pointerInside: true), .none)
     }
 
     func testReleasingTheHoverLeavesAStateThatReopensClosed() {

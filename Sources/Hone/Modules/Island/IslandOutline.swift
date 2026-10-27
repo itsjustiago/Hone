@@ -16,13 +16,19 @@ struct IslandOutline: VectorArithmetic {
 
     var size: CGSize { CGSize(width: width, height: height) }
 
-    /// `presentation`'s shape at rest.
-    init(_ presentation: IslandPresentation, notch: CGSize) {
-        let size = IslandMetrics.size(for: presentation, notch: notch)
+    /// `layout`'s shape at rest. The radii are the presentation's: both pages of the
+    /// open island share them, and only the height and the cover move between them.
+    init(_ layout: IslandLayout, notch: CGSize) {
+        let size = IslandMetrics.size(for: layout, notch: notch)
         self.init(width: size.width, height: size.height,
-                  earRadius: IslandMetrics.earRadius(for: presentation),
-                  bottomRadius: IslandMetrics.bottomRadius(for: presentation),
-                  coverSize: IslandMetrics.coverSize(for: presentation))
+                  earRadius: IslandMetrics.earRadius(for: layout.presentation),
+                  bottomRadius: IslandMetrics.bottomRadius(for: layout.presentation),
+                  coverSize: IslandMetrics.coverSize(for: layout))
+    }
+
+    /// The shape at rest of `presentation` with the music alone.
+    init(_ presentation: IslandPresentation, notch: CGSize) {
+        self.init(IslandLayout.music(presentation), notch: notch)
     }
 
     init(width: CGFloat, height: CGFloat, earRadius: CGFloat, bottomRadius: CGFloat, coverSize: CGFloat) {
@@ -98,6 +104,25 @@ extension IslandOutline {
         let progress = coverProgress
         return CGRect(x: wing.x + (player.x - wing.x) * progress, y: wing.y + (player.y - wing.y) * progress,
                       width: coverSize, height: coverSize)
+    }
+}
+
+// MARK: - The wings
+
+extension IslandOutline {
+    /// The small cover's box in the left wing, where the cover is at rest beside the
+    /// notch, whatever the cover is doing: Claude's glyph sits here. On this outline,
+    /// so it travels with the shape's edge as the cover does.
+    func leadingWingSlot(notch: CGSize) -> CGRect {
+        var wing = self
+        wing.coverSize = IslandMetrics.smallCover
+        return wing.coverFrame(notch: notch, hasProgress: false)
+    }
+
+    /// `leadingWingSlot` mirrored into the right wing, where the equaliser sits.
+    func trailingWingSlot(notch: CGSize) -> CGRect {
+        let slot = leadingWingSlot(notch: notch)
+        return CGRect(x: width - slot.maxX, y: slot.minY, width: slot.width, height: slot.height)
     }
 }
 

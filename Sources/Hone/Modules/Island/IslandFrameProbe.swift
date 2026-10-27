@@ -137,7 +137,7 @@ final class IslandFrameProbe {
             """)
 
         // Warm-up: the window is made and ordered front; round 0 draws everything once.
-        panel.show(.hidden, on: geometry, keepsWindow: true)
+        panel.show(.empty, on: geometry, keepsWindow: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [self] in
             let window = NSApp.windows.first { $0 is IslandWindow }
             write("window: occlusion visible \(window?.occlusionState.contains(.visible) ?? false), "
@@ -199,7 +199,7 @@ final class IslandFrameProbe {
         let start = CACurrentMediaTime()
         switch step {
         case .show(let presentation):
-            panel.show(presentation, on: geometry, keepsWindow: true)
+            panel.show(.music(presentation), on: geometry, keepsWindow: true)
         case .newTrack:
             trackIndex = (trackIndex + 1) % tracks.count
             fill(tracks[trackIndex])

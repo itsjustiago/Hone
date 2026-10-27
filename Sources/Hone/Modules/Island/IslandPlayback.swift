@@ -104,13 +104,14 @@ struct IslandEqualizerLevel: Equatable {
     }
 }
 
-/// Hover rules the state machine leaves to the controller.
+/// Hover rules the state machine leaves to the controller. "Content" is
+/// `IslandState.hasContent`: a track, or listed Claude sessions.
 enum IslandHover {
-    /// `IslandState` ignores a hover while no track is loaded, and AppKit sends no
-    /// new "entered" to a pointer that never moved. So when a track shows up under
-    /// a pointer that is already over the notch, the controller reports it again.
-    static func shouldReenter(hadTrack: Bool, hasTrack: Bool, pointerInside: Bool) -> Bool {
-        !hadTrack && hasTrack && pointerInside
+    /// `IslandState` ignores a hover while it has nothing to show, and AppKit sends
+    /// no new "entered" to a pointer that never moved. So when something shows up
+    /// under a pointer that is already over the notch, the controller reports it again.
+    static func shouldReenter(hadContent: Bool, hasContent: Bool, pointerInside: Bool) -> Bool {
+        !hadContent && hasContent && pointerInside
     }
 
     /// What the controller must tell the state to bring its idea of the pointer in
@@ -121,9 +122,9 @@ enum IslandHover {
     /// external display, screen layout change). A hover the state still holds for a
     /// panel that is gone would bring the island back open and stuck, and a pointer
     /// resting where the panel reappears gets no "entered" from AppKit.
-    static func correction(hovering: Bool, hasTrack: Bool, pointerInside: Bool) -> Correction {
+    static func correction(hovering: Bool, hasContent: Bool, pointerInside: Bool) -> Correction {
         if hovering && !pointerInside { return .exit }
-        if !hovering && hasTrack && pointerInside { return .enter }
+        if !hovering && hasContent && pointerInside { return .enter }
         return .none
     }
 

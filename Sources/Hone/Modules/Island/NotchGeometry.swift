@@ -28,9 +28,14 @@ struct NotchGeometry: Equatable {
         return CGRect(x: x, y: screenFrame.maxY - size.height, width: size.width, height: size.height)
     }
 
-    /// `islandFrame(size:)` for what the island shows.
+    /// `islandFrame(size:)` for a presentation of the music alone.
     func islandFrame(for presentation: IslandPresentation) -> CGRect {
         islandFrame(size: IslandMetrics.size(for: presentation, notch: notchRect.size))
+    }
+
+    /// `islandFrame(size:)` for what the island shows.
+    func islandFrame(for layout: IslandLayout) -> CGRect {
+        islandFrame(size: IslandMetrics.size(for: layout, notch: notchRect.size))
     }
 }
 
@@ -55,6 +60,14 @@ enum IslandMetrics {
     /// The cover's side in `presentation`: the large one only in the open player.
     static func coverSize(for presentation: IslandPresentation) -> CGFloat {
         presentation == .expanded ? largeCover : smallCover
+    }
+
+    /// The cover's side in `layout`: the large one only on the open music page. On
+    /// the Claude page it is the small one in the left wing, and where no cover is
+    /// drawn (Claude's wings, hidden) it stays small too, so it always grows from
+    /// the wing.
+    static func coverSize(for layout: IslandLayout) -> CGFloat {
+        layout.presentation == .expanded && layout.page == .music ? largeCover : smallCover
     }
 
     // MARK: The open player
@@ -108,6 +121,54 @@ enum IslandMetrics {
         }
     }
 
+    // MARK: The Claude page
+    //
+    // Below the notch row it stacks, top to bottom: `claudeTopGap`, the session rows
+    // (at most `claudeMaxRows`; the list scrolls past that), the strip «Os teus
+    // agentes» when the user has agents of their own, and `claudeBottomPadding`. It
+    // is as wide as the open player: switching pages only moves the height.
+
+    static let claudeTopGap: CGFloat = 8
+    static let claudeRowHeight: CGFloat = 34
+    static let claudeMaxRows = 4
+    /// The strip «Os teus agentes»: a gap over it, its caption, then two rows of
+    /// chips, each with `agentChipSpacing` above it.
+    static let agentsStripGap: CGFloat = 10
+    static let agentsCaptionHeight: CGFloat = 14
+    static let agentChipHeight: CGFloat = 20
+    static let agentChipSpacing: CGFloat = 4
+    static let agentChipRows = 2
+    static var agentsStripHeight: CGFloat {
+        agentsStripGap + agentsCaptionHeight + CGFloat(agentChipRows) * (agentChipSpacing + agentChipHeight)
+    }
+    static let claudeBottomPadding: CGFloat = 12
+
+    /// What the Claude page adds below the notch row.
+    static func claudeExtraHeight(rows: Int, hasAgentsStrip: Bool) -> CGFloat {
+        claudeTopGap + CGFloat(min(max(rows, 0), claudeMaxRows)) * claudeRowHeight
+            + (hasAgentsStrip ? agentsStripHeight : 0) + claudeBottomPadding
+    }
+
+    /// The island's size for what it shows: the presentation's, but the Claude page
+    /// is as tall as its rows and strip.
+    static func size(for layout: IslandLayout, notch: CGSize) -> CGSize {
+        let size = size(for: layout.presentation, notch: notch)
+        guard layout.presentation == .expanded, layout.page == .claude else { return size }
+        return CGSize(width: size.width,
+                      height: notch.height + claudeExtraHeight(rows: layout.claudeRows,
+                                                               hasAgentsStrip: layout.hasAgentsStrip))
+    }
+
+    /// Every size the island can take: each presentation's, and the Claude page's
+    /// smallest and largest. The canvas and the springs' room are made from them.
+    static func allSizes(notch: CGSize) -> [CGSize] {
+        let width = size(for: .expanded, notch: notch).width
+        let claude = [(1, false), (claudeMaxRows, true)].map { rows, strip in
+            CGSize(width: width, height: notch.height + claudeExtraHeight(rows: rows, hasAgentsStrip: strip))
+        }
+        return IslandPresentation.allCases.map { size(for: $0, notch: notch) } + claude
+    }
+
     static func size(for presentation: IslandPresentation, notch: CGSize) -> CGSize {
         let compactWidth = notch.width + 2 * (notch.height + wingExtra)
         switch presentation {
@@ -131,12 +192,13 @@ enum IslandMetrics {
 /// sees its container change, so the island, drawn at the top centre of the canvas,
 /// grows and shrinks from the notch whatever the window does around it.
 extension NotchGeometry {
-    /// Room for every presentation plus the springs' overshoot, centred on the notch
-    /// and glued to the top of the screen. Not held inside the screen: on a real notch
-    /// it never reaches an edge, and holding it would take the island off the notch.
+    /// Room for every size the island takes (the largest is the Claude page with
+    /// every row and the agents' strip) plus the springs' overshoot, centred on the
+    /// notch and glued to the top of the screen. Not held inside the screen: on a real
+    /// notch it never reaches an edge, and holding it would take the island off the notch.
     var canvas: CGRect {
         let slack = IslandMotion.overshootSlack(notch: notchRect.size)
-        let sizes = IslandPresentation.allCases.map { IslandMetrics.size(for: $0, notch: notchRect.size) }
+        let sizes = IslandMetrics.allSizes(notch: notchRect.size)
         let width = (sizes.map(\.width).max() ?? 0) + 2 * slack.width
         let height = (sizes.map(\.height).max() ?? 0) + slack.height
         return CGRect(x: notchRect.midX - width / 2, y: screenFrame.maxY - height, width: width, height: height)

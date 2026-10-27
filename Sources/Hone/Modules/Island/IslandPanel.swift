@@ -2,17 +2,25 @@ import AppKit
 import SwiftUI
 
 /// What the island's view draws. The controller fills it; the panel sets
-/// `presentation` (the content follows it with SwiftUI) and moves `outline`.
+/// `layout` (the content follows it with SwiftUI) and moves `outline`.
 @MainActor
 @Observable
 final class IslandViewModel {
-    var presentation: IslandPresentation = .hidden
+    /// What the island shows, from `IslandState.layout(at:)`.
+    var layout = IslandLayout.empty
     var notch = CGSize(width: 185, height: 32)
-    /// The shape as drawn this frame, on its way to `presentation`'s.
-    var outline = IslandOutline(.hidden, notch: CGSize(width: 185, height: 32))
+    /// The shape as drawn this frame, on its way to `layout`'s.
+    var outline = IslandOutline(.empty, notch: CGSize(width: 185, height: 32))
     var track: NowPlayingTrack?
     var artwork: IslandArtwork?
     var appName: String?
+    /// Claude Code's sessions and the user's agents, for the Claude wings and page.
+    /// `nil` without `~/.claude` or with the setting off.
+    var claude: ClaudeSnapshot?
+
+    var presentation: IslandPresentation { layout.presentation }
+    /// The Claude notice on show, if the island is peeking one.
+    var notice: IslandNotice? { layout.notice }
 }
 
 /// Never key, never main, never pushed below the menu bar: the island must not
@@ -51,7 +59,7 @@ final class IslandPanel {
 
     /// What the last `show` asked for.
     private struct Request: Equatable {
-        let presentation: IslandPresentation
+        let layout: IslandLayout
         let keepsWindow: Bool
     }
     private var lastRequest: Request?
@@ -81,10 +89,12 @@ final class IslandPanel {
         self.actions = actions
     }
 
-    /// Shows `presentation` around the notch of `geometry`. With `keepsWindow`
-    /// false (no track), the panel leaves the screen once it has folded away.
-    func show(_ presentation: IslandPresentation, on geometry: NotchGeometry, keepsWindow: Bool) {
-        let request = Request(presentation: presentation, keepsWindow: keepsWindow)
+    /// Shows `layout` around the notch of `geometry`. With `keepsWindow` false
+    /// (nothing to show: no track, no Claude session), the panel leaves the screen
+    /// once it has folded away.
+    func show(_ layout: IslandLayout, on geometry: NotchGeometry, keepsWindow: Bool) {
+        let presentation = layout.presentation
+        let request = Request(layout: layout, keepsWindow: keepsWindow)
         // A track update that changes nothing the panel draws (the position moved, the
         // cover is the same) only needs the model, which the controller already filled.
         // Bumping the generation here would cancel the pending `settle` every time, and
@@ -93,7 +103,7 @@ final class IslandPanel {
         lastRequest = request
         generation += 1
         let mine = generation
-        let target = geometry.islandFrame(for: presentation)
+        let target = geometry.islandFrame(for: layout)
 
         guard let window, window.isVisible else {
             // Nothing on screen and nothing to show: stay away (no window either).
@@ -106,17 +116,17 @@ final class IslandPanel {
             land()
             withoutAnimation {
                 model.notch = geometry.notchRect.size
-                model.presentation = .hidden
-                model.outline = IslandOutline(.hidden, notch: geometry.notchRect.size)
+                model.layout = .empty
+                model.outline = IslandOutline(.empty, notch: geometry.notchRect.size)
             }
-            place(window, frame: geometry.windowFrame(current: geometry.islandFrame(for: .hidden), target: target),
+            place(window, frame: geometry.windowFrame(current: geometry.islandFrame(for: .empty), target: target),
                   on: geometry)
             window.contentView?.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
             window.orderFrontRegardless()
             DispatchQueue.main.async { [weak self] in
                 guard let self, mine == self.generation else { return }
-                self.animate(to: presentation, settlingAt: target, keepsWindow: keepsWindow, generation: mine)
+                self.animate(to: layout, settlingAt: target, keepsWindow: keepsWindow, generation: mine)
             }
             return
         }
@@ -127,8 +137,8 @@ final class IslandPanel {
             land()
             withoutAnimation {
                 model.notch = geometry.notchRect.size
-                model.presentation = presentation
-                model.outline = IslandOutline(presentation, notch: geometry.notchRect.size)
+                model.layout = layout
+                model.outline = IslandOutline(layout, notch: geometry.notchRect.size)
             }
             if !keepsWindow && presentation == .hidden {
                 window.orderOut(nil)
@@ -139,7 +149,7 @@ final class IslandPanel {
         }
 
         place(window, frame: geometry.windowFrame(current: window.frame, target: target), on: geometry)
-        animate(to: presentation, settlingAt: target, keepsWindow: keepsWindow, generation: mine)
+        animate(to: layout, settlingAt: target, keepsWindow: keepsWindow, generation: mine)
     }
 
     /// Off the screen at once (no notch any more, or the tool stopped).
@@ -149,8 +159,8 @@ final class IslandPanel {
         land()
         window?.orderOut(nil)
         withoutAnimation {
-            model.presentation = .hidden
-            model.outline = IslandOutline(.hidden, notch: model.notch)
+            model.layout = .empty
+            model.outline = IslandOutline(.empty, notch: model.notch)
         }
     }
 
@@ -169,27 +179,29 @@ final class IslandPanel {
     var containsMouse: Bool {
         guard let window, window.isVisible, let geometry else { return false }
         return IslandHover.pointerInside(NSEvent.mouseLocation,
-                                         frame: geometry.islandFrame(for: model.presentation))
+                                         frame: geometry.islandFrame(for: model.layout))
     }
 
     // MARK: Private
 
-    /// Moves the shape to `presentation` and cuts the window to `target` once the
+    /// Moves the shape to `layout`'s and cuts the window to `target` once the
     /// spring is at rest, not after a guess: cut early, the frame would clip the
     /// shape while it still moves. The content changes with SwiftUI, on the same
-    /// spring, as it always has.
-    private func animate(to presentation: IslandPresentation, settlingAt target: CGRect,
+    /// spring, as it always has. The springs go by presentation: switching pages
+    /// (expanded to expanded) moves on the opening one.
+    private func animate(to layout: IslandLayout, settlingAt target: CGRect,
                          keepsWindow: Bool, generation mine: Int) {
-        let from = model.presentation
+        let presentation = layout.presentation
+        let from = model.layout.presentation
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         withAnimation(IslandMotion.animation(from: from, to: presentation, reduceMotion: reduceMotion)) {
-            model.presentation = presentation
+            model.layout = layout
         }
         // From wherever the shape is now; a change that interrupts another keeps its
         // speed, so the shape bends towards the new target instead of jumping.
         let now = CACurrentMediaTime()
         let spring = IslandMotion.shapeSpring(from: from, to: presentation, reduceMotion: reduceMotion)
-        let goal = IslandOutline(presentation, notch: model.notch)
+        let goal = IslandOutline(layout, notch: model.notch)
         let motion = flight?.motion.retargeted(to: goal, spring: spring, at: now, keepsSpeed: !reduceMotion)
             ?? IslandOutlineMotion(from: model.outline, velocity: .zero, target: goal, spring: spring, start: now)
         flight = Flight(motion: motion, target: target, keepsWindow: keepsWindow, generation: mine)
@@ -211,7 +223,7 @@ final class IslandPanel {
     /// generation, so an older spring ending never touches the window.
     private func settle(at target: CGRect, keepsWindow: Bool, generation mine: Int) {
         guard mine == generation, let window, window.isVisible, let geometry else { return }
-        if !keepsWindow && model.presentation == .hidden {
+        if !keepsWindow && model.layout.presentation == .hidden {
             window.orderOut(nil)
         } else {
             place(window, frame: target, on: geometry)
@@ -337,9 +349,9 @@ private struct IslandRootView: View {
     let actions: IslandActions
 
     var body: some View {
-        IslandView(presentation: model.presentation, notch: model.notch, track: model.track,
-                   artwork: model.artwork, appName: model.appName, actions: actions,
-                   outline: model.outline)
+        IslandView(layout: model.layout, notch: model.notch, track: model.track,
+                   artwork: model.artwork, appName: model.appName, claude: model.claude,
+                   actions: actions, outline: model.outline)
             .ignoresSafeArea()
     }
 }

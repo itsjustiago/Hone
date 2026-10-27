@@ -7,17 +7,23 @@ struct IslandActions {
     var click: @MainActor () -> Void = {}
     var send: @MainActor (NowPlayingCommand) -> Void = { _ in }
     var openApp: @MainActor () -> Void = {}
+    /// Opens the session in the Claude app and folds the island.
+    var openClaudeSession: @MainActor (ClaudeSession) -> Void = { _ in }
+    /// The page selector: shows that page of the open island.
+    var selectPage: @MainActor (IslandPage) -> Void = { _ in }
 }
 
-/// The island in one presentation, from plain values so the preview renderer can
-/// draw it offscreen. It draws itself at the top centre of whatever space it is
-/// given: the panel gives it a fixed canvas centred on the notch.
+/// The island in one layout, from plain values so the preview renderer can draw
+/// it offscreen. It draws itself at the top centre of whatever space it is given:
+/// the panel gives it a fixed canvas centred on the notch.
 struct IslandView: View {
-    let presentation: IslandPresentation
+    let layout: IslandLayout
     let notch: CGSize
     let track: NowPlayingTrack?
     let artwork: IslandArtwork?
     let appName: String?
+    /// The sessions and agents for the Claude wings and page.
+    var claude: ClaudeSnapshot?
     var actions = IslandActions()
     /// The shape as it is this frame: the panel moves it on its own spring. `nil`
     /// (the previews) draws `presentation`'s at rest.
@@ -25,11 +31,12 @@ struct IslandView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The content's layout: always `presentation`'s, so SwiftUI moves it as it
-    /// always has, while the shape around it follows `outline`.
-    private var size: CGSize { IslandMetrics.size(for: presentation, notch: notch) }
+    private var presentation: IslandPresentation { layout.presentation }
+    /// The content's layout: always `layout`'s, so SwiftUI moves it as it always
+    /// has, while the shape around it follows `outline`.
+    private var size: CGSize { IslandMetrics.size(for: layout, notch: notch) }
     private var ear: CGFloat { IslandMetrics.earRadius(for: presentation) }
-    private var drawn: IslandOutline { outline ?? IslandOutline(presentation, notch: notch) }
+    private var drawn: IslandOutline { outline ?? IslandOutline(layout, notch: notch) }
     private var shape: NotchShape {
         NotchShape(earRadius: drawn.earRadius, bottomRadius: drawn.bottomRadius)
     }
@@ -47,6 +54,7 @@ struct IslandView: View {
             .frame(width: drawn.width, height: drawn.height)
             .overlay(alignment: .top) { content }
             .overlay(alignment: .topLeading) { cover }
+            .overlay(alignment: .topLeading) { notchRow }
             .clipShape(shape)
             .contentShape(shape)
             .onHover { actions.hover($0) }
@@ -57,23 +65,68 @@ struct IslandView: View {
     /// The wings stay put from compact to expanded (the equaliser goes: the pause
     /// button says the state); what sits under the notch comes in and out on its
     /// own. The cover is not in here: see `cover`.
+    ///
+    /// The music's wings need a track; Claude's need none. Claude's glyph and count,
+    /// like the cover, are drawn from the outline (`notchRow`).
     @ViewBuilder
     private var content: some View {
-        if let track, presentation != .hidden {
+        if let track, layout.wings == .music, presentation != .hidden {
             VStack(spacing: 0) {
                 wings(showsItems: presentation != .expanded)
                 switch presentation {
                 case .peek:
-                    peekLine(track)
+                    peekContent(track)
                         .transition(contentTransition)
                 case .expanded:
-                    player(track)
+                    pageContent(track)
                         .transition(contentTransition)
                 case .hidden, .compact:
                     EmptyView()
                 }
             }
             .transition(contentTransition)
+        } else if layout.wings == .claude, presentation != .hidden {
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(width: size.width, height: notch.height)
+                switch presentation {
+                case .peek:
+                    if let notice = layout.notice {
+                        noticeLine(notice)
+                            .transition(contentTransition)
+                    }
+                case .expanded:
+                    claudePage
+                        .transition(contentTransition)
+                case .hidden, .compact:
+                    EmptyView()
+                }
+            }
+            .transition(contentTransition)
+        }
+    }
+
+    /// Under the music's wings: the new track's title, or a Claude notice.
+    @ViewBuilder
+    private func peekContent(_ track: NowPlayingTrack) -> some View {
+        if let notice = layout.notice {
+            noticeLine(notice)
+        } else {
+            peekLine(track)
+        }
+    }
+
+    /// The open page under the music's wings: the player, or the Claude page
+    /// beside the small cover.
+    /// Switching pages swaps them the way the content comes in and goes out.
+    @ViewBuilder
+    private func pageContent(_ track: NowPlayingTrack) -> some View {
+        if layout.page == .claude {
+            claudePage
+                .transition(contentTransition)
+        } else {
+            player(track)
+                .transition(contentTransition)
         }
     }
 
@@ -97,12 +150,13 @@ struct IslandView: View {
     /// covers matched by SwiftUI moved on another clock, and jumped between them.)
     @ViewBuilder
     private var cover: some View {
-        if track != nil, presentation != .hidden {
+        if track != nil, layout.showsCover {
             let frame = drawn.coverFrame(notch: notch, hasProgress: hasProgress)
-            let opensApp = presentation == .expanded
+            let opensApp = presentation == .expanded && layout.page == .music
             let _ = IslandCover.probe?(frame)
             Button(action: actions.openApp) {
                 IslandCover(artwork: artwork, size: frame.width, corner: drawn.coverCorner)
+                    .overlay(alignment: .topTrailing) { IslandCoverBadge(activity: layout.coverBadge) }
             }
             .buttonStyle(IslandPressStyle())
             .allowsHitTesting(opensApp)
@@ -116,6 +170,64 @@ struct IslandView: View {
     }
 
     // MARK: Beside the notch
+
+    /// What sits in the notch row beside the cover, drawn from the outline like the
+    /// cover so it travels with the shape's edge: Claude's glyph and count when
+    /// Claude has the wings, and the page selector in the open island's right wing.
+    @ViewBuilder
+    private var notchRow: some View {
+        if presentation != .hidden, layout.wings == .claude {
+            claudeWings
+                .transition(contentTransition)
+        }
+        if presentation == .expanded, layout.showsPageSelector {
+            let right = drawn.trailingWingSlot(notch: notch).maxX
+            IslandPageSelector(page: layout.page, activity: layout.claudeActivity, height: notch.height,
+                               select: { actions.selectPage($0) })
+                .offset(x: right - IslandPageSelector.width)
+                .frame(width: drawn.width, height: drawn.height, alignment: .topLeading)
+                .transition(contentTransition)
+        }
+    }
+
+    /// Claude's glyph where the small cover sits, breathing while a session works,
+    /// and the number of active sessions where the equaliser sits, orange while
+    /// one waits. With none active (the open page, all idle) the right wing is empty.
+    private var claudeWings: some View {
+        let glyph = drawn.leadingWingSlot(notch: notch)
+        let count = drawn.trailingWingSlot(notch: notch)
+        let activity = layout.claudeActivity
+        return ZStack(alignment: .topLeading) {
+            ClaudeGlyph(color: IslandPalette.claude(activity), size: Self.wingGlyph, pulses: activity == .working)
+                .frame(width: glyph.width, height: glyph.height)
+                .offset(x: glyph.minX, y: glyph.minY)
+            if layout.activeSessions > 0 {
+                Text("\(layout.activeSessions)")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(activity == .waiting ? IslandPalette.claudeWaiting : IslandPalette.primaryText)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .frame(width: count.width, height: count.height)
+                    .offset(x: count.minX, y: count.minY)
+            }
+        }
+        .frame(width: drawn.width, height: drawn.height, alignment: .topLeading)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.claudeWingsLabel(activity: activity, active: layout.activeSessions))
+    }
+
+    /// Claude's glyph in the wing: a little smaller than the cover it stands for.
+    static let wingGlyph: CGFloat = 15
+
+    static func claudeWingsLabel(activity: IslandClaudeActivity, active: Int) -> String {
+        let sessions = active == 1 ? "1 sessão ativa" : "\(active) sessões ativas"
+        switch activity {
+        case .waiting: return "Claude: \(sessions), alguma à tua espera"
+        case .working: return "Claude: \(sessions)"
+        case .none: return "Claude: nenhuma sessão ativa"
+        }
+    }
 
     /// Room for the cover in the left wing, equaliser in the right one, the notch in
     /// between. Both sit in a box the size of the small cover, the same distance
@@ -153,6 +265,46 @@ struct IslandView: View {
         .animation(IslandMotion.trackChange, value: track.id)
         .padding(.horizontal, ear + 16)
         .frame(width: size.width, height: IslandMetrics.peekExtraHeight - 4, alignment: .center)
+    }
+
+    /// A Claude notice under the notch, where a new track's title goes and in its
+    /// type: Claude's glyph, then the line. Only the name gives way when it is long.
+    private func noticeLine(_ notice: IslandNotice) -> some View {
+        let parts = notice.parts
+        let emphasis = Font.system(size: 12, weight: .semibold)
+        return HStack(spacing: 6) {
+            ClaudeGlyph(color: notice.kind == .waiting ? IslandPalette.claudeWaiting : IslandPalette.claude,
+                        size: 12)
+            HStack(spacing: 0) {
+                if !parts.lead.isEmpty {
+                    Text(parts.lead)
+                        .font(emphasis)
+                        .foregroundStyle(IslandPalette.primaryText)
+                        .fixedSize()
+                }
+                Text(parts.subject)
+                    .font(emphasis)
+                    .foregroundStyle(IslandPalette.primaryText)
+                    .truncationMode(.tail)
+                Text(parts.trail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(IslandPalette.secondaryText)
+                    .fixedSize()
+            }
+            .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(notice.text)
+        .padding(.horizontal, ear + 16)
+        .frame(width: size.width, height: IslandMetrics.peekExtraHeight - 4, alignment: .center)
+    }
+
+    // MARK: The Claude page
+
+    /// The session rows and the agents' strip, under the notch row.
+    private var claudePage: some View {
+        IslandClaudePage(snapshot: claude, layout: layout, size: size, notch: notch, ear: ear,
+                         open: { actions.openClaudeSession($0) })
     }
 
     static func peekText(_ track: NowPlayingTrack) -> AttributedString {

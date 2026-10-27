@@ -31,13 +31,110 @@ extension PreviewRenderer {
             ("ilha-aberta-pausa", stage(.expanded, paused, sunset, app: "Música")),
             ("ilha-aberta-titulo-longo", stage(.expanded, long, night, app: "Spotify")),
             ("ilha-aberta-radio-sem-capa", stage(.expanded, radio, nil, app: "Safari")),
+        ] + claudeIslandPages(song: song, cover: sunset)
+    }
+
+    /// The island with Claude Code's sessions, from a fake snapshot of made-up
+    /// sessions (the repository is public: no real names).
+    private static func claudeIslandPages(song: NowPlayingTrack, cover: IslandArtwork?) -> [(String, AnyView)] {
+        let working = ClaudeSnapshot(sessions: [onboarding, login, notes], myAgents: myAgents)
+        let waiting = ClaudeSnapshot(sessions: [checkout, notes], myAgents: myAgents)
+        let three = ClaudeSnapshot(sessions: [checkout, onboarding, login], myAgents: myAgents)
+        let seven = ClaudeSnapshot(sessions: [checkout, onboarding, login, dependencies, notes, cart, migration],
+                                   myAgents: myAgents)
+        let waits = IslandNotice(kind: .waiting, sessionID: checkout.id, name: checkout.name)
+        let done = IslandNotice(kind: .finished, sessionID: login.id, name: login.name)
+
+        func page(_ name: String, _ layout: IslandLayout, _ claude: ClaudeSnapshot,
+                  track: NowPlayingTrack? = nil) -> (String, AnyView) {
+            (name, stage(layout, track: track, artwork: track == nil ? nil : cover, app: "Música", claude: claude))
+        }
+        return [
+            page("ilha-claude-compacta", claudeLayout(.compact, working), working),
+            page("ilha-claude-espera", claudeLayout(.compact, waiting), waiting),
+            page("ilha-claude-aviso", claudeLayout(.peek, waiting, peek: .notice(waits)), waiting),
+            page("ilha-claude-aviso-musica",
+                 claudeLayout(.peek, working, wings: .music, peek: .notice(done), badge: true), working, track: song),
+            page("ilha-compacta-musica-claude", claudeLayout(.compact, waiting, wings: .music, badge: true),
+                 waiting, track: song),
+            page("ilha-aberta-claude", claudeLayout(.expanded, three, page: .claude), three),
+            page("ilha-aberta-claude-scroll", claudeLayout(.expanded, seven, page: .claude), seven),
+            page("ilha-aberta-claude-musica",
+                 claudeLayout(.expanded, three, wings: .music, page: .claude, selector: true), three, track: song),
+            page("ilha-aberta-musica-seletor",
+                 claudeLayout(.expanded, three, wings: .music, page: .music, selector: true), three, track: song),
         ]
+    }
+
+    /// What `IslandState` would decide for `snapshot`: Claude's wings unless told
+    /// otherwise, its rows and strip on its page.
+    private static func claudeLayout(_ presentation: IslandPresentation, _ snapshot: ClaudeSnapshot,
+                                     wings: IslandWings = .claude, page: IslandPage = .music,
+                                     peek: IslandPeek? = nil, selector: Bool = false,
+                                     badge: Bool = false) -> IslandLayout {
+        let claude = IslandClaude(snapshot)
+        var layout = IslandLayout.music(presentation)
+        layout.wings = wings
+        layout.page = page
+        if let peek { layout.peek = peek }
+        layout.claudeActivity = claude.activity
+        layout.activeSessions = claude.active
+        if presentation == .expanded, page == .claude {
+            layout.claudeRows = min(claude.listed, IslandMetrics.claudeMaxRows)
+            layout.hasAgentsStrip = claude.hasMyAgents
+        }
+        layout.showsPageSelector = selector
+        if badge { layout.coverBadge = claude.activity }
+        return layout
+    }
+
+    // MARK: Made-up sessions
+
+    private static let myAgents = ["engenheiro", "explorador", "revisor", "testador", "design", "investigador"]
+        .map { ClaudeAgentProfile(name: $0, description: "") }
+
+    private static var onboarding: ClaudeSession {
+        fakeSession("1", "Refazer o onboarding", "loja", .working, minutes: 3,
+                    agents: ["engenheiro", "engenheiro", "engenheiro", "engenheiro", "explorador", "Explore"])
+    }
+    private static var login: ClaudeSession {
+        fakeSession("2", "Corrigir o login", "site", .working, minutes: 12, agents: ["revisor", "Explore"])
+    }
+    private static var checkout: ClaudeSession {
+        fakeSession("3", "Testes do checkout", "loja", .waiting, minutes: 1)
+    }
+    private static var notes: ClaudeSession {
+        fakeSession("4", "Notas de lançamento", "hone", .idle, minutes: 40)
+    }
+    private static var migration: ClaudeSession {
+        fakeSession("5", "Migrar a base de dados", "api", .idle, minutes: 125)
+    }
+    private static var dependencies: ClaudeSession {
+        fakeSession("6", "Atualizar as dependências", "api", .working, minutes: 0.5, agents: ["testador"])
+    }
+    private static var cart: ClaudeSession {
+        fakeSession("7", "Rever o carrinho", "loja", .idle, minutes: 25)
+    }
+
+    /// `minutes` ago, from now, so «há N min» reads the same every time.
+    private static func fakeSession(_ id: String, _ name: String, _ project: String, _ state: ClaudeSession.State,
+                                    minutes: Double, agents: [String] = []) -> ClaudeSession {
+        ClaudeSession(id: id, pid: 1, hostSessionID: nil, name: name, project: project, state: state,
+                      since: Date().addingTimeInterval(-minutes * 60 - 5),
+                      agents: agents.map { ClaudeRunningAgent(type: $0, isMine: $0 != "Explore") })
     }
 
     /// The island where it lives: a wallpaper, the menu bar and the notch.
     private static func stage(_ presentation: IslandPresentation, _ track: NowPlayingTrack,
                               _ artwork: IslandArtwork?, app: String) -> AnyView {
+        stage(.music(presentation), track: track, artwork: artwork, app: app)
+    }
+
+    /// `stage` for any layout: taller than the music's 190 points when the island is.
+    private static func stage(_ layout: IslandLayout, track: NowPlayingTrack?, artwork: IslandArtwork?,
+                              app: String, claude: ClaudeSnapshot? = nil) -> AnyView {
         let notch = CGSize(width: 185, height: 32)
+        let height = max(190, IslandMetrics.size(for: layout, notch: notch).height + 30)
         return AnyView(
             ZStack(alignment: .top) {
                 LinearGradient(colors: [VibePalette.blue, VibePalette.purple],
@@ -48,11 +145,12 @@ extension PreviewRenderer {
                 UnevenRoundedRectangle(bottomLeadingRadius: 8, bottomTrailingRadius: 8)
                     .fill(VibeColor.canvas)
                     .frame(width: notch.width, height: notch.height)
-                IslandView(presentation: presentation, notch: notch, track: track,
-                           artwork: artwork, appName: app)
+                IslandView(layout: layout, notch: notch, track: track,
+                           artwork: artwork, appName: app, claude: claude)
             }
-            .frame(width: 600, height: 190)
+            .frame(width: 600, height: height)
             .background(VibeColor.canvas)
+            .environment(\.islandOffscreen, true)
         )
     }
 
