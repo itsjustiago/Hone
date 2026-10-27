@@ -1,11 +1,16 @@
 import AppKit
 import CoreGraphics
 
-/// Where the physical notch sits on one screen, and where the island goes around it.
+/// Where the notch sits on one screen, and where the island goes around it. On a
+/// screen with no notch it is a virtual one, as wide as a normal notch and as tall
+/// as the menu bar: the island then hangs from the menu bar, and everything else
+/// (frames, canvas, sizes) works the same.
 /// Everything is in global AppKit coordinates (origin bottom-left of the main screen).
 struct NotchGeometry: Equatable {
     let screenFrame: CGRect
     let notchRect: CGRect
+    /// `true` for the stand-in on a screen with no physical notch.
+    let isVirtual: Bool
 
     /// `nil` when the screen has no notch: no safe-area inset at the top, an
     /// auxiliary area missing, or no gap left between the two. The auxiliary
@@ -18,6 +23,18 @@ struct NotchGeometry: Equatable {
         self.screenFrame = screenFrame
         notchRect = CGRect(x: leftArea.maxX, y: screenFrame.maxY - safeAreaTop,
                            width: width, height: safeAreaTop)
+        isVirtual = false
+    }
+
+    /// The virtual notch of a screen with none: `IslandMetrics.virtualNotchWidth`
+    /// wide, `menuBarHeight` tall, centred on the screen with its top on the
+    /// screen's top edge.
+    init(screenFrame: CGRect, menuBarHeight: CGFloat) {
+        self.screenFrame = screenFrame
+        notchRect = CGRect(x: screenFrame.midX - IslandMetrics.virtualNotchWidth / 2,
+                           y: screenFrame.maxY - menuBarHeight,
+                           width: IslandMetrics.virtualNotchWidth, height: menuBarHeight)
+        isVirtual = true
     }
 
     /// The island's frame for a given size: centred on the notch, glued to the top
@@ -41,6 +58,8 @@ struct NotchGeometry: Equatable {
 
 /// Every island size in one place, so they are easy to tune.
 enum IslandMetrics {
+    /// The width of a virtual notch: that of a real one (a MacBook's is 185 pt).
+    static let virtualNotchWidth: CGFloat = 185
     /// The hover zone sits this far inside the notch on each side, so the island's
     /// black never shows beside the physical notch.
     static let hiddenInset: CGFloat = 6
@@ -54,6 +73,14 @@ enum IslandMetrics {
     /// The cover beside the notch (compact, peek) and in the open player.
     static let smallCover: CGFloat = 22
     static let smallCoverCorner: CGFloat = 6
+    /// The least room the small cover keeps from the edges of a notch row.
+    static let smallCoverMargin: CGFloat = 3
+    /// How much smaller, on each side, the small cover is drawn in a notch row
+    /// `rowHeight` tall, so it keeps `smallCoverMargin` from the edges: nothing on a
+    /// real notch (32 or more leaves 5), 2 pt on a virtual one as tall as a 24 pt menu bar.
+    static func smallCoverInset(rowHeight: CGFloat) -> CGFloat {
+        max(0, smallCoverMargin - (rowHeight - smallCover) / 2)
+    }
     static let largeCover: CGFloat = 72
     static let largeCoverCorner: CGFloat = 14
 
@@ -230,23 +257,12 @@ extension NotchGeometry {
     /// leaves `NSScreen.screens`), or a display mode that hides the notch.
     @MainActor
     static func current() -> NotchGeometry? {
-        for screen in NSScreen.screens where screen.isBuiltIn {
-            if let geometry = NotchGeometry(screen: screen) { return geometry }
-        }
-        return nil
+        IslandScreens.current(choice: .notch).first?.geometry
     }
 
     @MainActor
     init?(screen: NSScreen) {
         self.init(screenFrame: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
                   leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea)
-    }
-}
-
-private extension NSScreen {
-    var isBuiltIn: Bool {
-        guard let number = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-        else { return false }
-        return CGDisplayIsBuiltin(CGDirectDisplayID(number.uint32Value)) != 0
     }
 }

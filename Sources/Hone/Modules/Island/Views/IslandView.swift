@@ -152,11 +152,13 @@ struct IslandView: View {
     private var cover: some View {
         if track != nil, layout.showsCover {
             let frame = drawn.coverFrame(notch: notch, hasProgress: hasProgress)
+            let inset = drawn.coverInset(notch: notch)
             let opensApp = presentation == .expanded && layout.page == .music
             let _ = IslandCover.probe?(frame)
             Button(action: actions.openApp) {
-                IslandCover(artwork: artwork, size: frame.width, corner: drawn.coverCorner)
+                IslandCover(artwork: artwork, size: frame.width - 2 * inset, corner: drawn.coverCorner)
                     .overlay(alignment: .topTrailing) { IslandCoverBadge(activity: layout.coverBadge) }
+                    .padding(inset)
             }
             .buttonStyle(IslandPressStyle())
             .allowsHitTesting(opensApp)

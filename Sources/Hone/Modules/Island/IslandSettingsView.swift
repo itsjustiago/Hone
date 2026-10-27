@@ -3,9 +3,9 @@ import HoneDesign
 
 struct IslandSettingsView: View {
     @Bindable var module: IslandModule
-    /// Whether the built-in screen has a notch to draw on right now. Re-read when
-    /// the screens change (lid closed, display mode switched).
-    @State private var hasNotch = NotchGeometry.current() != nil
+    /// The screens connected right now. Re-read when they change (lid closed,
+    /// display plugged in, display mode switched).
+    @State private var screens = IslandScreens.infos()
     /// Claude Code is used on this Mac: only then the Claude section shows.
     @State private var hasClaude = ClaudeActivityReader().rootExists
 
@@ -13,6 +13,7 @@ struct IslandSettingsView: View {
         @Bindable var settings = module.settings
         let tint = module.tint
         let source = module.sourceStatus
+        let shown = IslandScreens.plan(screens, choice: settings.screens).count
 
         VStack(alignment: .leading, spacing: 18) {
             SettingsSection(title: "Comportamento") {
@@ -50,23 +51,23 @@ struct IslandSettingsView: View {
             }
 
             SettingsSection(title: "Ecrã") {
-                SettingsRow(
-                    title: "Notch",
-                    subtitle: hasNotch
-                        ? "A ilha aparece no notch do ecrã interno."
-                        : "Só aparece no ecrã interno de um MacBook com notch. Com a tampa fechada fica escondida."
-                ) {
-                    if hasNotch {
-                        Label("À vista", systemImage: "checkmark.circle.fill")
-                            .font(.callout)
-                            .foregroundStyle(VibeColor.success)
-                            .labelStyle(.titleAndIcon)
-                    } else {
-                        Label("Sem notch", systemImage: "minus.circle")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .labelStyle(.titleAndIcon)
+                SettingsRow(title: "Mostrar em", subtitle: Self.subtitle(for: settings.screens)) {
+                    Picker("", selection: $settings.screens) {
+                        ForEach(IslandScreenChoice.allCases) { choice in
+                            Text(choice.display).tag(choice)
+                        }
                     }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 240)
+                }
+                RowDivider()
+                SettingsRow(title: "Estado") {
+                    Label(IslandScreens.statusText(count: shown, choice: settings.screens),
+                          systemImage: shown > 0 ? "checkmark.circle.fill" : "minus.circle")
+                        .font(.callout)
+                        .foregroundStyle(shown > 0 ? VibeColor.success : Color.secondary)
+                        .labelStyle(.titleAndIcon)
                 }
             }
 
@@ -78,7 +79,14 @@ struct IslandSettingsView: View {
                 .padding(.leading, 6)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
-            hasNotch = NotchGeometry.current() != nil
+            screens = IslandScreens.infos()
+        }
+    }
+
+    private static func subtitle(for choice: IslandScreenChoice) -> String {
+        switch choice {
+        case .notch: return "Só no notch do ecrã interno. Com a tampa fechada fica escondida."
+        case .all: return "No notch e no topo de cada ecrã externo, colada à barra de menus. Sem nada para mostrar, desaparece."
         }
     }
 }

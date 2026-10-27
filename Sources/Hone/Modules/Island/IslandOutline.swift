@@ -89,6 +89,14 @@ extension IslandOutline {
             + (IslandMetrics.largeCoverCorner - IslandMetrics.smallCoverCorner) * coverProgress
     }
 
+    /// How far the cover is drawn inside its frame, on each side: the small cover
+    /// on a short notch row (a virtual notch is only a menu bar tall) is drawn
+    /// smaller to keep clear of the shape's edges, and eases back to full size as it
+    /// grows into the player. Nothing on a real notch.
+    func coverInset(notch: CGSize) -> CGFloat {
+        IslandMetrics.smallCoverInset(rowHeight: notch.height) * (1 - min(max(coverProgress, 0), 1))
+    }
+
     /// Where the cover sits this frame, in the island's own space (origin at its top
     /// left): from where the left wing lays it out to where the open player does,
     /// both measured on this outline, so it hugs the shape's edge on the way. At

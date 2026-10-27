@@ -7,6 +7,8 @@ import Foundation
 /// `HONE_ISLAND_FRAME_PROBE=<file>` measures the island's animations into that file
 /// and exits the same way (see `IslandFrameProbe`). `HONE_CLAUDE_DUMP=1` prints what
 /// the island knows about Claude Code sessions and exits (see `ClaudeActivityDump`).
+/// `HONE_ISLAND_SCREENS_DUMP=1` prints where the island would go on each connected
+/// screen, with no window, and exits (see `IslandScreensDump`).
 @main
 enum HoneMain {
     @MainActor
@@ -20,6 +22,9 @@ enum HoneMain {
         }
         if environment["HONE_CLAUDE_DUMP"] == "1" {
             ClaudeActivityDump.run(environment: environment)
+        }
+        if environment["HONE_ISLAND_SCREENS_DUMP"] == "1" {
+            IslandScreensDump.run()
         }
         HoneApp.main()
     }
