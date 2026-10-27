@@ -9,9 +9,10 @@ import SwiftUI
 ///
 /// It builds a real `IslandPanel` over the built-in notch, see-through and
 /// click-through (`probeAlpha`), and plays a fixed script on fake tracks: compact,
-/// peek, compact, expanded, a new track, compact, hidden; once to warm up, then
-/// three times. For each step it records
-/// - the frames SwiftUI drew: every new outline `NotchShape` is asked for;
+/// pause, stay paused, resume, keep playing, peek, compact, expanded, a new track,
+/// compact, hidden; once to warm up, then three times. For each step it records
+/// - the frames SwiftUI drew: every new outline `NotchShape` is asked for, and every
+///   frame of the equaliser's bars (`eq/s` in the table);
 /// - the screens' ticks: a display link per screen at its top rate, off the main
 ///   thread. The notch's screen is the one that counts; the others tell whose clock
 ///   woke a frame;
@@ -21,7 +22,7 @@ import SwiftUI
 ///
 /// `HONE_ISLAND_FRAME_PROBE_ALPHA` sets the window's opacity (0 by default: nothing
 /// shows). `HONE_ISLAND_FRAME_PROBE_FLAGS`, comma-separated: `notrack` draws the shape
-/// alone, `paused` shows a paused track (no equaliser, no ticking progress).
+/// alone, `paused` starts on a paused track (still equaliser, no ticking progress).
 @MainActor
 final class IslandFrameProbe {
     static func run(writingTo url: URL) -> Never {
@@ -53,10 +54,17 @@ final class IslandFrameProbe {
     private enum Step {
         case show(IslandPresentation)
         case newTrack
+        case playing(Bool)
+        /// Nothing: what the island costs standing still.
+        case wait
     }
 
     private static let script: [(String, Step)] = [
         ("hidden→compact", .show(.compact)),
+        ("compact: pause", .playing(false)),
+        ("compact: paused", .wait),
+        ("compact: resume", .playing(true)),
+        ("compact: playing", .wait),
         ("compact→peek", .show(.peek)),
         ("peek→compact", .show(.compact)),
         ("compact→expanded", .show(.expanded)),
@@ -107,6 +115,7 @@ final class IslandFrameProbe {
         fill(tracks[0])
 
         NotchShape.probe = { [recorder] rect, ear, bottom in recorder.outline(rect.size, ear, bottom) }
+        IslandEqualizer.probe = { [recorder] in recorder.equalizerFrame() }
         startTicks()
         observeTurns()
 
@@ -192,6 +201,11 @@ final class IslandFrameProbe {
         case .newTrack:
             trackIndex = (trackIndex + 1) % tracks.count
             fill(tracks[trackIndex])
+        case .playing(let playing):
+            for index in tracks.indices { tracks[index].0.isPlaying = playing }
+            panel.model.track?.isPlaying = playing
+        case .wait:
+            break
         }
         let called = CACurrentMediaTime()
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.hold) { [self] in
@@ -210,6 +224,7 @@ final class IslandFrameProbe {
         write("## Summary, rounds 1–\(Self.rounds) (warm-up round 0 left out)\n" + Result.legend
               + Result.table(results))
         NotchShape.probe = nil
+        IslandEqualizer.probe = nil
         tickLinks.forEach { $0.invalidate() }
         panel.close()
         try? file.close()
@@ -245,10 +260,12 @@ private final class Recorder: @unchecked Sendable {
         /// The other screens', by name.
         var otherTicks: [String: [Double]]
         var turns: [Turn]
+        var bars: [Double]
     }
 
     private let lock = NSLock()
     private var outlines: [Outline] = []
+    private var bars: [Double] = []
     private var ticks: [Double] = []
     private var otherTicks: [String: [Double]] = [:]
     private var turns: [Turn] = []
@@ -261,6 +278,13 @@ private final class Recorder: @unchecked Sendable {
         defer { lock.unlock() }
         if let last = outlines.last, last.size == size, last.ear == ear, last.bottom == bottom { return }
         outlines.append(Outline(time: now, size: size, ear: ear, bottom: bottom, onMain: Thread.isMainThread))
+    }
+
+    func equalizerFrame() {
+        let now = CACurrentMediaTime()
+        lock.lock()
+        bars.append(now)
+        lock.unlock()
     }
 
     func tick(_ time: Double, screen: String?) {
@@ -281,7 +305,8 @@ private final class Recorder: @unchecked Sendable {
         return Snapshot(outlines: outlines.filter { $0.time >= start && $0.time <= end },
                         ticks: ticks.filter { $0 >= start && $0 <= end },
                         otherTicks: otherTicks.mapValues { $0.filter { $0 >= start && $0 <= end } },
-                        turns: turns.filter { $0.end >= start && $0.start <= end })
+                        turns: turns.filter { $0.end >= start && $0.start <= end },
+                        bars: bars.filter { $0 >= start && $0 <= end })
     }
 }
 
@@ -326,6 +351,8 @@ private struct Result {
     let maxTurnMs: Double
     let busyPct: Double
     let turnsOverTick: Int
+    /// Equaliser frames per second over the whole step.
+    let eqPerSecond: Double
     let raw: String
 
     init(label: String, round: Int, start: Double, called: Double, end: Double, recorder: Recorder) {
@@ -377,6 +404,7 @@ private struct Result {
         maxTurnMs = (during.map(\.busy).max() ?? 0) * 1000
         busyPct = during.map(\.busy).reduce(0, +) / max(motionEnd - start, 0.001) * 100
         turnsOverTick = during.filter { $0.busy * 1000 > (tick ?? 8.33) }.count
+        eqPerSecond = Double(data.bars.count) / max(end - start, 0.001)
 
         func ms(_ time: Double) -> String { fmt((time - start) * 1000) }
         func opt(_ value: Double?) -> String { value.map(fmt) ?? "-" }
@@ -387,10 +415,12 @@ private struct Result {
             + "· tick \(opt(tickMs)) · missed \(opt(missedPct)) % double \(opt(doublePct)) % "
             + "· shown spacing p5 \(opt(shownP5)) p95 \(opt(shownP95)) · off clock \(opt(offClockPct)) % "
             + "· max turn \(fmt(maxTurnMs)) ms · busy \(fmt(busyPct)) % · turns over a tick \(turnsOverTick)"
+            + " · eq frames \(data.bars.count) (\(fmt(eqPerSecond))/s)"
             + (offMain > 0 ? " · off-main outlines \(offMain)" : "") + "\n"
         raw += "outlines: " + data.outlines.map {
             "\(ms($0.time)):\(fmt($0.size.width))×\(fmt($0.size.height)) \(fmt($0.ear)) \(fmt($0.bottom))"
         }.joined(separator: ", ") + "\n"
+        raw += "eq: " + data.bars.map(ms).joined(separator: " ") + "\n"
         raw += "ticks: " + ticks.map(ms).joined(separator: " ") + "\n"
         for (name, times) in data.otherTicks.sorted(by: { $0.key < $1.key }) {
             raw += "ticks \(name): " + times.map(ms).joined(separator: " ") + "\n"
@@ -410,7 +440,8 @@ private struct Result {
         ms unless %; medians of the rounds, worst for call, max and turn. fps = new outlines
         per second; missed/double = notch-screen ticks with 0 / 2+ new outlines; shown = spacing
         of the outlines that reach the glass (even motion: one tick at both ends); off clock = not
-        within 3 ms of a notch-screen tick; turn = main-thread busy time per run-loop turn.
+        within 3 ms of a notch-screen tick; turn = main-thread busy time per run-loop turn;
+        eq/s = equaliser frames per second over the whole step.
 
         """
 
@@ -421,7 +452,8 @@ private struct Result {
         func median(_ values: [Double?]) -> String { percentile(values.compactMap { $0 }, 0.5).map(fmt) ?? "-" }
         func worst(_ values: [Double?]) -> String { values.compactMap { $0 }.max().map(fmt) ?? "-" }
         let header = ["transition", "n", "call", "1st", "frames", "fps", "p50", "p95", "max", "tick",
-                      "missed%", "double%", "shown p5", "shown p95", "off clock%", "turn", "busy%", "turns>tick"]
+                      "missed%", "double%", "shown p5", "shown p95", "off clock%", "turn", "busy%", "turns>tick",
+                      "eq/s"]
         var rows = [header]
         for label in labels {
             let rs = results.filter { $0.label == label }
@@ -430,7 +462,8 @@ private struct Result {
                          median(rs.map(\.p95)), worst(rs.map(\.maxInterval)), median(rs.map(\.tickMs)),
                          median(rs.map(\.missedPct)), median(rs.map(\.doublePct)), median(rs.map(\.shownP5)),
                          median(rs.map(\.shownP95)), median(rs.map(\.offClockPct)), worst(rs.map(\.maxTurnMs)),
-                         median(rs.map(\.busyPct)), median(rs.map { Double($0.turnsOverTick) })])
+                         median(rs.map(\.busyPct)), median(rs.map { Double($0.turnsOverTick) }),
+                         median(rs.map(\.eqPerSecond))])
         }
         let widths = header.indices.map { column in rows.map { $0[column].count }.max() ?? 0 }
         return rows.map { row in

@@ -42,12 +42,15 @@ struct IslandCover: View {
 /// Four bars that dance while the music plays, centred in a box the size of the
 /// small cover so the right wing mirrors the cover in the left one. Pure animation,
 /// no audio is read: each bar breathes at its own pace so they never move in step.
-/// Paused, they fade out; with Reduce Motion on they stand still while playing.
+/// Paused, they stand still, all level at the bottom; a pause or a resume eases them
+/// down or up (`IslandEqualizerLevel`). With Reduce Motion on they stand still while
+/// playing too.
 ///
 /// The motion is a function of the clock (`IslandEqualizerMotion`) drawn by a
-/// `TimelineView` a dozen times a second, and only while playing: no animation
-/// loop of SwiftUI's own, which would redraw at the display's rate (120 Hz) for as
-/// long as the compact island is up.
+/// `TimelineView` a dozen times a second while playing, at the display's rate only
+/// for the ease, and not at all once still: no animation loop of SwiftUI's own,
+/// which would redraw at the display's rate (120 Hz) for as long as the compact
+/// island is up.
 struct IslandEqualizer: View {
     let isPlaying: Bool
     let tint: Color
@@ -56,27 +59,43 @@ struct IslandEqualizer: View {
     static let maxHeight: CGFloat = 14
     /// Frames per second while playing.
     private static let tick: TimeInterval = 1.0 / 12
+    /// Dev tool: told of every frame the bars are drawn for (`IslandFrameProbe`). Nil in the app.
+    nonisolated(unsafe) static var probe: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var level: IslandEqualizerLevel
+    /// While `level` is on its way: the timeline runs at the display's rate.
+    @State private var easing = false
+
+    init(isPlaying: Bool, tint: Color) {
+        self.isPlaying = isPlaying
+        self.tint = tint
+        _level = State(initialValue: IslandEqualizerLevel(playing: isPlaying))
+    }
 
     var body: some View {
-        Group {
-            if isPlaying && !reduceMotion {
-                TimelineView(.animation(minimumInterval: Self.tick)) { context in
-                    let time = context.date.timeIntervalSinceReferenceDate
-                    bars(IslandEqualizerMotion.bars.indices.map {
-                        CGFloat(IslandEqualizerMotion.fraction(bar: $0, at: time)) * Self.maxHeight
-                    })
-                }
-            } else {
-                bars(IslandEqualizerMotion.bars.indices.map {
-                    CGFloat(IslandEqualizerMotion.restingFraction(bar: $0)) * Self.maxHeight
-                })
-            }
+        // Settled, the bars only move when playing with motion on; otherwise nothing
+        // depends on the clock and the timeline stops.
+        let dancing = level.target == 1 && !reduceMotion
+        TimelineView(.animation(minimumInterval: easing ? nil : Self.tick, paused: !easing && !dancing)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            let amount = level.value(at: time)
+            let _ = Self.probe?()
+            bars(IslandEqualizerMotion.bars.indices.map {
+                CGFloat(IslandEqualizerMotion.fraction(bar: $0, at: time, level: amount, still: reduceMotion))
+                    * Self.maxHeight
+            })
         }
         .frame(width: IslandMetrics.smallCover, height: IslandMetrics.smallCover)
-        .opacity(isPlaying ? 1 : 0)
-        .animation(IslandMotion.trackChange, value: isPlaying)
+        .onChange(of: isPlaying) { _, playing in
+            level = level.retargeted(playing: playing, at: Date.now.timeIntervalSinceReferenceDate)
+            easing = true
+        }
+        .task(id: level) {
+            let left = level.end - Date.now.timeIntervalSinceReferenceDate
+            if left > 0 { try? await Task.sleep(for: .seconds(left)) }
+            if !Task.isCancelled { easing = false }
+        }
         .accessibilityHidden(true)
     }
 
