@@ -163,8 +163,10 @@ final class IslandClaudeViewTests: XCTestCase {
         XCTAssertEqual(pulse.repeatCount, .infinity)
         XCTAssertEqual(pulse.preferredFrameRateRange, CAFrameRateRange(minimum: 8, maximum: 20, preferred: 15))
 
-        let view = ClaudeGlyphLayerView(frame: CGRect(x: 0, y: 0, width: 15, height: 15))
-        view.updatePulse()
-        XCTAssertNil(view.shape.animation(forKey: ClaudeGlyphLayerView.pulseKey))
+        for logo in [nil, ClaudeAppLogoTests.image(width: 12, height: 12) { $0.fill(CGRect(x: 2, y: 2, width: 8, height: 8)) }] {
+            let view = ClaudeGlyphLayerView(frame: CGRect(x: 0, y: 0, width: 15, height: 15), logo: logo)
+            view.updatePulse()
+            XCTAssertNil(view.mark.animation(forKey: ClaudeGlyphLayerView.pulseKey))
+        }
     }
 }
