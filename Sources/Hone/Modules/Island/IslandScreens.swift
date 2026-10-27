@@ -63,6 +63,36 @@ enum IslandScreens {
         }
     }
 
+    /// What to do to the islands on screen to match a new plan, by display id.
+    struct Changes: Equatable {
+        /// In the plan and not on screen: a new island, in the plan's order.
+        var added: [IslandScreen] = []
+        /// On screen and not in the plan: its island closes, in the order they were.
+        var removed: [CGDirectDisplayID] = []
+        /// In both with another geometry (resolution, arrangement, menu bar): the
+        /// island moves, in the plan's order.
+        var moved: [IslandScreen] = []
+
+        var isEmpty: Bool { added.isEmpty && removed.isEmpty && moved.isEmpty }
+    }
+
+    /// From the islands on `current` to those of `plan`. A screen in both with the
+    /// same geometry is left alone.
+    static func changes(from current: [IslandScreen], to plan: [IslandScreen]) -> Changes {
+        let before = Dictionary(current.map { ($0.id, $0.geometry) }, uniquingKeysWith: { first, _ in first })
+        let after = Set(plan.map(\.id))
+        var changes = Changes()
+        changes.removed = current.map(\.id).filter { !after.contains($0) }
+        for screen in plan {
+            switch before[screen.id] {
+            case nil: changes.added.append(screen)
+            case let geometry? where geometry != screen.geometry: changes.moved.append(screen)
+            default: break
+            }
+        }
+        return changes
+    }
+
     /// The settings' line on how many screens show the island now.
     static func statusText(count: Int, choice: IslandScreenChoice) -> String {
         switch count {

@@ -4,7 +4,9 @@ import AppKit
 /// windows. `HONE_ISLAND_SCREENS_DUMP=1` prints each screen's frame, menu bar and
 /// notch (real or virtual) with the island's compact and open frames, then the plan
 /// for each choice, then the plan as if the lid were closed (the built-in screen
-/// gone). Like the preview renderer it exits before anything else runs (see
+/// gone), then what the islands would do on the way (`IslandScreens.changes`): the
+/// lid closing, and the choice switched either way. From no island at all they would
+/// just open the plan, already listed. Like the preview renderer it exits before anything else runs (see
 /// `HoneMain`): no panels, no modules, no defaults written. Only numbers: no screen
 /// names.
 @MainActor
@@ -38,7 +40,24 @@ enum IslandScreensDump {
             lines.append(plan(IslandScreens.plan(lidClosed, choice: choice),
                               title: "tampa fechada, plano «\(choice.display)»"))
         }
+        let all = IslandScreens.plan(infos, choice: .all)
+        let notch = IslandScreens.plan(infos, choice: .notch)
+        lines.append(changes(IslandScreens.changes(from: all, to: IslandScreens.plan(lidClosed, choice: .all)),
+                             title: "a tampa a fechar, «\(IslandScreenChoice.all.display)»"))
+        lines.append(changes(IslandScreens.changes(from: all, to: notch),
+                             title: "«\(IslandScreenChoice.all.display)» → «\(IslandScreenChoice.notch.display)»"))
+        lines.append(changes(IslandScreens.changes(from: notch, to: all),
+                             title: "«\(IslandScreenChoice.notch.display)» → «\(IslandScreenChoice.all.display)»"))
         return lines.joined(separator: "\n")
+    }
+
+    private static func changes(_ changes: IslandScreens.Changes, title: String) -> String {
+        guard !changes.isEmpty else { return "\(title): nada muda" }
+        var parts: [String] = []
+        if !changes.added.isEmpty { parts.append("abre " + changes.added.map { "\($0.id)" }.joined(separator: ", ")) }
+        if !changes.removed.isEmpty { parts.append("fecha " + changes.removed.map { "\($0)" }.joined(separator: ", ")) }
+        if !changes.moved.isEmpty { parts.append("move " + changes.moved.map { "\($0.id)" }.joined(separator: ", ")) }
+        return "\(title): " + parts.joined(separator: " · ")
     }
 
     private static func plan(_ plan: [IslandScreen], title: String) -> String {

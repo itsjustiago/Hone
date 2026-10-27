@@ -258,8 +258,11 @@ final class IslandPanel {
         let link = hosting.displayLink(target: IslandOutlineStepper(panel: self),
                                        selector: #selector(IslandOutlineStepper.step(_:)))
         // Every refresh the screen can make: a ProMotion screen would otherwise pick a
-        // lower rate on its own.
-        let top = Float(hosting.window?.screen?.maximumFramesPerSecond ?? 120)
+        // lower rate on its own. Each panel has its own screen's (120 on the built-in
+        // one, 75 on a 75 Hz monitor), read again for every flight, so a new mode or
+        // geometry is picked up.
+        let screen = hosting.window?.screen ?? NSScreen.screens.first { $0.frame == geometry?.screenFrame }
+        let top = Float(screen?.maximumFramesPerSecond ?? 120)
         link.preferredFrameRateRange = CAFrameRateRange(minimum: top, maximum: top, preferred: top)
         link.add(to: .main, forMode: .common)
         displayLink = link

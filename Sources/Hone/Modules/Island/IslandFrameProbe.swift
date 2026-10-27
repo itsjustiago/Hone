@@ -7,7 +7,8 @@ import SwiftUI
 /// preview renderer it exits before anything else runs: no app delegate, no modules,
 /// no music source, no defaults written, so it is safe beside the Hone that's running.
 ///
-/// It builds a real `IslandPanel` over the built-in notch, see-through and
+/// It builds a real `IslandPanel` over the built-in notch (without one, over the
+/// first screen's virtual notch), see-through and
 /// click-through (`probeAlpha`), and plays a fixed script on fake tracks: compact,
 /// pause, stay paused, resume, keep playing, peek, compact, expanded, a new track,
 /// compact, hidden; once to warm up, then three times. For each step it records
@@ -36,12 +37,13 @@ final class IslandFrameProbe {
             FileHandle.standardError.write(Data("probe: can't write \(url.path)\n".utf8))
             exit(1)
         }
-        guard let geometry = NotchGeometry.current(),
-              let screen = NSScreen.screens.first(where: { NotchGeometry(screen: $0) == geometry }) else {
-            file.write(Data("probe: no notch on a built-in screen\n".utf8))
+        // The built-in notch, or the first screen of the plan without one.
+        guard let island = IslandScreens.current(choice: .notch).first ?? IslandScreens.current(choice: .all).first,
+              let screen = NSScreen.screens.first(where: { $0.displayID == island.id }) else {
+            file.write(Data("probe: no screen for the island\n".utf8))
             exit(1)
         }
-        let probe = IslandFrameProbe(file: file, geometry: geometry, screen: screen)
+        let probe = IslandFrameProbe(file: file, geometry: island.geometry, screen: screen)
         current = probe
         DispatchQueue.main.async { probe.start() }
         app.run()
