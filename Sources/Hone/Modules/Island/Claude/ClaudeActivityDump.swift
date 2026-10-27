@@ -14,6 +14,7 @@ enum ClaudeActivityDump {
         let root = environment["HONE_CLAUDE_DUMP_ROOT"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
             ?? ClaudeActivityReader.defaultRoot
         let reader = ClaudeActivityReader(root: root)
+        print(logoLine)
         guard let seconds = environment["HONE_CLAUDE_DUMP_WATCH"].flatMap(TimeInterval.init), seconds > 0 else {
             let now = Date()
             print(text(for: reader.read(now: now), now: now))
@@ -72,6 +73,12 @@ enum ClaudeActivityDump {
             lines.append("Outros: " + others.map { "\($0) \(snapshot.runningCount(of: $0))" }.joined(separator: " · "))
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Where the glyph's mark comes from: the Claude app's icon, or our spark.
+    private static var logoLine: String {
+        guard let logo = ClaudeAppLogo.image else { return "Glifo: sem a app Claude, desenhado pelo Hone" }
+        return "Glifo: logótipo da app Claude (\(logo.width)×\(logo.height) px)"
     }
 
     private static func label(_ state: ClaudeSession.State) -> String {

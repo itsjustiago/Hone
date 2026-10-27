@@ -51,13 +51,15 @@ struct ClaudeSparkShape: Shape {
     func path(in rect: CGRect) -> Path { Path(ClaudeSpark.path(in: rect)) }
 }
 
-/// Claude's glyph, `size` points square, in `color`. With `pulses` (a session at
-/// work, the glyph in view) it breathes in Core Animation, so the app does nothing
+/// Claude's glyph, `size` points square, in `color`: the Claude app's own mark
+/// (`ClaudeAppLogo`), or our `ClaudeSpark` without the app. With `pulses` (a session
+/// at work, the glyph in view) it breathes in Core Animation, so the app does nothing
 /// per frame; with Reduce Motion, or offscreen, it stands still.
 struct ClaudeGlyph: View {
     let color: Color
     let size: CGFloat
     var pulses = false
+    var logo: CGImage? = ClaudeAppLogo.image
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandOffscreen) private var offscreen
@@ -65,7 +67,14 @@ struct ClaudeGlyph: View {
     var body: some View {
         Group {
             if pulses, !reduceMotion, !offscreen {
-                ClaudePulsingGlyph(color: NSColor(color).cgColor)
+                ClaudePulsingGlyph(color: NSColor(color).cgColor, logo: logo)
+            } else if let logo {
+                Image(decorative: logo, scale: 1)
+                    .renderingMode(.template)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(color)
             } else {
                 ClaudeSparkShape().fill(color)
             }
@@ -76,13 +85,14 @@ struct ClaudeGlyph: View {
     }
 }
 
-/// The breathing glyph: a shape layer with one repeating opacity animation, run by
+/// The breathing glyph: a layer with one repeating opacity animation, run by
 /// the render server at a slow frame rate.
 private struct ClaudePulsingGlyph: NSViewRepresentable {
     let color: CGColor
+    let logo: CGImage?
 
     func makeNSView(context: Context) -> ClaudeGlyphLayerView {
-        ClaudeGlyphLayerView()
+        ClaudeGlyphLayerView(frame: .zero, logo: logo)
     }
 
     func updateNSView(_ view: ClaudeGlyphLayerView, context: Context) {
@@ -90,8 +100,9 @@ private struct ClaudePulsingGlyph: NSViewRepresentable {
     }
 }
 
-/// The spark in a `CAShapeLayer` that pulses while the view is in a window: the
-/// animation goes as soon as the view leaves it. Clicks pass through.
+/// The glyph in a layer that pulses while the view is in a window: the animation
+/// goes as soon as the view leaves it. The logo is the layer's contents, tinted once
+/// per colour; without one, the spark is a `CAShapeLayer` inside it. Clicks pass through.
 final class ClaudeGlyphLayerView: NSView {
     static let pulseKey = "pulse"
 
@@ -109,43 +120,76 @@ final class ClaudeGlyphLayerView: NSView {
         return animation
     }
 
+    /// What pulses: the tinted logo as contents, or the spark's shape inside it.
+    let mark = CALayer()
     let shape = CAShapeLayer()
+    let logo: CGImage?
 
     var color: CGColor? {
-        didSet { shape.fillColor = color }
+        didSet {
+            guard color != oldValue || mark.contents == nil else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            if let logo {
+                mark.contents = color.flatMap { ClaudeAppLogo.tinted(logo, color: $0) }
+            } else {
+                shape.fillColor = color
+            }
+            CATransaction.commit()
+        }
     }
 
-    override init(frame: NSRect) {
+    init(frame: NSRect, logo: CGImage?) {
+        self.logo = logo
         super.init(frame: frame)
         wantsLayer = true
-        layer?.addSublayer(shape)
+        layer?.addSublayer(mark)
+        if logo != nil {
+            mark.contentsGravity = .resizeAspect
+            mark.minificationFilter = .trilinear
+        } else {
+            mark.addSublayer(shape)
+        }
+        layoutMark()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    override var isFlipped: Bool { true }
-
-    /// SwiftUI sets the frame and may never ask for a layout pass: the path follows
+    /// SwiftUI sets the frame and may never ask for a layout pass: the mark follows
     /// the size here.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        layoutMark()
+    }
+
+    /// The view is not flipped, so the logo stands upright as the layer's contents;
+    /// the spark's path, drawn with y down, is turned the right way up.
+    private func layoutMark() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        shape.frame = bounds
-        shape.path = ClaudeSpark.path(in: bounds)
+        mark.frame = bounds
+        shape.frame = mark.bounds
+        var upright = CGAffineTransform(translationX: 0, y: bounds.height).scaledBy(x: 1, y: -1)
+        shape.path = ClaudeSpark.path(in: bounds).copy(using: &upright)
         CATransaction.commit()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        shape.contentsScale = window?.backingScaleFactor ?? 2
+        updateScale()
         updatePulse()
     }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        shape.contentsScale = window?.backingScaleFactor ?? 2
+        updateScale()
+    }
+
+    private func updateScale() {
+        let scale = window?.backingScaleFactor ?? 2
+        mark.contentsScale = scale
+        shape.contentsScale = scale
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -153,9 +197,9 @@ final class ClaudeGlyphLayerView: NSView {
     /// Pulses only in a window.
     func updatePulse() {
         if window != nil {
-            if shape.animation(forKey: Self.pulseKey) == nil { shape.add(Self.pulse, forKey: Self.pulseKey) }
+            if mark.animation(forKey: Self.pulseKey) == nil { mark.add(Self.pulse, forKey: Self.pulseKey) }
         } else {
-            shape.removeAnimation(forKey: Self.pulseKey)
+            mark.removeAnimation(forKey: Self.pulseKey)
         }
     }
 }
