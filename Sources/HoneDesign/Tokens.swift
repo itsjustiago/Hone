@@ -92,6 +92,8 @@ public enum VibeToolColor {
     public static let windowsShortcuts = VibePalette.green
     /// Shares Clippy's pink: the palette is fully assigned, and a tweak and an app sit far apart in the list.
     public static let island = VibePalette.pink
+    /// Shares Screenly's yellow: the palette is fully assigned, and a tweak and an app sit far apart in the list.
+    public static let handMouse = VibePalette.yellow
 }
 
 // MARK: - Shape & space

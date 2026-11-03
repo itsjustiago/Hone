@@ -78,7 +78,8 @@ public enum HandMode: Equatable, Sendable {
     case clicking
     case dragging
     case scrolling
-    /// Thumbs-up: cursor frozen. `lockIn` = seconds until Ctrl lock toggles.
+    /// Thumbs-up: cursor frozen. `lockIn` = seconds until Ctrl lock toggles
+    /// (`.infinity` when shortcut gestures are off: there is no lock to arm).
     case frozen(lockIn: Double)
     /// Hand tipped flat: cursor frozen; curl the fingers to close the window.
     case flat
@@ -138,7 +139,8 @@ public struct HandConfig: Codable, Equatable, Sendable {
     /// Pinch on/off thresholds (fingertip gap / hand size).
     public var pinchOn: Double = 0.30
     public var pinchOff: Double = 0.40
-    /// Scroll points per full frame height of hand movement.
+    /// Scroll speed in the original's unit: Windows wheel units per full frame height
+    /// of hand movement (120 units = one notch ≈ 40 pt), so 3000 ≈ 1000 pt per frame height.
     public var scrollGain: Double = 3000
     /// Slow mode cursor speed fraction.
     public var fineSpeed: Double = 0.3

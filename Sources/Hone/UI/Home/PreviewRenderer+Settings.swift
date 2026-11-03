@@ -45,6 +45,10 @@ extension PreviewRenderer {
             ("settings-island", window("island", off: off) {
                 tool("island", settings: AnyView(IslandSettingsView(module: IslandModule())))
             }),
+            // A long page: tall enough to lay all of it out (the preview can't scroll).
+            ("settings-handmouse", window("handMouse", off: off, height: 2500) {
+                tool("handMouse", settings: AnyView(HandMouseSettingsView(module: HandMouseModule())))
+            }),
             ("settings-lidfold", window("lidFold", off: off) {
                 tool("lidFold", settings: lidFoldSettings(status: .running, hasScreenAccess: true))
             }),

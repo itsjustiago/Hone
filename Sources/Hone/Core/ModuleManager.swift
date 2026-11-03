@@ -41,6 +41,7 @@ final class ModuleManager {
             KeySwapModule(),
             WindowsShortcutsModule(),
             IslandModule(),
+            HandMouseModule(),
             // LidFoldModule() is hidden for now: not registered, so it has no pane, card or
             // menu row and its engine never starts. Add it back here to bring it back.
             // Former standalone apps, embedded as tools.
