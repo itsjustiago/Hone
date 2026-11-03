@@ -9,6 +9,13 @@ private func uv(_ u: Double, _ v: Double) -> HandPoint {
     return HandPoint(x: b.left + u * (b.right - b.left), y: b.top + v * (b.bottom - b.top))
 }
 
+private func closes(_ events: [HandAction]) -> Int {
+    events.filter { if case .closeWindow = $0 { return true } else { return false } }.count
+}
+private func minimizes(_ events: [HandAction]) -> Int {
+    events.filter { if case .minimizeWindow = $0 { return true } else { return false } }.count
+}
+
 private let leftPinch = FakeHand.open.with { $0.thumb = .pinchIndex }
 private let rightPinch = FakeHand.open.with { $0.thumb = .pinchMiddle }
 private let centre = uv(0.5, 0.5)
@@ -309,11 +316,14 @@ final class HandMouseEngineWindowTests: XCTestCase {
         let d = Driver()
         d.hold(.open, for: 0.5)
         d.clear()
-        d.hold(FakeHand.fist.with { $0.flat = true }, for: 0.4)
-        XCTAssertEqual(d.events, [])
+        d.hold(FakeHand.open.with { $0.flat = true }, for: 0.4)  // first: flat and open (the cursor freezes)
         XCTAssertEqual(d.engine.status.mode, .flat)
-        XCTAssertEqual(d.engine.status.holdProgress!, 0.3 / Tuning.closeHold, accuracy: 0.15)
-        d.hold(FakeHand.fist.with { $0.flat = true }, for: 0.6)
+        XCTAssertEqual(closes(d.events), 0)
+        d.hold(FakeHand.fist.with { $0.flat = true }, for: 0.5)  // then: fingers curl
+        XCTAssertEqual(d.engine.status.mode, .flat)
+        XCTAssertEqual(closes(d.events), 0)
+        XCTAssertEqual(d.engine.status.holdProgress!, 0.5 / Tuning.closeHold, accuracy: 0.1)
+        d.hold(FakeHand.fist.with { $0.flat = true }, for: 0.7)
         XCTAssertEqual(d.events.count, 1)
         guard case let .closeWindow(.point(u, v)) = d.events.first else { return XCTFail("\(d.events)") }
         XCTAssertEqual(u, 0.5, accuracy: 0.01)
@@ -321,21 +331,122 @@ final class HandMouseEngineWindowTests: XCTestCase {
         XCTAssertEqual(d.engine.status.lastAction, "Fechar janela")
     }
 
+    func testFlatHandThatArrivesCurledNeverCloses() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.clear()
+        d.hold(FakeHand.fist.with { $0.flat = true }, for: 2.0)
+        XCTAssertEqual(closes(d.events), 0)
+        XCTAssertEqual(d.engine.status.mode, .flat)
+    }
+
+    func testFlatHandSlidingDoesNotClose() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.hold(FakeHand.open.with { $0.flat = true }, for: 0.4)
+        d.clear()
+        let from = FakeHand.open.control
+        // curled, but drifting 0.15 over 1.5 s: the hold keeps restarting
+        d.slide(FakeHand.fist.with { $0.flat = true }, from: from, to: HandPoint(x: from.x, y: from.y + 0.15), over: 1.5)
+        XCTAssertEqual(closes(d.events), 0)
+        d.hold(FakeHand.fist.with { $0.flat = true }.at(from.x, from.y + 0.15), for: 1.3)  // parked: now it counts
+        XCTAssertEqual(closes(d.events), 1)
+    }
+
     func testTwoFlatFramesDoNotFreeze() {
         let d = Driver()
         d.hold(.open, for: 0.5)
-        d.hold(FakeHand.open.with { $0.flat = true }, for: 2.0 / 30)
+        d.hold(FakeHand.open.with { $0.flat = true }, for: Double(Tuning.flatFrames - 1) / 30)
         XCTAssertNotEqual(d.engine.status.mode, .flat)
+    }
+
+    func testFlatOutsideTheBoxDoesNotFreeze() {
+        let d = Driver()
+        d.hold(FakeHand.open.at(0.725, 0.85), for: 0.5)
+        d.hold(FakeHand.open.with { $0.flat = true }.at(0.725, 0.85), for: 1.0)
+        XCTAssertNotEqual(d.engine.status.mode, .flat)
+    }
+
+    func testRelaxedHandDoesNotMinimizeOrFreeze() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.clear()
+        var modes: [HandMode] = []
+        for _ in 0..<60 {
+            d.step(.relaxed)
+            modes.append(d.engine.status.mode)
+        }
+        XCTAssertEqual(minimizes(d.events), 0)
+        // (not the first frame: the landmark filter is still catching up with the instant open → relaxed switch)
+        XCTAssertTrue(modes.dropFirst().allSatisfy { m in
+            if case .frozen = m { return false }
+            return m != .flat
+        }, "\(Set(modes.map { "\($0)" }))")
+        d.clear()
+        let from = FakeHand.relaxed.control
+        d.slide(.relaxed, from: from, to: HandPoint(x: from.x + 0.1, y: from.y), over: 0.3)  // and it still steers
+        XCTAssertFalse(d.moves.isEmpty)
+    }
+
+    func testThumbSidewaysDoesNotFreeze() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.clear()
+        let tightFistThumbSide = FakeHand.fist.with { $0.thumb = .side }  // tight fingers, thumb out but not up
+        var modes: [HandMode] = []
+        for _ in 0..<75 {  // 2.5 s
+            d.step(tightFistThumbSide)
+            modes.append(d.engine.status.mode)
+        }
+        XCTAssertTrue(modes.dropFirst().allSatisfy { if case .frozen = $0 { return false } else { return true } })  // 1st frame: filter catching up
+        XCTAssertFalse(modes.contains { if case .shortcutsLocked = $0 { return true } else { return false } })
+        XCTAssertNotEqual(d.engine.status.lastAction, "Atalhos fixos")
+    }
+
+    func testMovingFistDoesNotMinimize() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.clear()
+        let from = FakeHand.fist.control
+        let to = HandPoint(x: from.x, y: from.y + 0.15)
+        d.slide(.fist, from: from, to: to, over: 1.5)  // a fist swinging around inside the box
+        XCTAssertEqual(minimizes(d.events), 0)
+        d.hold(FakeHand.fist.at(to), for: 1.0)  // it stops: the hold starts over, and now counts
+        XCTAssertEqual(minimizes(d.events), 1)
+    }
+
+    func testFistOutsideTheBoxDoesNothing() {
+        let d = Driver()
+        d.hold(FakeHand.open.at(0.725, 0.85), for: 0.5)  // below the box (bottom 0.60 + margin 0.10)
+        d.clear()
+        d.hold(FakeHand.fist.at(0.725, 0.85), for: 2.0)
+        XCTAssertEqual(d.events, [])
+    }
+
+    func testRockOutsideTheBoxDoesNothing() {
+        let d = Driver()
+        d.hold(FakeHand.open.at(0.725, 0.85), for: 0.5)
+        d.clear()
+        d.hold(FakeHand.rock.at(0.725, 0.85), for: 2.0)
+        XCTAssertEqual(d.events, [])
+    }
+
+    func testFistInTheMarginStillMinimizes() {
+        let d = Driver()
+        d.hold(FakeHand.open.at(0.725, 0.65), for: 0.5)  // 0.05 below the box: inside the margin
+        d.clear()
+        d.hold(FakeHand.fist.at(0.725, 0.65), for: 1.0)
+        XCTAssertEqual(minimizes(d.events), 1)
     }
 
     func testRockOpensTheSwitcherAndAnOpenHandPicks() {
         let d = Driver()
         d.hold(.open, for: 0.5)
         d.clear()
-        d.hold(.rock, for: 0.7)
+        d.hold(.rock, for: 1.0)
         XCTAssertEqual(d.events, [.openSwitcher])
         XCTAssertEqual(d.engine.status.mode, .switcher)
-        d.hold(.open, for: 0.7)
+        d.hold(.open, for: 1.0)
         XCTAssertEqual(d.events, [.openSwitcher, .pickInSwitcher])
     }
 
@@ -343,7 +454,7 @@ final class HandMouseEngineWindowTests: XCTestCase {
         let d = Driver()
         d.hold(.open, for: 0.5)
         d.clear()
-        d.hold(.rock, for: 0.7)
+        d.hold(.rock, for: 1.0)
         XCTAssertEqual(d.events, [.openSwitcher])
         d.hold(nil, for: 0.3)
         d.hold(.rock, for: 0.2)
@@ -356,7 +467,7 @@ final class HandMouseEngineWindowTests: XCTestCase {
     func testResetClosesTheSwitcher() {
         let d = Driver()
         d.hold(.open, for: 0.5)
-        d.hold(.rock, for: 0.7)
+        d.hold(.rock, for: 1.0)
         XCTAssertEqual(d.engine.reset(), [.cancelSwitcher])
     }
 }
@@ -377,8 +488,20 @@ final class HandMouseEngineShortcutTests: XCTestCase {
         d.slide(.open, from: centre, to: uv(0.2, 0.2), over: 0.5)  // locked: the hand no longer steers
         XCTAssertTrue(d.moves.isEmpty)
         XCTAssertEqual(d.engine.status.mode, .shortcutsLocked(unlockIn: nil))
-        d.hold(.fist, for: 0.7)  // Ctrl lock still minimizes, aimed at the real mouse
+        d.hold(.fist, for: 1.0)  // Ctrl lock still minimizes, aimed at the real mouse
         XCTAssertEqual(d.events, [.minimizeWindow(at: .realCursor)])
+    }
+
+    func testThumbsUpOutsideTheBoxDoesNotLock() {
+        let d = Driver()
+        d.hold(FakeHand.open.at(0.725, 0.85), for: 0.5)
+        var modes: [HandMode] = []
+        for _ in 0..<90 {  // 3 s
+            d.step(FakeHand.thumbsUp.at(0.725, 0.85))
+            modes.append(d.engine.status.mode)
+        }
+        XCTAssertFalse(modes.contains { if case .shortcutsLocked = $0 { return true } else { return false } })
+        XCTAssertNotEqual(d.engine.status.lastAction, "Atalhos fixos")
     }
 
     func testThumbsUpOnlyFreezesWithoutShortcutGestures() {

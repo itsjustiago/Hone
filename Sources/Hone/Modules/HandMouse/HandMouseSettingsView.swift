@@ -148,15 +148,15 @@ struct HandMouseSettingsView: View {
                 RowDivider()
                 guide("Congelar o cursor",
                       config.shortcutGestures
-                          ? "Polegar para cima. Durante 2 s, fixa o modo de atalhos; repete para soltar."
-                          : "Polegar para cima.")
+                          ? "Polegar bem para cima, com os dedos fechados. Durante 2 s, fixa o modo de atalhos; repete para soltar."
+                          : "Polegar bem para cima, com os dedos fechados.")
                 if config.windowGestures {
                     RowDivider()
-                    guide("Minimizar", "Punho fechado durante meio segundo.")
+                    guide("Minimizar", "Punho bem fechado, parado, durante quase 1 s.")
                     RowDivider()
-                    guide("Fechar janela", "Mão deitada com os dedos encolhidos durante 0,6 s.")
+                    guide("Fechar janela", "Deita a mão aberta (o cursor congela), depois encolhe os dedos e segura 1 s.")
                     RowDivider()
-                    guide("Seletor de janelas", "Sinal de rock (indicador, mindinho e polegar esticados) durante meio segundo abre o Mission Control; aponta e abre a mão para escolher.")
+                    guide("Seletor de janelas", "Sinal de rock (indicador, mindinho e polegar esticados) parado durante quase 1 s abre o Mission Control; aponta e abre a mão para escolher.")
                 }
                 if config.shortcutGestures {
                     RowDivider()

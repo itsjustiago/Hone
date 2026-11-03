@@ -40,6 +40,36 @@ final class PoseTests: XCTestCase {
         XCTAssertEqual(poseOf(extended: [true, false, false, false], thumbOut: false), .point) // index alone: plain pointing
     }
 
+    func testGesturePose() {
+        let none = [false, false, false, false]
+        XCTAssertEqual(gesturePose(extended: none, thumbOut: false, thumbUp: false, tight: true), .fist)
+        XCTAssertEqual(gesturePose(extended: none, thumbOut: false, thumbUp: false, tight: false), .point)  // relaxed hand: no command
+        XCTAssertEqual(gesturePose(extended: none, thumbOut: true, thumbUp: true, tight: false), .thumb)
+        XCTAssertEqual(gesturePose(extended: none, thumbOut: true, thumbUp: false, tight: true), .fist)    // thumb out sideways
+        XCTAssertEqual(gesturePose(extended: none, thumbOut: true, thumbUp: false, tight: false), .point)
+        XCTAssertEqual(gesturePose(extended: [true, false, false, true], thumbOut: true, thumbUp: false, tight: false), .rock)
+        XCTAssertEqual(gesturePose(extended: [true, false, false, true], thumbOut: false, thumbUp: false, tight: true), .point)
+        XCTAssertEqual(gesturePose(extended: [true, true, true, true], thumbOut: true, thumbUp: true, tight: false), .point)
+    }
+
+    func testFistTightAndNearBox() {
+        XCTAssertTrue(fistTight(FakeHand.fist.points))
+        XCTAssertFalse(fistTight(FakeHand.relaxed.points))
+        XCTAssertFalse(fistTight(FakeHand.open.points))
+        XCTAssertTrue(extended(FakeHand.relaxed.points) == [false, false, false, false])  // curled, just not tight
+        XCTAssertTrue(thumbUp(FakeHand.thumbsUp.points))
+        XCTAssertFalse(thumbUp(FakeHand.relaxed.points))  // thumb out to the side
+
+        let box = HandBox.default  // 0.50…0.95 × 0.15…0.60
+        XCTAssertTrue(nearBox(HandPoint(x: 0.7, y: 0.4), box: box))      // inside
+        XCTAssertTrue(nearBox(HandPoint(x: 0.7, y: 0.69), box: box))     // in the margin
+        XCTAssertTrue(nearBox(HandPoint(x: 0.41, y: 0.1), box: box))
+        XCTAssertFalse(nearBox(HandPoint(x: 0.7, y: 0.71), box: box))    // past the margin: hand going down
+        XCTAssertFalse(nearBox(HandPoint(x: 1.06, y: 0.4), box: box))
+        XCTAssertFalse(nearBox(HandPoint(x: 0.39, y: 0.4), box: box))
+        XCTAssertFalse(nearBox(HandPoint(x: 0.7, y: 0.04), box: box))
+    }
+
     func testExtendedByBendAngle() {
         XCTAssertEqual(extended(FakeHand.open.points), [true, true, true, true])
         XCTAssertEqual(extended(FakeHand.fist.points), [false, false, false, false])
