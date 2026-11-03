@@ -14,6 +14,14 @@ let package = Package(
             name: "Hone",
             dependencies: ["HoneDesign", "SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit", "LidFoldKit", "SoundlyKit", "HandKit"],
             path: "Sources/Hone",
+            // MediaPipe Hands models, precompiled for CoreML. `.copy` keeps the
+            // .mlmodelc folders as they are; build.sh puts the bundle in the .app.
+            resources: [
+                .copy("Resources/Models/hand_detector.mlmodelc"),
+                .copy("Resources/Models/hand_landmarks_detector.mlmodelc"),
+                // Licence notice for the models (Apache-2.0 weights) ships with them.
+                .copy("Resources/Models/NOTICE.txt")
+            ],
             swiftSettings: [
                 // The system-level modules (event taps, AX API, C callbacks) are
                 // inherently main-thread / single-owner. Swift 5 language mode keeps

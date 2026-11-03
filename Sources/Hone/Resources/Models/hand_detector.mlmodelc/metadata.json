@@ -1,0 +1,82 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Float16",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 2016 × 18)",
+        "shortDescription" : "",
+        "shape" : "[1, 2016, 18]",
+        "name" : "Identity",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 2016 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1, 2016, 1]",
+        "name" : "Identity_1",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 7,
+    "mlProgramOperationTypeHistogram" : {
+      "Concat" : 2,
+      "Ios16.cast" : 1,
+      "Ios16.mul" : 31,
+      "Select" : 31,
+      "Transpose" : 5,
+      "Ios16.maxPool" : 4,
+      "Ios16.upsampleBilinear" : 2,
+      "Ios16.conv" : 63,
+      "Ios16.add" : 30,
+      "Ios16.greaterEqual" : 31,
+      "Ios16.reshape" : 4,
+      "Pad" : 8
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "13.0",
+      "tvOS" : "16.0",
+      "visionOS" : "1.0",
+      "watchOS" : "9.0",
+      "iOS" : "16.0",
+      "macCatalyst" : "16.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-06-06",
+      "com.github.apple.coremltools.source" : "torch==2.12.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 192 × 192 × 3)",
+        "shortDescription" : "",
+        "shape" : "[1, 192, 192, 3]",
+        "name" : "image",
+        "type" : "MultiArray"
+      }
+    ],
+    "generatedClassName" : "hand_detector",
+    "method" : "predict"
+  }
+]

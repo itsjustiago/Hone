@@ -40,6 +40,15 @@ final class HandMouseSettings {
         }
     }
 
+    /// What finds the hand in the camera image.
+    var engine: HandTrackingEngine {
+        didSet {
+            guard oldValue != engine else { return }
+            d.set(engine.rawValue, forKey: "handMouse.engine")
+            onChange?()
+        }
+    }
+
     /// The pill with the mode and the last gesture.
     var showHUD: Bool {
         didSet { d.set(showHUD, forKey: "handMouse.showHUD"); onChange?() }
@@ -82,6 +91,7 @@ final class HandMouseSettings {
         }
         config = stored
         cameraID = d.string(forKey: "handMouse.cameraID")
+        engine = d.string(forKey: "handMouse.engine").flatMap(HandTrackingEngine.init(rawValue:)) ?? .vision
         showHUD = d.object(forKey: "handMouse.showHUD") as? Bool ?? true
         showCameraPreview = d.object(forKey: "handMouse.showCameraPreview") as? Bool ?? false
         showHandOverlay = d.object(forKey: "handMouse.showHandOverlay") as? Bool ?? true
