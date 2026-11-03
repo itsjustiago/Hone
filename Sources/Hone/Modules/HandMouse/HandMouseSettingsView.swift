@@ -47,6 +47,10 @@ struct HandMouseSettingsView: View {
                           subtitle: "Uma janela pequena com a mão e a área ativa por cima. Desligado, a imagem não aparece.",
                           tint: tint, isOn: $settings.showCameraPreview)
                 RowDivider()
+                ToggleRow(title: "Mostrar a mão no ecrã",
+                          subtitle: "A mão inteira desenhada à volta do cursor. Os cliques passam por ela.",
+                          tint: tint, isOn: $settings.showHandOverlay)
+                RowDivider()
                 ToggleRow(title: "Mostrar o estado",
                           subtitle: "Uma etiqueta no fundo do ecrã com o modo e o último gesto.",
                           tint: tint, isOn: $settings.showHUD)
@@ -101,6 +105,10 @@ struct HandMouseSettingsView: View {
                           subtitle: "Mão de lado: copiar, colar, desfazer, duplicar e Enter.",
                           tint: tint, isOn: $settings.config.shortcutGestures)
                 RowDivider()
+                ToggleRow(title: "Cursor fluido",
+                          subtitle: "O cursor desliza até à mão em vez de saltar. Desligado, vai logo para onde ela está.",
+                          tint: tint, isOn: $settings.glide)
+                RowDivider()
                 tuneRow("Suavidade do cursor", "Mais alto: cursor mais estável, com um pouco de atraso.",
                         tint, settings, \.smoothing, 0.2...2.0, 0.8, inverted: true)
                 RowDivider()
@@ -115,8 +123,9 @@ struct HandMouseSettingsView: View {
                 tuneRow("Velocidade do scroll", "Quanto a página anda por cada movimento da mão.",
                         tint, settings, \.scrollGain, 1000...6000, 3000)
                 RowDivider()
-                tuneRow("Modo lento", "Mais alto: o cursor anda mais depressa com só o indicador esticado.",
-                        tint, settings, \.fineSpeed, 0.1...0.6, 0.3)
+                tuneRow("Precisão em movimentos lentos",
+                        "Mais alto: o cursor anda mais devagar quando mexes a mão devagar, para acertar em alvos pequenos.",
+                        tint, settings, \.fineSpeed, 0.1...0.6, HandConfig().fineSpeed, inverted: true)
                 RowDivider()
                 SettingsRow(title: "Repor gestos", subtitle: "Valores de fábrica. A calibração fica.") {
                     Button("Repor") { settings.resetGestures() }
@@ -125,28 +134,29 @@ struct HandMouseSettingsView: View {
             }
 
             SettingsSection(title: "Guia de gestos") {
-                guide("Apontar", "Indicador esticado: o cursor segue a ponta do dedo.")
+                guide("Mover", "A mão move o cursor; o ponto de controlo é a base dos dedos. Movimentos lentos dão precisão.")
                 RowDivider()
-                guide("Clique", "Toca com o polegar no dedo do meio.")
+                guide("Clique", "Junta o polegar e o indicador e larga. Duplo clique: duas vezes.")
                 RowDivider()
-                guide("Clique direito", "Dois toques, o segundo curto.")
+                guide("Arrastar", "Junta o polegar e o indicador e mexe a mão; larga para soltar.")
                 RowDivider()
-                guide("Arrastar", "Toca e mantém; solta para largar.")
+                guide("Clique direito", "Junta o polegar e o médio e larga.")
                 RowDivider()
-                guide("Scroll", "Dois toques, mantém o segundo e mexe a mão para cima e para baixo.")
+                guide("Scroll", "Junta o polegar e o médio e mexe a mão para cima e para baixo.")
                 RowDivider()
-                guide("Modo lento", "Só o indicador esticado; o polegar na base do indicador clica.")
+                guide("Ecrã seguinte", "Junta o polegar e o mindinho.")
                 RowDivider()
-                guide("Ecrã seguinte", "Toca com o polegar no mindinho.")
-                RowDivider()
-                guide("Congelar", "Polegar para cima: o cursor pára.")
+                guide("Congelar o cursor",
+                      config.shortcutGestures
+                          ? "Polegar para cima. Durante 2 s, fixa o modo de atalhos; repete para soltar."
+                          : "Polegar para cima.")
                 if config.windowGestures {
                     RowDivider()
-                    guide("Minimizar", "Fecha o punho com o polegar escondido.")
+                    guide("Minimizar", "Punho fechado durante meio segundo.")
                     RowDivider()
-                    guide("Mão deitada", "Inclina a mão para a câmara e fecha os dedos meio segundo: fecha a janela.")
+                    guide("Fechar janela", "Mão deitada com os dedos encolhidos durante 0,6 s.")
                     RowDivider()
-                    guide("Seletor de janelas", "Sinal de rock (indicador, mindinho e polegar esticados) abre o Mission Control; aponta e abre a mão para escolher.")
+                    guide("Seletor de janelas", "Sinal de rock (indicador, mindinho e polegar esticados) durante meio segundo abre o Mission Control; aponta e abre a mão para escolher.")
                 }
                 if config.shortcutGestures {
                     RowDivider()
@@ -156,9 +166,11 @@ struct HandMouseSettingsView: View {
                     RowDivider()
                     guide("Duplicar e Enter", "Punho com o polegar para cima, e indicador e mindinho esticados.")
                     RowDivider()
-                    guide("Fixar atalhos", "Polegar para cima durante 2 s; repete para soltar. Com os atalhos fixos, o rato normal mexe o cursor.")
+                    guide("Atalhos fixos", "Com os atalhos fixos, o rato normal mexe o cursor e a mão só faz os atalhos.")
                 }
             }
+
+            diagnostics(controller)
 
             Label("Baseado no HandMouse de Misael Dias Santos (MIT). A imagem da câmara é processada no Mac e nunca é gravada nem enviada.",
                   systemImage: "info.circle")
@@ -176,6 +188,40 @@ struct HandMouseSettingsView: View {
         if controller.isStarting { return "À espera da permissão da câmara." }
         if controller.calibration != nil { return "A calibrar." }
         return controller.isTracking ? "A seguir a tua mão." : "Desligado. A câmara só está ligada enquanto estiver ativo."
+    }
+
+    /// Records 30 s of the raw hand as a JSON file, to tune the gestures on real data.
+    private func diagnostics(_ controller: HandMouseController) -> some View {
+        let recorder = controller.recorder
+        return SettingsSection(title: "Diagnóstico") {
+            SettingsRow(title: "Gravar gestos", subtitle: recordingHint(recorder, controller)) {
+                Button(recorder.isRecording ? "A gravar… \(recorder.secondsLeft)s" : "Gravar 30 s de gestos") {
+                    recorder.isRecording ? _ = recorder.stop() : recorder.start()
+                }
+                .buttonStyle(VibeButtonStyle())
+                .disabled(!recorder.isRecording && (!controller.isTracking || controller.calibration != nil))
+            }
+            if let file = recorder.lastFile, !recorder.isRecording {
+                RowDivider()
+                SettingsRow(title: "Gravação guardada",
+                            subtitle: (file.path as NSString).abbreviatingWithTildeInPath) {
+                    Button("Mostrar no Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                        .buttonStyle(VibeButtonStyle())
+                }
+            } else if recorder.saveFailed, !recorder.isRecording {
+                RowDivider()
+                VibeStatusLine("Não consegui guardar a gravação.", color: VibeColor.danger, wraps: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+            }
+        }
+    }
+
+    private func recordingHint(_ recorder: HandRecorder, _ controller: HandMouseController) -> String {
+        if recorder.isRecording { return "Faz os gestos com calma. Carrega outra vez para parar." }
+        if !controller.isTracking { return "Liga o Rato de Mão primeiro." }
+        return "Guarda só os pontos da mão, sem imagem, num ficheiro para afinar os gestos."
     }
 
     private func calibrationButton(_ kind: HandMouseController.Calibration, label: String,

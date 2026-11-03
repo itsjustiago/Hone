@@ -139,9 +139,9 @@ public struct HandBox: Codable, Equatable, Sendable {
     public init(left: Double, top: Double, right: Double, bottom: Double) {
         self.left = left; self.top = top; self.right = right; self.bottom = bottom
     }
-    /// Original default: top-right quarter of the frame, padded off the edges
-    /// (a right hand held beside the face, as seen in the mirrored frame).
-    public static let `default` = HandBox(left: 0.50, top: 0.05, right: 0.95, bottom: 0.50)
+    /// Default: the top-right quarter of the frame (a right hand held beside the face,
+    /// as seen in the mirrored frame), for the knuckles that steer the cursor.
+    public static let `default` = HandBox(left: 0.50, top: 0.15, right: 0.95, bottom: 0.60)
 }
 
 /// The sideways hand that enters shortcut mode, captured by `CtrlPoseRecorder`.

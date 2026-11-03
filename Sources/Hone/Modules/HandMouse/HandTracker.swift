@@ -33,6 +33,8 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
     /// Frames per second the pipeline is really processing (exponential average).
     var fps: Double { shared.withLock { $0.fps } }
+    /// Average Vision time per frame in ms (exponential average); diagnostics only.
+    var visionMs: Double { shared.withLock { $0.visionMs } }
 
     static var authorization: AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .video)
@@ -89,6 +91,7 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         /// A frame is queued for main and not yet consumed.
         var mainBusy = false
         var fps = 0.0
+        var visionMs = 0.0
         var lastFrameTime: TimeInterval = 0
         /// Bumped on every start / stop; late frames of an older run are dropped.
         var generation = 0
@@ -104,6 +107,7 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     /// Only touched on `videoQueue`.
     private let videoQueue = DispatchQueue(label: "app.hone.hand.video", qos: .userInteractive)
     private let request: VNDetectHumanHandPoseRequest = {
+        // Revision 1 is the only (so the latest) hand pose revision; the default is right.
         let r = VNDetectHumanHandPoseRequest()
         r.maximumHandCount = 1
         return r
@@ -111,6 +115,8 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     private lazy var ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var lastPreviewTime: TimeInterval = 0
 
+    /// A steady frame rate keeps the filters' timing predictable.
+    private static let frameRate: Double = 30
     private static let previewWidth: CGFloat = 320
     private static let previewInterval: TimeInterval = 1.0 / 15
 
@@ -152,6 +158,7 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         shared.withLock { state in
             state.generation += 1
             state.fps = 0
+            state.visionMs = 0
             state.lastFrameTime = 0
             state.mainBusy = false
             return state.generation
@@ -196,7 +203,19 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
             connection.isVideoMirrored = false
         }
         session.commitConfiguration()
+        capFrameRate(of: device)
         return .success((session, output))
+    }
+
+    /// Caps the camera at `frameRate` when its current format allows it; otherwise
+    /// leaves it as it is.
+    private func capFrameRate(of device: AVCaptureDevice) {
+        let supported = device.activeFormat.videoSupportedFrameRateRanges.contains {
+            $0.minFrameRate <= Self.frameRate && Self.frameRate <= $0.maxFrameRate
+        }
+        guard supported, (try? device.lockForConfiguration()) != nil else { return }
+        defer { device.unlockForConfiguration() }
+        device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: CMTimeScale(Self.frameRate))
     }
 
     /// Main thread. Turns a camera that dies mid-run into an error message.
@@ -235,7 +254,9 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         if busy { return } // main hasn't consumed the last frame
         guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
+        let visionStart = CACurrentMediaTime()
         let hand = detectHand(in: pixels)
+        let visionMs = (CACurrentMediaTime() - visionStart) * 1000
 
         let claimed = shared.withLock { state -> Bool in
             guard state.generation == generation, !state.mainBusy else { return false }
@@ -246,6 +267,7 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
                 state.fps = state.fps == 0 ? instant : state.fps * 0.9 + instant * 0.1
             }
             state.lastFrameTime = t
+            state.visionMs = state.visionMs == 0 ? visionMs : state.visionMs * 0.9 + visionMs * 0.1
             return true
         }
         guard claimed else { return }
@@ -288,24 +310,34 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
     private func detectHand(in pixels: CVPixelBuffer) -> HandLandmarks? {
         let handler = VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up, options: [:])
-        guard (try? handler.perform([request])) != nil,
-              let observation = request.results?.first,
-              let found = try? observation.recognizedPoints(.all)
-        else { return nil }
+        guard (try? handler.perform([request])) != nil, let observations = request.results else { return nil }
+        // Normally one hand (maximumHandCount); if more come back, the surest one wins.
+        return observations
+            .compactMap(Self.landmarks(from:))
+            .max { $0.mean < $1.mean }?.hand
+    }
 
-        for joint in Self.essentialJoints {
-            guard let point = found[joint], point.confidence >= Self.minConfidence else { return nil }
+    /// The 21 joints of one observation with their confidences, or nil if the hand
+    /// can't be trusted. `mean` = average joint confidence, to rank several hands.
+    private static func landmarks(from observation: VNHumanHandPoseObservation) -> (hand: HandLandmarks, mean: Double)? {
+        guard let found = try? observation.recognizedPoints(.all) else { return nil }
+        for joint in essentialJoints {
+            guard let point = found[joint], point.confidence >= minConfidence else { return nil }
         }
-        // Low-confidence joints keep their reported spot; a joint that is missing
-        // altogether makes the frame unusable.
+        // Low-confidence joints keep their reported spot (the engine reads `confidence`);
+        // a joint that is missing altogether makes the frame unusable.
         var points: [HandPoint] = []
+        var confidence: [Double] = []
         points.reserveCapacity(HandLandmarks.count)
-        for joint in Self.joints {
+        confidence.reserveCapacity(HandLandmarks.count)
+        for joint in joints {
             guard let p = found[joint] else { return nil }
             // Vision: bottom-left origin, camera orientation. Ours: top-left, mirrored.
             points.append(HandPoint(x: 1 - Double(p.location.x), y: 1 - Double(p.location.y)))
+            confidence.append(Double(p.confidence))
         }
-        return HandLandmarks(points: points)
+        guard let hand = HandLandmarks(points: points, confidence: confidence) else { return nil }
+        return (hand, confidence.reduce(0, +) / Double(confidence.count))
     }
 
     // MARK: Preview

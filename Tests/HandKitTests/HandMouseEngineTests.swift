@@ -3,28 +3,43 @@ import XCTest
 
 // The engine end to end, driven by synthetic hands at 30 fps.
 
-/// Frame point at u, v of the default box.
+/// Frame point at u, v of the default box (where the control point goes).
 private func uv(_ u: Double, _ v: Double) -> HandPoint {
     let b = HandBox.default
     return HandPoint(x: b.left + u * (b.right - b.left), y: b.top + v * (b.bottom - b.top))
 }
 
-private let pinch = FakeHand.open.with { $0.thumb = .pinchMiddle }
+private let leftPinch = FakeHand.open.with { $0.thumb = .pinchIndex }
+private let rightPinch = FakeHand.open.with { $0.thumb = .pinchMiddle }
+private let centre = uv(0.5, 0.5)
 
 final class HandMouseEngineCursorTests: XCTestCase {
-    func testPointingTracksTheIndexTip() {
+    func testPointingFollowsTheKnuckles() {
         let d = Driver()
-        d.hold(FakeHand.open.at(uv(0.2, 0.5).x, uv(0.2, 0.5).y), for: 0.5)
-        d.slide(.open, from: uv(0.2, 0.5), to: uv(0.8, 0.5), over: 1)
-        d.hold(FakeHand.open.at(uv(0.8, 0.5).x, uv(0.8, 0.5).y), for: 1)
+        d.hold(FakeHand.open.at(uv(0.2, 0.5)), for: 0.5)
+        d.slide(.open, from: uv(0.2, 0.5), to: uv(0.8, 0.5), over: 0.3)  // a brisk move: 1:1
+        d.hold(FakeHand.open.at(uv(0.8, 0.5)), for: 1)
         let moves = d.moves
         XCTAssertEqual(moves.first!.u, 0.2, accuracy: 1e-6)
-        XCTAssertEqual(moves.last!.u, 0.8, accuracy: 0.01)
+        XCTAssertEqual(moves.last!.u, 0.8, accuracy: 0.03)
         XCTAssertEqual(moves.last!.v, 0.5, accuracy: 0.01)
         XCTAssertTrue(zip(moves, moves.dropFirst()).allSatisfy { $1.u >= $0.u - 1e-9 })  // follows the hand right
         XCTAssertTrue(moves.allSatisfy { !$0.dragging })
         XCTAssertEqual(d.events, [])
-        XCTAssertEqual(d.engine.status.mode, .pointing)
+        XCTAssertEqual(d.engine.status.mode, .slow)  // still hand: precision gain on
+    }
+
+    func testSlowMovesAreScaledDownAndFastOnesCatchUp() {
+        let d = Driver()
+        d.hold(FakeHand.open.at(centre), for: 0.5)
+        d.slide(.open, from: centre, to: uv(0.55, 0.5), over: 1)  // creeping toward a target
+        let crept = d.moves.last!.u - 0.5
+        XCTAssertLessThan(crept, 0.05 * 0.7)  // the cursor moved less than the hand
+        XCTAssertGreaterThan(crept, 0.01)
+        XCTAssertEqual(d.engine.status.mode, .slow)
+        d.slide(.open, from: uv(0.55, 0.5), to: uv(0.9, 0.5), over: 0.2)  // a fast sweep
+        d.hold(FakeHand.open.at(uv(0.9, 0.5)), for: 0.5)
+        XCTAssertEqual(d.moves.last!.u, 0.9, accuracy: 0.02)  // the box mapping is back
     }
 
     func testStillHandSendsNoDuplicateMoves() {
@@ -33,7 +48,19 @@ final class HandMouseEngineCursorTests: XCTestCase {
         XCTAssertEqual(d.moves.count, 1)
     }
 
-    func testEdgesWarnWhenTheIndexLeavesTheBox() {
+    func testStatusCursorFollowsTheCursor() {
+        let d = Driver()
+        XCTAssertNil(d.engine.status.cursor)
+        d.hold(FakeHand.open.at(uv(0.3, 0.4)), for: 0.3)
+        d.slide(.open, from: uv(0.3, 0.4), to: uv(0.7, 0.6), over: 0.3)
+        let last = d.moves.last!
+        XCTAssertEqual(d.engine.status.cursor?.u, last.u)
+        XCTAssertEqual(d.engine.status.cursor?.v, last.v)
+        d.hold(.thumbsUp, for: 0.6)  // frozen: still known
+        XCTAssertNotNil(d.engine.status.cursor)
+    }
+
+    func testEdgesWarnWhenTheHandLeavesTheBox() {
         let d = Driver()
         d.hold(FakeHand.open.at(0.98, 0.3), for: 0.2)  // right of the box
         XCTAssertTrue(d.engine.status.edges == (false, false, false, true))
@@ -45,7 +72,7 @@ final class HandMouseEngineCursorTests: XCTestCase {
         let one = Driver()
         one.hold(.open, for: 0.5)
         one.hold(pinky, for: 0.2)
-        XCTAssertEqual(one.events, [])
+        XCTAssertFalse(one.events.contains(.nextScreen))
 
         let two = Driver()
         two.engine.screenCount = 2
@@ -54,38 +81,76 @@ final class HandMouseEngineCursorTests: XCTestCase {
         two.hold(pinky, for: 0.2)
         XCTAssertEqual(two.events, [.nextScreen])
         // the host moves screens first, then gets a position on the new one
-        XCTAssertEqual(two.actions.prefix(2).first, .nextScreen)
-        guard case .moveCursor = two.actions[1] else { return XCTFail("no move after nextScreen") }
+        let i = two.actions.firstIndex(of: .nextScreen)!
+        guard case .moveCursor = two.actions[i + 1] else { return XCTFail("no move after nextScreen") }
         XCTAssertEqual(two.engine.status.lastAction, "Ecrã seguinte")
     }
 }
 
 final class HandMouseEngineClickTests: XCTestCase {
-    func testTapIsOneLeftClickAfterTheDoubleTapWindow() {
+    func testQuickPinchIsALeftClickWhereTheCursorWas() {
         let d = Driver()
-        d.hold(.open, for: 0.5)
+        d.hold(FakeHand.open.at(uv(0.4, 0.5)), for: 0.3)
+        d.slide(.open, from: uv(0.4, 0.5), to: centre, over: 0.3)
+        d.hold(FakeHand.open.at(centre), for: 0.6)
+        let before = d.engine.status.cursor!
         d.clear()
-        d.hold(pinch, for: 0.1)
+        // pinch while the knuckles drift a little (under the drag threshold): the cursor stays put
+        var frozen: (u: Double, v: Double)?
+        for i in 1...6 {
+            d.step(leftPinch.at(centre.x, centre.y + 0.001 * Double(i)))
+            guard d.engine.status.mode == .clicking, let c = d.engine.status.cursor else { continue }
+            if let f = frozen { XCTAssertTrue(c == f, "cursor moved while pinched: \(c) vs \(f)") } else { frozen = c }
+        }
         let release = d.t
-        d.hold(.open, for: 0.6)
+        d.hold(FakeHand.open.at(centre.x, centre.y + 0.006), for: 0.3)
         XCTAssertEqual(d.events, [.leftClick])
-        XCTAssertGreaterThan(d.log.first { $0.action == .leftClick }!.t, release + Tuning.double - 1e-9)
+        let click = d.log.firstIndex { $0.action == .leftClick }!
+        XCTAssertLessThan(d.log[click].t - release, 0.1)  // right on release, no double-tap wait
+        // the click lands where the cursor was before the fingers closed
+        let last = d.log[..<click].compactMap { e -> (u: Double, v: Double)? in
+            if case let .moveCursor(u, v, _) = e.action { return (u, v) } else { return nil }
+        }.last ?? before
+        XCTAssertNotNil(frozen)
+        XCTAssertEqual(last.u, frozen!.u, accuracy: 1e-12)
+        XCTAssertEqual(last.v, frozen!.v, accuracy: 1e-12)
+        XCTAssertEqual(last.u, before.u, accuracy: 0.002)
+        XCTAssertEqual(last.v, before.v, accuracy: 0.002)
         XCTAssertEqual(d.engine.status.lastAction, "Clique")
     }
 
-    func testPinchHoldDragsThenReleases() {
+    func testOneBadFrameDoesNotClick() {
         let d = Driver()
         d.hold(.open, for: 0.5)
+        d.step(leftPinch)
+        d.hold(.open, for: 0.5)
+        XCTAssertEqual(d.events, [])
+    }
+
+    func testTwoQuickPinchesAreTwoClicks() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.hold(leftPinch, for: 0.15)
+        d.hold(.open, for: 0.15)
+        d.hold(leftPinch, for: 0.15)
+        d.hold(.open, for: 0.2)
+        XCTAssertEqual(d.events, [.leftClick, .leftClick])  // the host turns these into a double click
+    }
+
+    func testPinchAndMoveDrags() {
+        let d = Driver()
+        d.hold(FakeHand.open.at(centre), for: 0.5)
         d.clear()
-        d.hold(pinch, for: 0.4)
-        XCTAssertEqual(d.events, [.leftDown])
+        d.hold(leftPinch.at(centre), for: 0.1)
+        XCTAssertEqual(d.engine.status.mode, .clicking)
+        d.slide(leftPinch, from: centre, to: uv(0.7, 0.5), over: 0.3)
         XCTAssertEqual(d.engine.status.mode, .dragging)
-        d.slide(pinch, from: uv(0.5, 0.5), to: uv(0.7, 0.5), over: 0.3)
-        d.hold(FakeHand.open.at(uv(0.7, 0.5).x, uv(0.7, 0.5).y), for: 0.2)
+        d.hold(FakeHand.open.at(uv(0.7, 0.5)), for: 0.2)
         XCTAssertEqual(d.events, [.leftDown, .leftUp])
 
         let a = d.actions
         let down = a.firstIndex(of: .leftDown)!, up = a.firstIndex(of: .leftUp)!
+        XCTAssertFalse(a[..<down].contains { if case .moveCursor = $0 { return true } else { return false } })  // frozen till then
         let dragMoves = a[down..<up].compactMap { action -> Double? in
             if case let .moveCursor(u, _, true) = action { return u } else { return nil }
         }
@@ -94,37 +159,116 @@ final class HandMouseEngineClickTests: XCTestCase {
         XCTAssertFalse(a[up...].contains { if case .moveCursor(_, _, true) = $0 { return true } else { return false } })
     }
 
+    func testPinchHeldStillStartsADrag() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.clear()
+        d.hold(leftPinch, for: 0.6)
+        XCTAssertEqual(d.events, [.leftDown])
+        XCTAssertEqual(d.engine.status.mode, .dragging)
+        XCTAssertEqual(d.engine.status.holdProgress, 1)
+        d.hold(.open, for: 0.2)
+        XCTAssertEqual(d.events, [.leftDown, .leftUp])
+    }
+
+    func testQuickMiddlePinchIsARightClick() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.clear()
+        d.hold(rightPinch, for: 0.2)
+        d.hold(.open, for: 0.2)
+        XCTAssertEqual(d.events, [.rightClick])
+        XCTAssertEqual(d.engine.status.lastAction, "Clique direito")
+    }
+
+    func testMiddlePinchAndMoveScrolls() {
+        let d = Driver()
+        d.hold(FakeHand.open.at(centre), for: 0.5)
+        d.hold(rightPinch.at(centre), for: 0.1)
+        d.clear()
+        let low = HandPoint(x: centre.x, y: centre.y + 0.1)
+        d.slide(rightPinch, from: centre, to: low, over: 0.3)
+        d.hold(rightPinch.at(low), for: 0.3)
+        XCTAssertEqual(d.engine.status.mode, .scrolling)
+        XCTAssertEqual(d.scrolled, 0.1 * 3000 / 3, accuracy: 2)  // hand down a tenth of the frame = content down 100 pt
+        XCTAssertTrue(d.moves.isEmpty)  // the cursor holds still while scrolling
+        d.clear()
+        d.slide(rightPinch, from: low, to: centre, over: 0.3)
+        d.hold(rightPinch.at(centre), for: 0.3)
+        XCTAssertEqual(d.scrolled, -100, accuracy: 2)  // hand up = content up
+        d.hold(FakeHand.open.at(centre), for: 0.2)
+        XCTAssertFalse(d.events.contains(.rightClick))
+        XCTAssertEqual(d.engine.status.lastAction, "Fim de scroll")
+    }
+
+    func testStatusPinchRisesAsTheFingersClose() {
+        let d = Driver()
+        var seen: [Double] = []
+        for gap in [0.08, 0.04, 0.02] {
+            d.hold(FakeHand.open.with { $0.thumb = .nearIndex(gap) }, for: 0.4)
+            seen.append(d.engine.status.pinch)
+        }
+        XCTAssertEqual(seen[0], 0, accuracy: 1e-6)
+        XCTAssertGreaterThan(seen[1], seen[0])
+        XCTAssertEqual(seen[2], 1, accuracy: 1e-6)
+    }
+
+    func testFistDoesNotClick() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.clear()
+        d.hold(.fist, for: 0.3)
+        d.hold(.open, for: 0.5)
+        XCTAssertFalse(d.events.contains { [.leftClick, .rightClick, .leftDown].contains($0) })
+    }
+}
+
+final class HandMouseEngineLossTests: XCTestCase {
+    func testADroppedFrameMidDragKeepsTheButton() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.hold(leftPinch, for: 0.5)
+        XCTAssertEqual(d.events, [.leftDown])
+        d.step(nil)
+        XCTAssertEqual(d.engine.status.mode, .dragging)  // within the grace nothing changes
+        d.hold(leftPinch, for: 0.2)
+        d.hold(nil, for: 0.1)
+        d.hold(leftPinch, for: 0.2)
+        XCTAssertEqual(d.events, [.leftDown])
+        d.hold(nil, for: 0.4)
+        XCTAssertEqual(d.events, [.leftDown, .leftUp])
+        XCTAssertEqual(d.engine.status.mode, .noHand)
+    }
+
     func testResetMidDragReleasesTheButton() {
         let d = Driver()
         d.hold(.open, for: 0.5)
-        d.hold(pinch, for: 0.4)
+        d.hold(leftPinch, for: 0.5)
         XCTAssertEqual(d.events.last, .leftDown)
         XCTAssertEqual(d.engine.reset(), [.leftUp])
         XCTAssertEqual(d.engine.status.mode, .noHand)
         XCTAssertEqual(d.engine.reset(), [])
     }
 
-    func testHandLostMidDragReleasesTheButton() {
+    func testLowConfidenceHandIsNoHand() {
         let d = Driver()
-        d.hold(.open, for: 0.5)
-        d.hold(pinch, for: 0.4)
-        d.hold(nil, for: 0.1)
-        XCTAssertEqual(d.events, [.leftDown, .leftUp])
+        d.hold(.open, for: 0.3)
+        let weak = HandLandmarks(points: FakeHand.open.points, confidence: Array(repeating: 0.2, count: 21))!
+        for _ in 0..<15 { d.feed(weak) }
         XCTAssertEqual(d.engine.status.mode, .noHand)
     }
 
-    func testScrollFollowsTheHandDown() {
-        let d = Driver()
-        d.hold(.open, for: 0.5)
-        d.hold(pinch, for: 0.1)
-        d.hold(.open, for: 0.1)
-        d.hold(pinch, for: 0.4)  // second pinch held: scroll
-        XCTAssertEqual(d.engine.status.mode, .scrolling)
-        d.clear()
-        d.slide(pinch, from: uv(0.5, 0.5), to: HandPoint(x: uv(0.5, 0.5).x, y: uv(0.5, 0.5).y + 0.1), over: 0.3)
-        let points = d.actions.reduce(0.0) { sum, a in if case let .scroll(p) = a { return sum + p } else { return sum } }
-        XCTAssertEqual(points, 0.1 * 3000 / 3, accuracy: 0.5)  // hand down a tenth of the frame = content down 100 pt
-        XCTAssertTrue(d.moves.isEmpty)  // the cursor holds still while scrolling
+    func testReplaysARecordingWithoutCrashing() throws {
+        let p = FakeHand.open.points.map { #"{"x":\#($0.x),"y":\#($0.y)}"# }.joined(separator: ",")
+        let json = #"[{"t":0,"hand":{"points":[\#(p)]}},{"t":0.033},{"t":0.066,"hand":{"points":[\#(p)],"confidence":[\#(Array(repeating: "0.9", count: 21).joined(separator: ","))]}}]"#
+        let frames = try JSONDecoder().decode([HandFrame].self, from: Data(json.utf8))
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertNil(frames[1].hand)
+        let engine = HandMouseEngine()
+        var actions: [HandAction] = []
+        for f in frames { actions += engine.process(t: f.t, hand: f.hand) }
+        XCTAssertEqual(actions.count, 1)  // one cursor move, nothing else
+        XCTAssertEqual(engine.status.mode, .slow)
     }
 }
 
@@ -139,6 +283,16 @@ final class HandMouseEngineWindowTests: XCTestCase {
         XCTAssertEqual(u, 0.5, accuracy: 0.01)
         XCTAssertEqual(v, 0.5, accuracy: 0.01)
         XCTAssertEqual(d.engine.status.lastAction, "Minimizar")
+    }
+
+    func testTiltedHandDoesNotBecomeAFist() {
+        let d = Driver()
+        d.hold(.open, for: 0.3)
+        d.clear()
+        // leaning at the camera: fingers foreshortened, the detector wobbling the tips back and forth
+        for i in 0..<60 { d.step(FakeHand.open.with { $0.tilt = 0.25; $0.tipNudge = i % 2 == 0 ? 0 : 0.012 }) }
+        XCTAssertEqual(d.events, [])
+        XCTAssertTrue([.slow, .pointing].contains(d.engine.status.mode), "\(d.engine.status.mode)")
     }
 
     func testFistDoesNothingWithoutWindowGestures() {
@@ -158,7 +312,7 @@ final class HandMouseEngineWindowTests: XCTestCase {
         d.hold(FakeHand.fist.with { $0.flat = true }, for: 0.4)
         XCTAssertEqual(d.events, [])
         XCTAssertEqual(d.engine.status.mode, .flat)
-        XCTAssertEqual(d.engine.status.holdProgress!, 0.4 / Tuning.closeHold, accuracy: 0.1)
+        XCTAssertEqual(d.engine.status.holdProgress!, 0.3 / Tuning.closeHold, accuracy: 0.15)
         d.hold(FakeHand.fist.with { $0.flat = true }, for: 0.6)
         XCTAssertEqual(d.events.count, 1)
         guard case let .closeWindow(.point(u, v)) = d.events.first else { return XCTFail("\(d.events)") }
@@ -167,14 +321,21 @@ final class HandMouseEngineWindowTests: XCTestCase {
         XCTAssertEqual(d.engine.status.lastAction, "Fechar janela")
     }
 
+    func testTwoFlatFramesDoNotFreeze() {
+        let d = Driver()
+        d.hold(.open, for: 0.5)
+        d.hold(FakeHand.open.with { $0.flat = true }, for: 2.0 / 30)
+        XCTAssertNotEqual(d.engine.status.mode, .flat)
+    }
+
     func testRockOpensTheSwitcherAndAnOpenHandPicks() {
         let d = Driver()
         d.hold(.open, for: 0.5)
         d.clear()
-        d.hold(.rock, for: 0.5)
+        d.hold(.rock, for: 0.7)
         XCTAssertEqual(d.events, [.openSwitcher])
         XCTAssertEqual(d.engine.status.mode, .switcher)
-        d.hold(.open, for: 0.5)
+        d.hold(.open, for: 0.7)
         XCTAssertEqual(d.events, [.openSwitcher, .pickInSwitcher])
     }
 
@@ -182,7 +343,7 @@ final class HandMouseEngineWindowTests: XCTestCase {
         let d = Driver()
         d.hold(.open, for: 0.5)
         d.clear()
-        d.hold(.rock, for: 0.5)
+        d.hold(.rock, for: 0.7)
         XCTAssertEqual(d.events, [.openSwitcher])
         d.hold(nil, for: 0.3)
         d.hold(.rock, for: 0.2)
@@ -195,7 +356,7 @@ final class HandMouseEngineWindowTests: XCTestCase {
     func testResetClosesTheSwitcher() {
         let d = Driver()
         d.hold(.open, for: 0.5)
-        d.hold(.rock, for: 0.5)
+        d.hold(.rock, for: 0.7)
         XCTAssertEqual(d.engine.reset(), [.cancelSwitcher])
     }
 }
@@ -207,16 +368,16 @@ final class HandMouseEngineShortcutTests: XCTestCase {
         d.clear()
         d.hold(.thumbsUp, for: 1)
         guard case let .frozen(lockIn) = d.engine.status.mode else { return XCTFail("\(d.engine.status.mode)") }
-        XCTAssertEqual(lockIn, 1, accuracy: 0.05)
+        XCTAssertEqual(lockIn, 1, accuracy: 0.1)
         XCTAssertEqual(d.engine.status.holdProgress!, 0.5, accuracy: 0.05)
         d.hold(.thumbsUp, for: 1.2)
         XCTAssertEqual(d.engine.status.mode, .shortcutsLocked(unlockIn: nil))
         XCTAssertEqual(d.engine.status.lastAction, "Atalhos fixos")
         d.clear()
-        d.slide(.open, from: uv(0.5, 0.5), to: uv(0.2, 0.2), over: 0.5)  // locked: the hand no longer steers
+        d.slide(.open, from: centre, to: uv(0.2, 0.2), over: 0.5)  // locked: the hand no longer steers
         XCTAssertTrue(d.moves.isEmpty)
         XCTAssertEqual(d.engine.status.mode, .shortcutsLocked(unlockIn: nil))
-        d.hold(.fist, for: 0.5)  // Ctrl lock still minimizes, aimed at the real mouse
+        d.hold(.fist, for: 0.7)  // Ctrl lock still minimizes, aimed at the real mouse
         XCTAssertEqual(d.events, [.minimizeWindow(at: .realCursor)])
     }
 
@@ -251,7 +412,7 @@ final class HandMouseEngineShortcutTests: XCTestCase {
         config.shortcutGestures = false
         let d = Driver(HandMouseEngine(config: config))
         d.hold(.open, for: 0.5)
-        XCTAssertEqual(d.engine.status.mode, .pointing)
+        XCTAssertEqual(d.engine.status.mode, .slow)
     }
 }
 
@@ -274,8 +435,8 @@ final class CalibrationTests: XCTestCase {
             result = c.process(t: t, hand: FakeHand.open.landmarks)
             t += 1.0 / 30
         }
-        XCTAssertGreaterThan(t - openAt, Tuning.poseHold)
-        XCTAssertEqual(result, HandBox(left: 0.3, top: 0.2, right: 0.8, bottom: 0.6))
+        XCTAssertGreaterThan(t - openAt, Tuning.calOpenHold)
+        XCTAssertEqual(result, HandBox(left: 0.3, top: 0.2, right: 0.8, bottom: 0.6))  // the knuckles' sweep
     }
 
     func testTinySweepIsRejected() {

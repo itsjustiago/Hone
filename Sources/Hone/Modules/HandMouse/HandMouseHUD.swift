@@ -16,7 +16,7 @@ extension HandMode {
         switch self {
         case .noHand: return "Sem mão"
         case .pointing: return "A apontar"
-        case .slow: return "Modo lento"
+        case .slow: return "Precisão"
         case .clicking: return "A clicar"
         case .dragging: return "A arrastar"
         case .scrolling: return "Scroll"

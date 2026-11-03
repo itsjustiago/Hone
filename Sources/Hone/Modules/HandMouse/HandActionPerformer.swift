@@ -12,7 +12,13 @@ import HandKit
 @MainActor
 final class HandActionPerformer {
     /// Watch only: perform nothing.
-    var dryRun = false
+    var dryRun = false {
+        didSet { if dryRun { stopGlide() } }
+    }
+    /// The cursor eases toward the engine's target instead of jumping to it.
+    var glide = true {
+        didSet { if !glide { stopGlide() } }
+    }
 
     /// Screens in play: the primary one first, then the rest in `NSScreen.screens` order.
     var screenCount: Int { max(1, NSScreen.screens.count) }
@@ -32,6 +38,19 @@ final class HandActionPerformer {
     private var lastPointTime: TimeInterval = 0
     /// Scroll points not yet sent: events carry whole pixels only.
     private var scrollRemainder = 0.0
+    // Glide: the target the cursor is easing toward (nil = nothing pending), whether the
+    // button is held for it, the cursor's own float position and the 60 Hz tick.
+    private var glideTarget: CGPoint?
+    private var glideDragging = false
+    private var glidePoint = CGPoint.zero
+    private var glideTimer: Timer?
+    private var glideLastTick: TimeInterval = 0
+    /// The next move jumps (a new screen): easing across screens would sweep over both.
+    private var glideJumpNext = false
+    /// Share of the remaining distance covered per 1/60 s tick.
+    private static let glideRate = 0.45
+    /// Closer than this (pt), the cursor has arrived.
+    private static let glideArrived: CGFloat = 0.5
     /// AX calls wait on the target app, so they stay off the main thread.
     private let axQueue = DispatchQueue(label: "app.hone.hand.ax", qos: .userInitiated)
 
@@ -43,19 +62,25 @@ final class HandActionPerformer {
         guard !dryRun else { return }
         switch action {
         case let .moveCursor(u, v, dragging):
-            move(to: globalPoint(u: u, v: v), dragging: dragging)
+            moveCursor(to: globalPoint(u: u, v: v), dragging: dragging)
         case .nextScreen:
             screenIndex = (clampedScreenIndex() + 1) % screenCount
+            stopGlide()
+            glideJumpNext = true
         case .leftClick:
+            jumpToGlideTarget()
             click(.left)
         case .rightClick:
+            jumpToGlideTarget()
             click(.right)
         case .leftDown:
             guard !leftHeld else { return }
+            jumpToGlideTarget()
             leftHeld = true
             postMouse(.leftMouseDown, button: .left)
         case .leftUp:
             guard leftHeld else { return }
+            jumpToGlideTarget()
             leftHeld = false
             postMouse(.leftMouseUp, button: .left)
         case let .scroll(points):
@@ -76,6 +101,7 @@ final class HandActionPerformer {
                 configuration: NSWorkspace.OpenConfiguration(),
                 completionHandler: nil)
         case .pickInSwitcher:
+            jumpToGlideTarget()
             click(.left)
         case .cancelSwitcher:
             postKey(kVK_Escape, flags: [])
@@ -93,6 +119,7 @@ final class HandActionPerformer {
     /// Tracking stopped: let go of anything held and drop partial scroll.
     func releaseAll() {
         scrollRemainder = 0
+        stopGlide()
         guard leftHeld else { return }
         leftHeld = false
         postMouse(.leftMouseUp, button: .left)
@@ -124,6 +151,60 @@ final class HandActionPerformer {
     private func currentLocation() -> CGPoint {
         if let lastPoint, ProcessInfo.processInfo.systemUptime - lastPointTime < 0.1 { return lastPoint }
         return CGEvent(source: nil)?.location ?? lastPoint ?? .zero
+    }
+
+    /// The engine's cursor request: straight to the point, or eased by the glide timer.
+    private func moveCursor(to point: CGPoint, dragging: Bool) {
+        guard glide, !glideJumpNext else {
+            glideJumpNext = false
+            stopGlide()
+            move(to: point, dragging: dragging)
+            return
+        }
+        glideTarget = point
+        glideDragging = dragging
+        guard glideTimer == nil else { return }
+        // Easing starts from where the cursor really is.
+        glidePoint = currentLocation()
+        guard hypot(point.x - glidePoint.x, point.y - glidePoint.y) >= Self.glideArrived else { return }
+        glideLastTick = ProcessInfo.processInfo.systemUptime
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            MainActor.assumeIsolated { self.glideTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        glideTimer = timer
+    }
+
+    private func glideTick() {
+        guard let target = glideTarget, !dryRun else { stopGlide(); return }
+        let now = ProcessInfo.processInfo.systemUptime
+        // Real elapsed time, so a late tick catches up instead of slowing the cursor.
+        let dt = min(max(now - glideLastTick, 1.0 / 120), 1.0 / 20)
+        glideLastTick = now
+        let step = 1 - pow(1 - Self.glideRate, dt * 60)
+        let dx = target.x - glidePoint.x, dy = target.y - glidePoint.y
+        if hypot(dx, dy) < Self.glideArrived {
+            jumpToGlideTarget()
+            return
+        }
+        glidePoint = CGPoint(x: glidePoint.x + dx * step, y: glidePoint.y + dy * step)
+        move(to: glidePoint, dragging: glideDragging)
+    }
+
+    /// Puts the cursor on the pending target at once and ends the glide. Clicks call
+    /// this first, so they land where the hand pointed and not on the way there.
+    private func jumpToGlideTarget() {
+        if let target = glideTarget, lastPoint != target {
+            move(to: target, dragging: glideDragging)
+        }
+        stopGlide()
+    }
+
+    private func stopGlide() {
+        glideTimer?.invalidate()
+        glideTimer = nil
+        glideTarget = nil
     }
 
     private func move(to point: CGPoint, dragging: Bool) {

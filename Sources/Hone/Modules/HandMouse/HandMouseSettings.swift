@@ -51,6 +51,16 @@ final class HandMouseSettings {
         didSet { d.set(showCameraPreview, forKey: "handMouse.showCameraPreview"); onChange?() }
     }
 
+    /// The whole hand drawn around the cursor on screen; clicks pass through it.
+    var showHandOverlay: Bool {
+        didSet { d.set(showHandOverlay, forKey: "handMouse.showHandOverlay"); onChange?() }
+    }
+
+    /// The cursor eases toward the hand's position instead of jumping to it.
+    var glide: Bool {
+        didSet { d.set(glide, forKey: "handMouse.glide"); onChange?() }
+    }
+
     /// Minutes without a hand before the camera switches itself off; 0 = never.
     var autoOffMinutes: Int {
         didSet { d.set(autoOffMinutes, forKey: "handMouse.autoOffMinutes"); onChange?() }
@@ -64,10 +74,18 @@ final class HandMouseSettings {
     init() {
         let d = UserDefaults.standard
         shortcut = Self.load(HandShortcutKey.self, "handMouse.shortcut", d) ?? .default
-        config = Self.load(HandConfig.self, "handMouse.config", d) ?? HandConfig()
+        var stored = Self.load(HandConfig.self, "handMouse.config", d) ?? HandConfig()
+        // v2 steers with the knuckles, not the index tip: a box calibrated before sits too high.
+        if d.integer(forKey: "handMouse.boxVersion") < 2 {
+            stored.box = .default
+            d.set(2, forKey: "handMouse.boxVersion")
+        }
+        config = stored
         cameraID = d.string(forKey: "handMouse.cameraID")
         showHUD = d.object(forKey: "handMouse.showHUD") as? Bool ?? true
         showCameraPreview = d.object(forKey: "handMouse.showCameraPreview") as? Bool ?? false
+        showHandOverlay = d.object(forKey: "handMouse.showHandOverlay") as? Bool ?? true
+        glide = d.object(forKey: "handMouse.glide") as? Bool ?? true
         autoOffMinutes = d.object(forKey: "handMouse.autoOffMinutes") as? Int ?? 2
         watchOnly = d.object(forKey: "handMouse.watchOnly") as? Bool ?? false
     }
