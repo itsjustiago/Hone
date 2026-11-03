@@ -33,8 +33,13 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
     /// Frames per second the pipeline is really processing (exponential average).
     var fps: Double { shared.withLock { $0.fps } }
-    /// Average Vision time per frame in ms (exponential average); diagnostics only.
+    /// Average Vision time per frame in ms (exponential average, both passes when the
+    /// crop missed); diagnostics only.
     var visionMs: Double { shared.withLock { $0.visionMs } }
+    /// Pixel size of the frames the camera really delivers; (0, 0) until the first one.
+    var frameSize: (width: Int, height: Int) { shared.withLock { ($0.frameWidth, $0.frameHeight) } }
+    /// Vision is looking at a crop around the hand (not the whole frame) as of the last frame.
+    var roiActive: Bool { shared.withLock { $0.roiActive } }
 
     static var authorization: AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .video)
@@ -92,6 +97,9 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         var mainBusy = false
         var fps = 0.0
         var visionMs = 0.0
+        var frameWidth = 0
+        var frameHeight = 0
+        var roiActive = false
         var lastFrameTime: TimeInterval = 0
         /// Bumped on every start / stop; late frames of an older run are dropped.
         var generation = 0
@@ -114,11 +122,21 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     }()
     private lazy var ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var lastPreviewTime: TimeInterval = 0
+    /// Where Vision looks next frame: a crop around the hand just seen (nil = whole frame).
+    /// Valid for `roiGeneration` only, so a new run always starts on the whole frame
+    /// without `start()` / `stop()` having to reach into this queue.
+    private var roi: HandRegion?
+    private var roiGeneration = -1
+    /// Frames the crop has been used since the last whole-frame pass.
+    private var framesSinceAnchor = 0
 
     /// A steady frame rate keeps the filters' timing predictable.
     private static let frameRate: Double = 30
     private static let previewWidth: CGFloat = 320
     private static let previewInterval: TimeInterval = 1.0 / 15
+    /// With a crop active, every this many frames Vision gets the whole frame again so
+    /// the crop can't drift away from the hand.
+    private static let reanchorInterval = 60
 
     // MARK: Session
 
@@ -159,6 +177,9 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
             state.generation += 1
             state.fps = 0
             state.visionMs = 0
+            state.frameWidth = 0
+            state.frameHeight = 0
+            state.roiActive = false
             state.lastFrameTime = 0
             state.mainBusy = false
             return state.generation
@@ -175,17 +196,20 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         let session = AVCaptureSession()
         session.beginConfiguration()
 
-        // 640×480 is plenty for hand pose and keeps Vision fast; take what works.
-        for preset in [AVCaptureSession.Preset.vga640x480, .medium, .high] where session.canSetSessionPreset(preset) {
-            session.sessionPreset = preset
-            break
-        }
-
         guard let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
             session.commitConfiguration()
             return .failure(.message("Não consegui abrir a câmara"))
         }
         session.addInput(input)
+
+        // 720p gives Vision finer joints (the hand is small in the frame) and the crop
+        // around the hand keeps it fast; fall back to what the camera offers. Checked
+        // after the input is in, so `canSetSessionPreset` answers for this camera.
+        for preset in [AVCaptureSession.Preset.hd1280x720, .vga640x480, .medium, .high]
+        where session.canSetSessionPreset(preset) {
+            session.sessionPreset = preset
+            break
+        }
 
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
@@ -254,8 +278,10 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         if busy { return } // main hasn't consumed the last frame
         guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
+        let frameWidth = CVPixelBufferGetWidth(pixels), frameHeight = CVPixelBufferGetHeight(pixels)
         let visionStart = CACurrentMediaTime()
-        let hand = detectHand(in: pixels)
+        let detection = detectHand(in: pixels, generation: generation)
+        let hand = detection.hand
         let visionMs = (CACurrentMediaTime() - visionStart) * 1000
 
         let claimed = shared.withLock { state -> Bool in
@@ -268,6 +294,9 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
             }
             state.lastFrameTime = t
             state.visionMs = state.visionMs == 0 ? visionMs : state.visionMs * 0.9 + visionMs * 0.1
+            state.frameWidth = frameWidth
+            state.frameHeight = frameHeight
+            state.roiActive = detection.cropping
             return true
         }
         guard claimed else { return }
@@ -308,18 +337,62 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     private static let essentialJoints: [VNHumanHandPoseObservation.JointName] = [.wrist, .indexTip, .middleMCP]
     private static let minConfidence: Float = 0.3
 
-    private func detectHand(in pixels: CVPixelBuffer) -> HandLandmarks? {
+    /// What one frame gave: the hand (nil = none) and whether the next frame is cropped.
+    private struct Detection {
+        var hand: HandLandmarks?
+        var cropping: Bool
+    }
+
+    /// One observation, already mapped to the whole image. `vision` = the 21 joints in
+    /// Vision's own space (bottom-left origin, not mirrored), for the next crop.
+    private struct Found {
+        var hand: HandLandmarks
+        var mean: Double
+        var vision: [HandPoint]
+    }
+
+    /// Looks in the crop around where the hand was; no hand there (or none yet, or a
+    /// periodic re-anchor) → the whole frame, in the same frame. A hand found sets the
+    /// crop for the next one.
+    private func detectHand(in pixels: CVPixelBuffer, generation: Int) -> Detection {
+        if roiGeneration != generation { // a new run: the old crop means nothing
+            roiGeneration = generation
+            roi = nil
+            framesSinceAnchor = 0
+        }
+        var found: Found?
+        if let region = roi, framesSinceAnchor < Self.reanchorInterval {
+            framesSinceAnchor += 1
+            found = detect(in: pixels, region: region)
+        }
+        if found == nil {
+            framesSinceAnchor = 0
+            found = detect(in: pixels, region: .full)
+        }
+        roi = found.map {
+            HandRegion.around(points: $0.vision,
+                              imageWidth: Double(CVPixelBufferGetWidth(pixels)),
+                              imageHeight: Double(CVPixelBufferGetHeight(pixels)))
+        }
+        return Detection(hand: found?.hand, cropping: roi.map { $0 != .full } ?? false)
+    }
+
+    private func detect(in pixels: CVPixelBuffer, region: HandRegion) -> Found? {
+        // Vision wants the rect in the image's own space (bottom-left origin, not mirrored).
+        request.regionOfInterest = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
         let handler = VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up, options: [:])
         guard (try? handler.perform([request])) != nil, let observations = request.results else { return nil }
         // Normally one hand (maximumHandCount); if more come back, the surest one wins.
         return observations
-            .compactMap(Self.landmarks(from:))
-            .max { $0.mean < $1.mean }?.hand
+            .compactMap { Self.landmarks(from: $0, in: region) }
+            .max { $0.mean < $1.mean }
     }
 
     /// The 21 joints of one observation with their confidences, or nil if the hand
     /// can't be trusted. `mean` = average joint confidence, to rank several hands.
-    private static func landmarks(from observation: VNHumanHandPoseObservation) -> (hand: HandLandmarks, mean: Double)? {
+    /// With a crop, Vision's points are relative to it: they go back to the whole
+    /// image first, then get mirrored.
+    private static func landmarks(from observation: VNHumanHandPoseObservation, in region: HandRegion) -> Found? {
         guard let found = try? observation.recognizedPoints(.all) else { return nil }
         for joint in essentialJoints {
             guard let point = found[joint], point.confidence >= minConfidence else { return nil }
@@ -327,17 +400,21 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         // Low-confidence joints keep their reported spot (the engine reads `confidence`);
         // a joint that is missing altogether makes the frame unusable.
         var points: [HandPoint] = []
+        var vision: [HandPoint] = []
         var confidence: [Double] = []
         points.reserveCapacity(HandLandmarks.count)
+        vision.reserveCapacity(HandLandmarks.count)
         confidence.reserveCapacity(HandLandmarks.count)
         for joint in joints {
             guard let p = found[joint] else { return nil }
+            let global = region.unmap(HandPoint(x: Double(p.location.x), y: Double(p.location.y)))
+            vision.append(global)
             // Vision: bottom-left origin, camera orientation. Ours: top-left, mirrored.
-            points.append(HandPoint(x: 1 - Double(p.location.x), y: 1 - Double(p.location.y)))
+            points.append(HandPoint(x: 1 - global.x, y: 1 - global.y))
             confidence.append(Double(p.confidence))
         }
         guard let hand = HandLandmarks(points: points, confidence: confidence) else { return nil }
-        return (hand, confidence.reduce(0, +) / Double(confidence.count))
+        return Found(hand: hand, mean: confidence.reduce(0, +) / Double(confidence.count), vision: vision)
     }
 
     // MARK: Preview

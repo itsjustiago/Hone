@@ -26,6 +26,8 @@ final class HandMouseController {
     let settings: HandMouseSettings
     /// Diagnostic recording of the raw hand (Settings › Diagnóstico).
     let recorder = HandRecorder()
+    /// Pipeline speed and tremor readouts (Settings › Diagnóstico).
+    let quality = TrackingQuality()
 
     @ObservationIgnored private let tracker = HandTracker()
     @ObservationIgnored private let engine = HandMouseEngine()
@@ -118,6 +120,7 @@ final class HandMouseController {
         ownsCamera = false
         recorder.stop() // keep what was recorded
         tracker.stop()
+        quality.reset()
         performer.perform(engine.reset())
         performer.releaseAll()
         lastHandSeen = nil
@@ -136,6 +139,7 @@ final class HandMouseController {
         tracker.cameraID = settings.cameraID
         appliedCameraID = settings.cameraID
         tracker.wantsPreview = previewWanted
+        quality.reset()
         tracker.start()
         isTracking = true
         lastHandSeen = nil
@@ -312,6 +316,7 @@ final class HandMouseController {
         guard isTracking else { return }
         if hand != nil || lastHandSeen == nil { lastHandSeen = t }
         if recorder.isRecording { recorder.add(t: t, hand: hand) } // the raw hand, before the engine
+        applyCameraAspect()
 
         if let kind = calibration {
             calibrate(kind, t, hand)
@@ -321,8 +326,40 @@ final class HandMouseController {
             noteActions(actions, t)
             if autoOffExpired(t) { return }
         }
+        updateQuality(t, hand)
         updateHUD(t, hand)
         if settings.showHandOverlay { overlay.update(hand: calibration == nil ? hand : nil, status: engine.status) }
+    }
+
+    /// The engine and the overlay measure in frame heights: they need the real frame shape
+    /// (16:9 at 720p, 4:3 on a VGA-only camera), known once the first frame is in.
+    private func applyCameraAspect() {
+        let size = tracker.frameSize
+        guard size.height > 0 else { return }
+        let aspect = Double(size.width) / Double(size.height)
+        if engine.cameraAspect != aspect {
+            engine.cameraAspect = aspect
+            overlay.cameraAspect = CGFloat(aspect)
+        }
+    }
+
+    /// Feeds the diagnostics: the raw hand, and the cursor only while it follows the hand.
+    private func updateQuality(_ t: TimeInterval, _ hand: HandLandmarks?) {
+        var cursor: (u: Double, v: Double)?
+        if calibration == nil {
+            switch engine.status.mode {
+            case .pointing, .slow: cursor = engine.status.cursor
+            default: break
+            }
+        }
+        quality.update(t: t, hand: hand, cursor: cursor, screen: currentScreenSize, tracker: tracker)
+    }
+
+    /// The screen the cursor is on (the performer's current one).
+    private var currentScreenSize: CGSize {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return .zero }
+        return screens[min(performer.screenIndex, screens.count - 1)].frame.size
     }
 
     /// The engine never clears its last action label, so the HUD gives it a short life.

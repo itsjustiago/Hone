@@ -20,6 +20,12 @@ public final class HandMouseEngine {
     public private(set) var status = HandStatus()
     /// How many screens the host has (for `nextScreen` wrap-around bookkeeping).
     public var screenCount: Int = 1
+    /// Camera width / height of the frames fed in (4:3 by default). Distances, speeds
+    /// and finger angles are measured in frame heights, so a 16:9 camera must say so.
+    public var cameraAspect: Double {
+        get { Tuning.aspect }
+        set { if newValue > 0 { Tuning.aspect = newValue } }
+    }
 
     private var s = EngineState()
     private var out: [HandAction] = []

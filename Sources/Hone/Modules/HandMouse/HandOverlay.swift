@@ -16,7 +16,7 @@ import HoneDesign
 @MainActor
 final class HandOverlay {
     /// Width / height of the camera frame. Landmarks are normalised per axis, so x needs
-    /// this to keep the hand's proportions (the tracker captures 640×480).
+    /// this to keep the hand's proportions; the controller sets it from the real frame.
     var cameraAspect: CGFloat = 4.0 / 3.0
 
     /// The drawn hand's size: wrist to the middle of the index and middle knuckles, in points.
