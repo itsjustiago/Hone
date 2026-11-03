@@ -18,7 +18,7 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     /// A camera's `uniqueID`; nil = the system's default video device.
     var cameraID: String?
     /// What finds the hand. Read when the camera starts; to change it, `stop()` then `start()`.
-    var engine: HandTrackingEngine = .vision
+    var engine: HandTrackingEngine = .mediapipe
     /// Called on main, once per processed frame. `hand` is nil when none is seen
     /// (or wrist / index tip / middle knuckle are below 0.3 confidence).
     /// `t` = `CACurrentMediaTime()` when the frame was captured.
@@ -106,8 +106,8 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         var fps = 0.0
         var modelMs = 0.0
         /// Chosen for this run (set with `generation`) and what actually ran.
-        var engine = HandTrackingEngine.vision
-        var engineInUse = HandTrackingEngine.vision
+        var engine = HandTrackingEngine.mediapipe
+        var engineInUse = HandTrackingEngine.mediapipe
         var frameWidth = 0
         var frameHeight = 0
         var roiActive = false

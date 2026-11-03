@@ -91,7 +91,7 @@ final class HandMouseSettings {
         }
         config = stored
         cameraID = d.string(forKey: "handMouse.cameraID")
-        engine = d.string(forKey: "handMouse.engine").flatMap(HandTrackingEngine.init(rawValue:)) ?? .vision
+        engine = d.string(forKey: "handMouse.engine").flatMap(HandTrackingEngine.init(rawValue:)) ?? .mediapipe
         showHUD = d.object(forKey: "handMouse.showHUD") as? Bool ?? true
         showCameraPreview = d.object(forKey: "handMouse.showCameraPreview") as? Bool ?? false
         showHandOverlay = d.object(forKey: "handMouse.showHandOverlay") as? Bool ?? true

@@ -44,7 +44,7 @@ struct HandMouseSettingsView: View {
                 }
                 RowDivider()
                 SettingsRow(title: "Motor de tracking",
-                            subtitle: "Apple Vision é o do sistema. MediaPipe Hands é o modelo da Google a correr no Mac; costuma ser mais preciso e estável.") {
+                            subtitle: "Apple Vision é o do sistema. MediaPipe Hands é o modelo da Google a correr no Mac: mais preciso e estável, e é o que vem escolhido.") {
                     VibeMenuPicker("Motor de tracking", selection: $settings.engine,
                                    options: Self.engineOptions, offscreen: !scrolls)
                 }
@@ -320,7 +320,7 @@ struct HandMouseSettingsView: View {
 
     private static let engineOptions: [VibeMenuPicker<HandTrackingEngine>.Option] = [
         .init(.vision, title: "Apple Vision", label: "Apple Vision"),
-        .init(.mediapipe, title: "MediaPipe Hands", label: "MediaPipe"),
+        .init(.mediapipe, title: "MediaPipe Hands (recomendado)", label: "MediaPipe"),
     ]
 
     private static let autoOffOptions: [VibeMenuPicker<Int>.Option] = [
