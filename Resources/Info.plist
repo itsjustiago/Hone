@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>O Soundly precisa de acesso ao áudio das apps para lhes ajustar o volume. O som nunca é gravado nem guardado.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>O Rato de Mão usa a câmara para seguir a tua mão e mexer o cursor. A imagem é processada no Mac e nunca é gravada nem enviada.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

@@ -12,7 +12,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Hone",
-            dependencies: ["HoneDesign", "SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit", "LidFoldKit", "SoundlyKit"],
+            dependencies: ["HoneDesign", "SleepyKit", "ClippyKit", "ScreenlyKit", "StatsKit", "LidFoldKit", "SoundlyKit", "HandKit"],
             path: "Sources/Hone",
             swiftSettings: [
                 // The system-level modules (event taps, AX API, C callbacks) are
@@ -63,6 +63,14 @@ let package = Package(
             path: "Sources/SoundlyKit",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Hand mouse: pure gesture engine (hand landmarks in, mouse/key actions out).
+        // No camera, no CGEvent: the Hone module feeds it Vision landmarks and
+        // performs its actions. Ported from MisaelDdS/Gumball_Hand (MIT).
+        .target(
+            name: "HandKit",
+            path: "Sources/HandKit",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         // Lid-angle sensor plus the pure fold maths ("iPhone Duo" screen effect).
         // System frameworks only: it depends on no Kit, never touches brightness,
         // display sleep or power assertions (Sleepy owns those).
@@ -88,6 +96,12 @@ let package = Package(
             name: "HoneTests",
             dependencies: ["Hone"],
             path: "Tests/HoneTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "HandKitTests",
+            dependencies: ["HandKit"],
+            path: "Tests/HandKitTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

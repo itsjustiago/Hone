@@ -1,0 +1,90 @@
+import Foundation
+import HandKit
+
+/// Persisted knobs for the hand mouse (`handMouse.*` in UserDefaults). The engine's
+/// `HandConfig` is stored whole, as JSON; missing fields (added in a later version)
+/// decode to their defaults, so the calibration survives updates.
+@MainActor
+@Observable
+final class HandMouseSettings {
+    private let d = UserDefaults.standard
+
+    /// The shortcut changed: the module registers the new one.
+    @ObservationIgnored var onShortcutChange: (() -> Void)?
+    /// Anything else changed: the controller applies it to a running session.
+    @ObservationIgnored var onChange: (() -> Void)?
+
+    var shortcut: HandShortcutKey {
+        didSet {
+            guard oldValue != shortcut else { return }
+            save(shortcut, "handMouse.shortcut")
+            onShortcutChange?()
+        }
+    }
+
+    /// Active area, shortcut pose, smoothing, thresholds and the two gesture families.
+    var config: HandConfig {
+        didSet {
+            guard oldValue != config else { return }
+            save(config, "handMouse.config")
+            onChange?()
+        }
+    }
+
+    /// A camera's `uniqueID`; nil = the system's default.
+    var cameraID: String? {
+        didSet {
+            guard oldValue != cameraID else { return }
+            d.set(cameraID, forKey: "handMouse.cameraID")
+            onChange?()
+        }
+    }
+
+    /// The pill with the mode and the last gesture.
+    var showHUD: Bool {
+        didSet { d.set(showHUD, forKey: "handMouse.showHUD"); onChange?() }
+    }
+
+    /// The small camera view with the hand's skeleton. Off by default: the camera
+    /// image only reaches the screen when asked for.
+    var showCameraPreview: Bool {
+        didSet { d.set(showCameraPreview, forKey: "handMouse.showCameraPreview"); onChange?() }
+    }
+
+    /// Minutes without a hand before the camera switches itself off; 0 = never.
+    var autoOffMinutes: Int {
+        didSet { d.set(autoOffMinutes, forKey: "handMouse.autoOffMinutes"); onChange?() }
+    }
+
+    /// Watch only: gestures show on screen but nothing moves on the Mac.
+    var watchOnly: Bool {
+        didSet { d.set(watchOnly, forKey: "handMouse.watchOnly"); onChange?() }
+    }
+
+    init() {
+        let d = UserDefaults.standard
+        shortcut = Self.load(HandShortcutKey.self, "handMouse.shortcut", d) ?? .default
+        config = Self.load(HandConfig.self, "handMouse.config", d) ?? HandConfig()
+        cameraID = d.string(forKey: "handMouse.cameraID")
+        showHUD = d.object(forKey: "handMouse.showHUD") as? Bool ?? true
+        showCameraPreview = d.object(forKey: "handMouse.showCameraPreview") as? Bool ?? false
+        autoOffMinutes = d.object(forKey: "handMouse.autoOffMinutes") as? Int ?? 2
+        watchOnly = d.object(forKey: "handMouse.watchOnly") as? Bool ?? false
+    }
+
+    /// Gesture sliders and switches back to the defaults; the calibration stays.
+    func resetGestures() {
+        var fresh = HandConfig()
+        fresh.box = config.box
+        fresh.ctrlPose = config.ctrlPose
+        config = fresh
+    }
+
+    private static func load<T: Decodable>(_ type: T.Type, _ key: String, _ d: UserDefaults) -> T? {
+        d.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
+    }
+
+    private func save<T: Encodable>(_ value: T, _ key: String) {
+        if let data = try? JSONEncoder().encode(value) { d.set(data, forKey: key) }
+    }
+}
