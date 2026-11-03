@@ -125,7 +125,7 @@ final class HandMouseController {
 
     private func begin() {
         applySettings()
-        engine.screenCount = performer.screenCount
+        screensChanged()
         _ = engine.reset()
         tracker.cameraID = settings.cameraID
         appliedCameraID = settings.cameraID
@@ -141,6 +141,10 @@ final class HandMouseController {
             startCalibration(pending)
         }
         refreshHUD()
+    }
+
+    private func screensChanged() {
+        engine.screenCount = performer.screenCount
     }
 
     private func cameraDenied() {
@@ -402,7 +406,8 @@ final class HandMouseController {
 
     // MARK: System events
 
-    /// The camera must not outlive the screen it was meant for.
+    /// The camera must not outlive the screen it was meant for; screen changes keep the
+    /// engine's screen count right.
     private func observeSystem() {
         guard observers.isEmpty else { return }
         let workspace = NSWorkspace.shared.notificationCenter
@@ -419,6 +424,13 @@ final class HandMouseController {
             }
             observers.append((center, token))
         }
+        // Screens plugged in or out while running (the performer clamps its own index).
+        let screens = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screensChanged() }
+        }
+        observers.append((NotificationCenter.default, screens))
     }
 
     private func removeObservers() {

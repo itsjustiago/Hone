@@ -20,6 +20,13 @@ final class HandActionPerformer {
 
     private let source = CGEventSource(stateID: .hidSystemState)
     private var leftHeld = false
+    /// Click count of the left press in progress: 1 single, 2 double, 3 triple.
+    /// Down, drags and up of one press share it.
+    private var leftClickState: Int64 = 1
+    private var lastLeftDownTime: TimeInterval?
+    private var lastLeftDownPoint = CGPoint.zero
+    /// A press this close to the previous one (pt) can continue a multi-click.
+    private static let multiClickRadius: CGFloat = 4
     /// Where the last move was posted, and when: the system takes a moment to apply it.
     private var lastPoint: CGPoint?
     private var lastPointTime: TimeInterval = 0
@@ -61,7 +68,7 @@ final class HandActionPerformer {
             windowAction(at: at) { window in
                 // The window's own red button, so the app can still ask to save.
                 guard let button = AX.element(window, kAXCloseButtonAttribute as String) else { return }
-                AX.perform(button, kAXPressAction as String)
+                AX.perform(Self.bounded(button), kAXPressAction as String)
             }
         case .openSwitcher:
             NSWorkspace.shared.openApplication(
@@ -128,7 +135,7 @@ final class HandActionPerformer {
         let from = currentLocation()
         event.setIntegerValueField(.mouseEventDeltaX, value: Int64((point.x - from.x).rounded()))
         event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - from.y).rounded()))
-        if dragging { event.setIntegerValueField(.mouseEventClickState, value: 1) }
+        if dragging { event.setIntegerValueField(.mouseEventClickState, value: leftClickState) }
         event.post(tap: .cghidEventTap)
         lastPoint = point
         lastPointTime = ProcessInfo.processInfo.systemUptime
@@ -143,13 +150,29 @@ final class HandActionPerformer {
         postMouse(up, button: button)
     }
 
-    /// A button event at the cursor's current spot, click state 1.
+    /// A button event at the cursor's current spot. Left presses carry the multi-click
+    /// count (macOS only sees a double click from the click state); right is always 1.
     private func postMouse(_ type: CGEventType, button: CGMouseButton) {
+        let point = currentLocation()
         guard let event = CGEvent(mouseEventSource: source, mouseType: type,
-                                  mouseCursorPosition: currentLocation(), mouseButton: button)
+                                  mouseCursorPosition: point, mouseButton: button)
         else { return }
-        event.setIntegerValueField(.mouseEventClickState, value: 1)
+        if type == .leftMouseDown { advanceLeftClickState(at: point) }
+        event.setIntegerValueField(.mouseEventClickState, value: button == .left ? leftClickState : 1)
         event.post(tap: .cghidEventTap)
+    }
+
+    /// A press soon after the last one, on the same spot, adds to the count (max 3).
+    private func advanceLeftClickState(at point: CGPoint) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let last = lastLeftDownTime, now - last <= NSEvent.doubleClickInterval,
+           hypot(point.x - lastLeftDownPoint.x, point.y - lastLeftDownPoint.y) < Self.multiClickRadius {
+            leftClickState = min(leftClickState + 1, 3)
+        } else {
+            leftClickState = 1
+        }
+        lastLeftDownTime = now
+        lastLeftDownPoint = point
     }
 
     // MARK: Scroll
@@ -210,7 +233,7 @@ final class HandActionPerformer {
         var pid: pid_t = 0
         guard AXUIElementGetPid(hit, &pid) == .success, pid != getpid() else { return nil }
         if NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.apple.dock" { return nil }
-        AXUIElementSetMessagingTimeout(hit, 0.5)
+        bounded(hit)
 
         guard let window = enclosingWindow(of: hit) else { return nil }
         switch AX.string(window, kAXSubroleAttribute as String) {
@@ -220,14 +243,23 @@ final class HandActionPerformer {
     }
 
     /// The element itself if it is a window, else its `AXWindow`, else a walk up the parents.
+    /// `element` must already be `bounded`; everything found on the way is bounded too.
     nonisolated private static func enclosingWindow(of element: AXUIElement) -> AXUIElement? {
         var current = element
         for _ in 0..<16 {
             if AX.string(current, kAXRoleAttribute as String) == kAXWindowRole as String { return current }
-            if let window = AX.element(current, kAXWindowAttribute as String) { return window }
+            if let window = AX.element(current, kAXWindowAttribute as String) { return bounded(window) }
             guard let parent = AX.element(current, kAXParentAttribute as String) else { return nil }
-            current = parent
+            current = bounded(parent)
         }
         return nil
+    }
+
+    /// AX calls wait on the target app (6 s by default): cap each element we talk to,
+    /// so a blocked app can't hold up `axQueue`.
+    @discardableResult
+    nonisolated private static func bounded(_ element: AXUIElement) -> AXUIElement {
+        AXUIElementSetMessagingTimeout(element, 0.5)
+        return element
     }
 }

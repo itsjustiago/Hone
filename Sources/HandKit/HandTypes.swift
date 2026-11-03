@@ -149,4 +149,21 @@ public struct HandConfig: Codable, Equatable, Sendable {
     /// Shortcut mode (⌘C/⌘V/⌘Z/⌘D/Return) and Ctrl lock.
     public var shortcutGestures: Bool = true
     public init() {}
+
+    /// Tolerant: a key missing from stored JSON (a field added later) keeps its default,
+    /// so an older saved config still loads with the user's calibration.
+    public init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        box = try c.decodeIfPresent(HandBox.self, forKey: .box) ?? box
+        ctrlPose = try c.decodeIfPresent(CtrlPose.self, forKey: .ctrlPose)
+        smoothing = try c.decodeIfPresent(Double.self, forKey: .smoothing) ?? smoothing
+        responsiveness = try c.decodeIfPresent(Double.self, forKey: .responsiveness) ?? responsiveness
+        pinchOn = try c.decodeIfPresent(Double.self, forKey: .pinchOn) ?? pinchOn
+        pinchOff = try c.decodeIfPresent(Double.self, forKey: .pinchOff) ?? pinchOff
+        scrollGain = try c.decodeIfPresent(Double.self, forKey: .scrollGain) ?? scrollGain
+        fineSpeed = try c.decodeIfPresent(Double.self, forKey: .fineSpeed) ?? fineSpeed
+        windowGestures = try c.decodeIfPresent(Bool.self, forKey: .windowGestures) ?? windowGestures
+        shortcutGestures = try c.decodeIfPresent(Bool.self, forKey: .shortcutGestures) ?? shortcutGestures
+    }
 }

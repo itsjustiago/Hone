@@ -2,8 +2,8 @@ import Foundation
 import HandKit
 
 /// Persisted knobs for the hand mouse (`handMouse.*` in UserDefaults). The engine's
-/// `HandConfig` is stored whole, as JSON: a stored config that no longer decodes
-/// (a field was added to it) falls back to the defaults.
+/// `HandConfig` is stored whole, as JSON; missing fields (added in a later version)
+/// decode to their defaults, so the calibration survives updates.
 @MainActor
 @Observable
 final class HandMouseSettings {

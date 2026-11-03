@@ -137,7 +137,11 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
                 DispatchQueue.main.async { [weak self] in self?.observe(session, generation: generation) }
                 session.startRunning() // blocks until the camera is up
             case .failure(.message(let message)):
-                DispatchQueue.main.async { [weak self] in self?.fail(message) }
+                // A failure of an older run must not kill the current one.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.shared.withLock({ $0.generation }) == generation else { return }
+                    self.fail(message)
+                }
             }
         }
     }
