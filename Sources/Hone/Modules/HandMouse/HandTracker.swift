@@ -4,26 +4,31 @@ import HandKit
 import os
 import Vision
 
-/// Webcam → Vision hand pose → `HandLandmarks`. Nothing here decides what a pose
-/// means; that is `HandMouseEngine`'s job. The camera only runs between `start()`
-/// and `stop()`, and the preview image is only built while `wantsPreview` is true.
+/// Webcam → hand joints (Apple Vision or MediaPipe, see `engine`) → `HandLandmarks`.
+/// Nothing here decides what a pose means; that is `HandMouseEngine`'s job. The camera
+/// only runs between `start()` and `stop()`, and the preview image is only built while
+/// `wantsPreview` is true.
 ///
 /// Threading: frames arrive on a private serial queue; the callbacks hop to the main
 /// thread. If the main thread hasn't consumed the previous frame the new one is
-/// dropped before Vision runs, so a stalled UI never builds a backlog.
+/// dropped before the detector runs, so a stalled UI never builds a backlog.
 final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     // MARK: Public API (main thread)
 
     /// A camera's `uniqueID`; nil = the system's default video device.
     var cameraID: String?
+    /// What finds the hand. Read when the camera starts; to change it, `stop()` then `start()`.
+    var engine: HandTrackingEngine = .vision
     /// Called on main, once per processed frame. `hand` is nil when none is seen
     /// (or wrist / index tip / middle knuckle are below 0.3 confidence).
     /// `t` = `CACurrentMediaTime()` when the frame was captured.
     var onFrame: ((_ t: TimeInterval, _ hand: HandLandmarks?) -> Void)?
     /// Mirrored, ≤ 320 px wide, ≤ 15 fps; only while `wantsPreview`. Called on main.
     var onPreview: ((CGImage) -> Void)?
-    /// A user-facing failure (PT-PT). Called on main.
+    /// A user-facing failure (PT-PT): the camera is not usable. Called on main.
     var onError: ((String) -> Void)?
+    /// A user-facing problem the run survives (PT-PT), e.g. a fallback to Vision. Called on main.
+    var onNotice: ((String) -> Void)?
 
     /// Build and deliver preview images. Zero cost while false.
     var wantsPreview: Bool {
@@ -33,12 +38,15 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
     /// Frames per second the pipeline is really processing (exponential average).
     var fps: Double { shared.withLock { $0.fps } }
-    /// Average Vision time per frame in ms (exponential average, both passes when the
-    /// crop missed); diagnostics only.
-    var visionMs: Double { shared.withLock { $0.visionMs } }
+    /// Average detector time per frame in ms (exponential average; with Vision, both passes
+    /// when the crop missed); diagnostics only.
+    var modelMs: Double { shared.withLock { $0.modelMs } }
+    /// The engine that really ran the last frame: `engine`, unless MediaPipe couldn't load.
+    var engineInUse: HandTrackingEngine { shared.withLock { $0.engineInUse } }
     /// Pixel size of the frames the camera really delivers; (0, 0) until the first one.
     var frameSize: (width: Int, height: Int) { shared.withLock { ($0.frameWidth, $0.frameHeight) } }
-    /// Vision is looking at a crop around the hand (not the whole frame) as of the last frame.
+    /// The detector is following the hand (Vision: looking at a crop around it, not the whole
+    /// frame; MediaPipe: palm detector skipped) as of the last frame.
     var roiActive: Bool { shared.withLock { $0.roiActive } }
 
     static var authorization: AVAuthorizationStatus {
@@ -96,7 +104,10 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         /// A frame is queued for main and not yet consumed.
         var mainBusy = false
         var fps = 0.0
-        var visionMs = 0.0
+        var modelMs = 0.0
+        /// Chosen for this run (set with `generation`) and what actually ran.
+        var engine = HandTrackingEngine.vision
+        var engineInUse = HandTrackingEngine.vision
         var frameWidth = 0
         var frameHeight = 0
         var roiActive = false
@@ -129,6 +140,12 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     private var roiGeneration = -1
     /// Frames the crop has been used since the last whole-frame pass.
     private var framesSinceAnchor = 0
+    /// MediaPipe's detector: loaded on the first frame of a MediaPipe run, kept for the next
+    /// run, dropped by the first Vision run. `mediaPipeGeneration` marks the run it belongs to.
+    private var mediaPipe: MediaPipeHandDetector?
+    private var mediaPipeGeneration = -1
+    /// Loading failed in this run: Vision takes over until the next one.
+    private var mediaPipeFailed = false
 
     /// A steady frame rate keeps the filters' timing predictable.
     private static let frameRate: Double = 30
@@ -142,7 +159,7 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
     private func launch() {
         removeObservers()
-        let generation = resetShared()
+        let generation = resetShared(engine: engine)
         let id = cameraID
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -170,13 +187,17 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         }
     }
 
-    /// Starts a new run: bumps the generation and clears the per-run measurements.
+    /// Starts a new run: bumps the generation, sets its engine (nil = keep the last one, so
+    /// frames still in flight after a `stop()` don't unload MediaPipe) and clears the per-run
+    /// measurements.
     @discardableResult
-    private func resetShared() -> Int {
+    private func resetShared(engine: HandTrackingEngine? = nil) -> Int {
         shared.withLock { state in
             state.generation += 1
+            if let engine { state.engine = engine }
+            state.engineInUse = state.engine
             state.fps = 0
-            state.visionMs = 0
+            state.modelMs = 0
             state.frameWidth = 0
             state.frameHeight = 0
             state.roiActive = false
@@ -269,20 +290,29 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         onError?(message)
     }
 
+    private func notice(_ message: String) {
+        onNotice?(message)
+    }
+
     // MARK: Frames
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         let t = CACurrentMediaTime()
-        let (generation, busy) = shared.withLock { ($0.generation, $0.mainBusy) }
+        let (generation, busy, engine) = shared.withLock { ($0.generation, $0.mainBusy, $0.engine) }
         if busy { return } // main hasn't consumed the last frame
         guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         let frameWidth = CVPixelBufferGetWidth(pixels), frameHeight = CVPixelBufferGetHeight(pixels)
-        let visionStart = CACurrentMediaTime()
-        let detection = detectHand(in: pixels, generation: generation)
+        // Loading the models takes a while: kept out of the timing and the frame rate.
+        let loading = engine == .mediapipe && mediaPipe == nil && mediaPipeGeneration != generation
+        let detector = mediaPipeDetector(for: engine, generation: generation)
+        let modelStart = CACurrentMediaTime()
+        let detection = detector.map { detectHand(with: $0, in: pixels) }
+            ?? detectHand(in: pixels, generation: generation)
         let hand = detection.hand
-        let visionMs = (CACurrentMediaTime() - visionStart) * 1000
+        let modelMs = (CACurrentMediaTime() - modelStart) * 1000
+        let engineInUse: HandTrackingEngine = detector == nil ? .vision : .mediapipe
 
         let claimed = shared.withLock { state -> Bool in
             guard state.generation == generation, !state.mainBusy else { return false }
@@ -292,8 +322,9 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
                 let instant = 1 / dt
                 state.fps = state.fps == 0 ? instant : state.fps * 0.9 + instant * 0.1
             }
-            state.lastFrameTime = t
-            state.visionMs = state.visionMs == 0 ? visionMs : state.visionMs * 0.9 + visionMs * 0.1
+            state.lastFrameTime = loading ? 0 : t
+            state.modelMs = state.modelMs == 0 ? modelMs : state.modelMs * 0.9 + modelMs * 0.1
+            state.engineInUse = engineInUse
             state.frameWidth = frameWidth
             state.frameHeight = frameHeight
             state.roiActive = detection.cropping
@@ -321,6 +352,37 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         }
     }
 
+    // MARK: MediaPipe
+
+    /// The detector for this frame's run, or nil when Vision should run: Vision is chosen,
+    /// or the models couldn't load (the user is told once, and Vision takes over until the
+    /// next run). Loads on the first MediaPipe frame of a run.
+    private func mediaPipeDetector(for engine: HandTrackingEngine, generation: Int) -> MediaPipeHandDetector? {
+        if mediaPipeGeneration != generation { // a new run: nothing carries over but the models
+            mediaPipeGeneration = generation
+            mediaPipeFailed = false
+            if engine == .vision { mediaPipe = nil } else { mediaPipe?.reset() }
+        }
+        guard engine == .mediapipe, !mediaPipeFailed else { return nil }
+        if mediaPipe == nil {
+            do {
+                mediaPipe = try MediaPipeHandDetector()
+            } catch {
+                mediaPipeFailed = true
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.shared.withLock({ $0.generation }) == generation else { return }
+                    self.notice("Não consegui carregar o modelo MediaPipe. A usar o Apple Vision.")
+                }
+            }
+        }
+        return mediaPipe
+    }
+
+    private func detectHand(with detector: MediaPipeHandDetector, in pixels: CVPixelBuffer) -> Detection {
+        let result = detector.detect(pixels)
+        return Detection(hand: result.hand, cropping: result.tracking)
+    }
+
     // MARK: Vision
 
     /// Vision's joints in MediaPipe order (0 wrist, 1–4 thumb, 5–8 index, 9–12 middle,
@@ -337,7 +399,8 @@ final class HandTracker: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     private static let essentialJoints: [VNHumanHandPoseObservation.JointName] = [.wrist, .indexTip, .middleMCP]
     private static let minConfidence: Float = 0.3
 
-    /// What one frame gave: the hand (nil = none) and whether the next frame is cropped.
+    /// What one frame gave: the hand (nil = none) and whether the detector is following it
+    /// (Vision: the next frame is cropped; MediaPipe: this frame skipped the palm detector).
     private struct Detection {
         var hand: HandLandmarks?
         var cropping: Bool

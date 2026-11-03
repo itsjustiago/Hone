@@ -9,10 +9,14 @@ import HandKit
 @Observable
 final class TrackingQuality {
     private(set) var fps = 0.0
-    private(set) var visionMs = 0.0
+    /// Average time of the hand detector per frame.
+    private(set) var modelMs = 0.0
+    /// The engine that really runs (MediaPipe falls back to Vision when its models don't load).
+    private(set) var engine = HandTrackingEngine.vision
     /// "1280×720"; empty until the first frame.
     private(set) var resolution = ""
-    /// Vision is looking at a crop around the hand, not the whole frame.
+    /// The detector is following the hand: Vision on a crop around it, MediaPipe without
+    /// the palm detector.
     private(set) var roiActive = false
     /// Raw middle knuckle (before the engine's filters) at rest, in ‰ of the frame height.
     private(set) var handJitter: Double?
@@ -60,7 +64,8 @@ final class TrackingQuality {
         guard t - lastPublish >= Self.publishInterval else { return }
         lastPublish = t
         fps = tracker.fps
-        visionMs = tracker.visionMs
+        modelMs = tracker.modelMs
+        engine = tracker.engineInUse
         resolution = size.height > 0 ? "\(size.width)×\(size.height)" : ""
         roiActive = tracker.roiActive
         handJitter = handMeter.jitter.map { $0 * 1000 }
@@ -74,7 +79,8 @@ final class TrackingQuality {
         lastHandTime = nil
         lastPublish = 0
         fps = 0
-        visionMs = 0
+        modelMs = 0
+        engine = .vision
         resolution = ""
         roiActive = false
         handJitter = nil
@@ -83,11 +89,21 @@ final class TrackingQuality {
 
     // MARK: Text (PT-PT, decimal comma)
 
-    /// "1280×720 · 30 fps · Vision 6 ms · recorte ativo"
+    /// "Vision · 1280×720 · 30 fps · Vision 6 ms · recorte ativo"
+    /// "MediaPipe · 1280×720 · 30 fps · modelo 2 ms · a seguir"
     var pipelineText: String {
+        Self.pipelineText(engine: engine, resolution: resolution, fps: fps, modelMs: modelMs, following: roiActive)
+    }
+
+    static func pipelineText(engine: HandTrackingEngine, resolution: String, fps: Double,
+                             modelMs: Double, following: Bool) -> String {
         guard !resolution.isEmpty else { return "À espera da primeira imagem." }
-        return [resolution, "\(Int(fps.rounded())) fps", "Vision \(Int(visionMs.rounded())) ms",
-                roiActive ? "recorte ativo" : "sem recorte"].joined(separator: " · ")
+        let name = engine == .mediapipe ? "MediaPipe" : "Vision"
+        let time = engine == .mediapipe ? "modelo" : "Vision"
+        let state = engine == .mediapipe ? (following ? "a seguir" : "a procurar")
+                                        : (following ? "recorte ativo" : "sem recorte")
+        return [name, resolution, "\(Int(fps.rounded())) fps", "\(time) \(Int(modelMs.rounded())) ms", state]
+            .joined(separator: " · ")
     }
 
     /// "Tremor em repouso: mão 1,8 ‰ · cursor 2,3 pt"

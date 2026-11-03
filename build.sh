@@ -29,6 +29,9 @@ APP="Hone.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$BIN" "$APP/Contents/MacOS/Hone"
+# Recursos do SwiftPM (modelos CoreML do Rato de Mão): o `Bundle.module` procura-os em
+# Contents/Resources/Hone_Hone.bundle. Tem de estar aqui antes de assinar.
+cp -R "$BIN_DIR/Hone_Hone.bundle" "$APP/Contents/Resources/"
 # Vai para Frameworks/ antes de assinar: o `codesign --deep` assina-a com o resto.
 cp "$NOWPLAYING" "$APP/Contents/Frameworks/libHoneNowPlaying.dylib"
 cp "Resources/Info.plist" "$APP/Contents/Info.plist"

@@ -40,6 +40,7 @@ final class HandMouseController {
     @ObservationIgnored private var ownsCamera = false
     @ObservationIgnored private var pendingCalibration: Calibration?
     @ObservationIgnored private var appliedCameraID: String?
+    @ObservationIgnored private var appliedEngine = HandTrackingEngine.vision
     @ObservationIgnored private var didAlertDenied = false
 
     @ObservationIgnored private var lastHandSeen: TimeInterval?
@@ -68,6 +69,7 @@ final class HandMouseController {
         tracker.onFrame = { [weak self] t, hand in self?.handleFrame(t, hand) }
         tracker.onPreview = { [weak self] image in self?.hud.model.preview = image }
         tracker.onError = { [weak self] message in self?.trackerFailed(message) }
+        tracker.onNotice = { [weak self] message in self?.fail(message) }
         hud.onEscape = { [weak self] in self?.cancelCalibration() }
         applySettings()
     }
@@ -137,7 +139,9 @@ final class HandMouseController {
         screensChanged()
         _ = engine.reset()
         tracker.cameraID = settings.cameraID
+        tracker.engine = settings.engine
         appliedCameraID = settings.cameraID
+        appliedEngine = settings.engine
         tracker.wantsPreview = previewWanted
         quality.reset()
         tracker.start()
@@ -405,12 +409,15 @@ final class HandMouseController {
         hud.model.watchOnly = settings.watchOnly
         hud.model.box = settings.config.box
         tracker.wantsPreview = previewWanted
-        if isTracking, settings.cameraID != appliedCameraID {
-            // A different camera: restart the capture, keep the session.
+        if isTracking, settings.cameraID != appliedCameraID || settings.engine != appliedEngine {
+            // A different camera or engine: restart the capture, keep the session.
             appliedCameraID = settings.cameraID
+            appliedEngine = settings.engine
             tracker.stop()
             tracker.cameraID = settings.cameraID
+            tracker.engine = settings.engine
             tracker.start()
+            quality.reset()
         }
         refreshHUD()
     }
