@@ -40,7 +40,7 @@ final class HandMouseController {
     @ObservationIgnored private var ownsCamera = false
     @ObservationIgnored private var pendingCalibration: Calibration?
     @ObservationIgnored private var appliedCameraID: String?
-    @ObservationIgnored private var appliedEngine = HandTrackingEngine.vision
+    @ObservationIgnored private var appliedEngine = HandTrackingEngine.mediapipe
     @ObservationIgnored private var didAlertDenied = false
 
     @ObservationIgnored private var lastHandSeen: TimeInterval?
