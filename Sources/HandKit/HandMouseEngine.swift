@@ -1,14 +1,18 @@
 import Foundation
 
-/// Hand landmarks per frame → mouse/keyboard actions. Port of `main()` in
-/// handmouse.py (MisaelDdS/Gumball_Hand, MIT). Pure: no I/O, no clocks — the
-/// caller passes the frame time.
+/// Hand landmarks per frame → mouse/keyboard actions. Started as a port of
+/// `main()` in handmouse.py (MisaelDdS/Gumball_Hand, MIT); v2 is reworked for
+/// Apple Vision. Pure: no I/O, no clocks — the caller passes the frame time.
 ///
-/// Differences from the original: the cursor is in screen u, v (0…1), not pixels;
-/// scroll is continuous points (see `HandConfig.scrollGain`); losing the hand
-/// with the switcher open waits `Tuning.switcherGrace` before cancelling; under
-/// Ctrl lock the engine doesn't know where the real mouse is, so window actions
-/// aim at `.realCursor` and no move is sent until the hand steers again.
+/// v2 in short: every joint is One-Euro smoothed first; the cursor rides the
+/// index/middle knuckles (they don't move when you pinch) with a precision gain
+/// for slow moves; thumb–index pinch = left button (tap = click, pinch and move
+/// or hold = drag), thumb–middle = right button (tap = right click, pinch and
+/// move up/down = scroll); a closing pinch freezes the cursor where it was just
+/// before; pinches need two frames to flip; losing the hand for under
+/// `Tuning.lossGrace` changes nothing. Under Ctrl lock the engine doesn't know
+/// where the real mouse is, so window actions aim at `.realCursor` and no move
+/// is sent until the hand steers again.
 public final class HandMouseEngine {
     public var config: HandConfig
     public private(set) var status = HandStatus()
@@ -29,17 +33,21 @@ public final class HandMouseEngine {
         tint = nil
         status.edges = (false, false, false, false)
         if !config.shortcutGestures && s.ctrlLock { s.ctrlLock = false }  // switched off mid-lock
-        if let hand = hand {
-            frame(t, hand.points)
+        let usable = hand.flatMap { Self.trusted($0) ? $0 : nil }
+        if let hand = usable {
+            frame(t, hand)
         } else {
             lost(t)
         }
-        if s.ctrlMode && t - s.ctrlSeen > Tuning.ctrlExit {
+        let present = usable != nil || !s.gone  // within the loss grace the hand still counts as there
+        // a dropout within the grace doesn't leave shortcut mode either
+        if s.ctrlMode && (usable != nil || s.gone) && t - s.ctrlSeen > Tuning.ctrlExit {
             s.ctrlMode = false
             s.fistDone = true  // a fist made while leaving shortcut mode must not minimize
             say("Atalhos desligados")
         }
-        status.mode = mode(t, handSeen: hand != nil)
+        status.mode = mode(t, present: present)
+        status.cursor = s.cur.map { (u: $0.u, v: $0.v) }
         status.holdProgress = tint.map { min(max($0, 0), 1) }
         return out
     }
@@ -48,24 +56,53 @@ public final class HandMouseEngine {
     /// engine ready to start fresh.
     public func reset() -> [HandAction] {
         var actions: [HandAction] = []
-        if s.gest.state == .drag { actions.append(.leftUp) }
+        if s.button?.phase == .drag { actions.append(.leftUp) }
         if s.switcher { actions.append(.cancelSwitcher) }
         s = EngineState()
         status = HandStatus()
         return actions
     }
 
+    /// A hand whose joints are mostly guesses is no hand.
+    private static func trusted(_ hand: HandLandmarks) -> Bool {
+        guard let c = hand.confidence, !c.isEmpty else { return true }
+        return c.reduce(0, +) / Double(c.count) >= Tuning.minHandConfidence
+    }
+
     // MARK: - Frame
 
-    private func frame(_ now: Double, _ p: [HandPoint]) {
+    private func frame(_ now: Double, _ hand: HandLandmarks) {
         s.lostSince = nil
-        let size = nonZero(p[Joint.wrist].distance(to: p[Joint.midMCP]))
+        s.gone = false
+        let p = s.smoother(now, hand)
+        s.sizes.append(p[Joint.wrist].distance(to: p[Joint.midMCP]))
+        if s.sizes.count > Tuning.sizeFrames { s.sizes.removeFirst(s.sizes.count - Tuning.sizeFrames) }
+        let size = nonZero(s.sizes.reduce(0, +) / Double(s.sizes.count))
+        let ctrl = controlPoint(p)
+
+        // hand speed (frame heights/s), smoothed: picks the precision gain
+        if let prev = s.prevCtrl {
+            let dt = max(now - prev.t, 1e-3)
+            s.speed += smoothingAlpha(Tuning.speedCutoff, dt) * (ctrl.heightDistance(to: prev.p) / dt - s.speed)
+        }
+        s.prevCtrl = (now, ctrl)
+        let fine = min(max(config.fineSpeed, 0.05), 1)
+        let gain = precisionGain(speed: s.speed, fine: fine)
+
+        let rIndex = p[Joint.thumb].distance(to: p[Joint.index]) / size
         let rMid = p[Joint.thumb].distance(to: p[Joint.middle]) / size
         let rPinky = p[Joint.thumb].distance(to: p[Joint.pinky]) / size
-        let rBase = p[Joint.thumb].distance(to: p[Joint.indexMCP]) / size
         let rTuck = p[Joint.thumb].distance(to: p[Joint.ringMCP]) / size
-        let ext = extended(p)
-        let pose = poseOf(extended: ext, tuck: rTuck)
+        let ext = extended(p, was: s.ext)
+        s.ext = ext
+        s.thumbOut = rTuck > Tuning.thumbOut + (s.thumbOut ? -Tuning.thumbOutHysteresis : Tuning.thumbOutHysteresis)
+        let shape = poseOf(extended: ext, thumbOut: s.thumbOut)  // what the hand looks like
+        // curling into a fist passes through pinches: a tucked thumb drops the press, no click
+        if s.button?.phase == .pressed && shape == .fist && rTuck < Tuning.thumbTucked { s.button = nil }
+        // a pinch owns its finger: bent to meet the thumb, it doesn't make the hand a fist
+        var held = ext
+        if let b = s.button { held[b.side == .left ? 0 : 1] = true }
+        let pose = poseOf(extended: held, thumbOut: s.thumbOut)
         if pose != s.poseRaw {
             s.poseRaw = pose
             s.poseT = now
@@ -102,20 +139,24 @@ public final class HandMouseEngine {
                     s.ctrlMode = true
                     s.moveDone = true  // back to neutral first to arm moves
                     if s.cur != nil { s.cur = cursorAt(now - Tuning.ctrlLookback) }  // undo the drift from turning the hand
-                    fire(s.gest.reset())
+                    releaseButton()
+                    s.pendingClick = nil
                     if !s.ctrlLock { say("Atalhos ligados") }  // the lock frame keeps "Atalhos fixos"
                 }
             }
         }
         let free = s.ctrlLock && !s.switcher  // Ctrl lock: hands off the cursor, the real mouse drives it
 
-        // close: hand tipped flat freezes the cursor; flat + fingertips curled closeHold s → close window.
-        // Without window gestures there is nothing to close, so flat isn't detected at all.
+        // close: hand tipped flat (flatFrames in a row) freezes the cursor; flat + fingertips
+        // curled closeHold s → close window. Without window gestures there is nothing to close.
         let wasFlat = s.flat
         var curled = false
-        if config.windowGestures && !((s.ctrlMode && !s.ctrlLock) || s.switcher) {
-            (s.flat, curled) = flatCurl(p)
+        if config.windowGestures && !((s.ctrlMode && !s.ctrlLock) || s.switcher) && s.button == nil {
+            let fc = flatCurl(p)
+            s.flat = s.flatGate.update(fc.flat, frames: Tuning.flatFrames)
+            curled = fc.curled
         } else {
+            s.flatGate = Debounce()
             s.flat = false
         }
         if s.flat && !wasFlat && s.cur != nil { s.cur = cursorAt(now - Tuning.ctrlLookback) }  // undo the drift from tipping
@@ -133,16 +174,22 @@ public final class HandMouseEngine {
             s.shutDone = false
         }
 
-        // pinches and the cursor only count in the normal / fine pose
+        // pinches and the cursor only count while pointing
         let box = config.box
-        let tip = p[Joint.index]
-        let inBox = box.left <= tip.x && tip.x <= box.right && box.top <= tip.y && tip.y <= box.bottom
-        let pointing = (s.poseRaw == .point || s.poseRaw == .fine) && !s.switcher && !s.ctrlMode && !s.flat
+        let inBox = box.left <= ctrl.x && ctrl.x <= box.right && box.top <= ctrl.y && ctrl.y <= box.bottom
+        let pointing = s.poseRaw == .point && !s.switcher && !s.ctrlMode && !s.flat
 
-        // next screen: thumb + pinky, only with the index tip inside the box
-        let wasPinky = s.pinkyPinch.on
-        if s.pinkyPinch.update(rPinky, on: config.pinchOn, off: config.pinchOff) && !wasPinky
-            && pointing && inBox && screenCount > 1 {
+        let wasLeft = s.leftPinch.on, wasRight = s.rightPinch.on, wasPinky = s.pinkyPinch.on
+        let left = s.leftPinch.update(rIndex, on: config.pinchOn, off: config.pinchOff)
+        let right = s.rightPinch.update(rMid, on: config.pinchOn, off: config.pinchOff)
+        let pinky = s.pinkyPinch.update(rPinky, on: config.pinchOn, off: config.pinchOff)
+        status.pinch = 1 - min(max((rIndex - config.pinchOn) / nonZero(config.pinchOff - config.pinchOn + 0.15), 0), 1)
+
+        // next screen: thumb + pinky, only with the hand inside the box. The thumb crosses
+        // the middle fingertip on its way there: drop a click that started on the way.
+        if pinky && !wasPinky && pointing && inBox && screenCount > 1 && (s.button?.phase ?? .pressed) == .pressed {
+            s.button = nil
+            s.pendingClick = nil
             s.cur = nil
             s.off = UV(u: 0, v: 0)
             s.hist.removeAll()  // u, v of the old screen mean nothing on the new one
@@ -150,65 +197,67 @@ public final class HandMouseEngine {
             out.append(.nextScreen)
             say("Ecrã seguinte")
         }
-        // click pinch: thumb to middle tip, or to the index base in slow (fine) mode
-        let fine = s.poseRaw == .fine
-        let pinched = s.midPinch.update(fine ? rBase : rMid, on: config.pinchOn, off: config.pinchOff)
-        // curling into a fist passes through a pinch; drop it instead of clicking
-        fire(pointing ? s.gest.update(t: now, pinched: pinched) : s.gest.reset())
-        switch s.gest.state {
-        case .down1, .down2: tint = (now - s.gest.t0) / Tuning.hold  // drag / scroll getting close
-        case .drag, .scroll: tint = 1
-        default: break
-        }
 
-        // index tip → 0…1 inside the box, smoothed. off = cursor offset from the hand:
-        // fine mode grows it (cursor moves slower than the hand), normal movement shrinks
-        // it back so the box mapping comes back without a jump.
+        // buttons: thumb–index = left, thumb–middle = right
+        if pointing {
+            buttons(now, ctrl: ctrl, left: (left, left && !wasLeft, rIndex),
+                    right: (right, right && !wasRight, rMid), shape: shape)
+        } else {
+            releaseButton()  // curling into a fist passes through a pinch; drop it instead of clicking
+            s.pendingClick = nil
+        }
+        if let b = s.button { tint = b.phase == .pressed ? (now - b.t0) / Tuning.hold : 1 }
+
+        // control point → 0…1 inside the box, smoothed. off = cursor offset from the hand:
+        // slow moves grow it (cursor moves `gain` of the hand), fast moves shrink it back so
+        // the box mapping returns without a jump. While the cursor is frozen, off tracks
+        // the gap so it picks up from the frozen spot when it goes live again.
         if s.filterBox != box {  // a new box would make the filters glide across the jump
             s.fx = OneEuro(); s.fy = OneEuro(); s.prevUV = nil; s.filterBox = box
         }
-        let fu = s.fx(now, (tip.x - box.left) / nonZero(box.right - box.left),
-                      minCutoff: config.smoothing, beta: config.responsiveness)
-        let fv = s.fy(now, (tip.y - box.top) / nonZero(box.bottom - box.top),
-                      minCutoff: config.smoothing, beta: config.responsiveness)
-        // in the switcher the rock sign's index steers the cursor over the windows
-        let live = (!s.gest.frozen && pointing) || (s.switcher && s.poseRaw == .rock)
+        let f = UV(u: s.fx(now, (ctrl.x - box.left) / nonZero(box.right - box.left),
+                           minCutoff: config.smoothing, beta: config.responsiveness),
+                   v: s.fy(now, (ctrl.y - box.top) / nonZero(box.bottom - box.top),
+                           minCutoff: config.smoothing, beta: config.responsiveness))
+        let frozen = (s.button.map { $0.phase != .drag } ?? false) || s.pendingClick != nil
+        // in the switcher the rock sign steers the cursor over the windows
+        let live = (!frozen && pointing) || (s.switcher && s.poseRaw == .rock)
         if let prev = s.prevUV, live {
-            let du = fu - prev.u, dv = fv - prev.v
-            if fine {
-                s.off.u += du * (config.fineSpeed - 1)
-                s.off.v += dv * (config.fineSpeed - 1)
-            } else {
-                let k = max(0, 1 - Tuning.catchup * hypot(du, dv))
-                s.off.u *= k
-                s.off.v *= k
-            }
+            let du = f.u - prev.u, dv = f.v - prev.v
+            s.off.u += du * (gain - 1)
+            s.off.v += dv * (gain - 1)
+            let fast = fine < 1 ? (gain - fine) / (1 - fine) : 1
+            let k = max(0, 1 - Tuning.catchup * hypot(du, dv) * fast)
+            s.off.u *= k
+            s.off.v *= k
         }
-        s.prevUV = UV(u: fu, v: fv)
-        let target = UV(u: min(max(fu + s.off.u, 0), 1), v: min(max(fv + s.off.v, 0), 1))
+        s.prevUV = f
         if free {
             // the real mouse drives the cursor: nothing to send, nothing to look back at
             s.cur = nil
             s.cursorUnknown = true
             s.hist.removeAll()
         } else {
-            if live {
-                s.cur = target
+            if s.cur == nil && (live || !s.cursorUnknown) {
+                s.off = UV(u: 0, v: 0)
+                s.cur = clamped(f)
                 s.cursorUnknown = false
-            } else if s.cur == nil && !s.cursorUnknown {
-                s.cur = target
+            } else if live {
+                s.cur = clamped(UV(u: f.u + s.off.u, v: f.v + s.off.v))
             }
             if let c = s.cur {
+                if !live { s.off = UV(u: c.u - f.u, v: c.v - f.v) }
                 s.hist.append((now, c))
                 if s.hist.count > Tuning.historyLength { s.hist.removeFirst(s.hist.count - Tuning.historyLength) }
-                let move = HandAction.moveCursor(u: c.u, v: c.v, dragging: s.gest.state == .drag)
+                let move = HandAction.moveCursor(u: c.u, v: c.v, dragging: s.button?.phase == .drag)
                 if move != s.lastMove {
                     out.append(move)
                     s.lastMove = move
                 }
             }
         }
-        if pointing { status.edges = edgeSides(p, box: box) }  // only warn while the hand steers the cursor
+        s.slow = live && fine < 1 && s.speed < Tuning.slowSpeed
+        if pointing { status.edges = edgeSides(ctrl, box: box) }  // only warn while the hand steers the cursor
 
         // fist: minimize the window the cursor was on just before the curl dragged it away
         let fistArmed = config.windowGestures && !s.fistDone && !s.switcher && (s.ctrlLock || !s.ctrlMode) && !s.flat
@@ -245,7 +294,7 @@ public final class HandMouseEngine {
 
         // shortcut mode: pose (ctrlMove) → shortcut once; back to neutral re-arms
         if s.ctrlMode && !s.switcher && !s.flat {  // switcher / close own the hand while active
-            let move = ctrlMove(ext, thumbOut: rTuck > Tuning.thumbOut, thumbStraightUp: thumbUp(p))
+            let move = ctrlMove(ext, thumbOut: s.thumbOut, thumbStraightUp: thumbUp(p))
             // locked: thumbs-up is also the unlock, so ⌘D waits for a short one to be released
             let holdD = s.ctrlLock && s.moveRaw == .duplicate
             if move != s.moveRaw {
@@ -273,19 +322,100 @@ public final class HandMouseEngine {
         }
 
         // scroll: the page follows the hand, like dragging it (hand down = content down)
-        let midY = p[Joint.midMCP].y
-        if s.gest.state == .scroll {
-            let points = (midY - s.scrollY) * config.scrollGain * Tuning.pointsPerWheelUnit
+        if s.button?.phase == .scroll {
+            let points = (ctrl.y - s.scrollY) * config.scrollGain * Tuning.pointsPerWheelUnit
             if points != 0 { out.append(.scroll(points: points)) }
         }
-        s.scrollY = midY
+        s.scrollY = ctrl.y
+    }
+
+    /// Pinch states → clicks, drag, scroll. Each pinch is (debounced on, just closed, gap ratio).
+    private func buttons(_ now: Double, ctrl: HandPoint, left: (on: Bool, rose: Bool, r: Double),
+                         right: (on: Bool, rose: Bool, r: Double), shape: HandPose) {
+        // opened into a curled hand: click only once it opens up (a fist passes through pinches)
+        if let pending = s.pendingClick {
+            if shape == .point || shape == .rock {
+                s.pendingClick = nil
+                click(pending.side)
+            } else if now > pending.until {
+                s.pendingClick = nil
+            }
+        }
+        if var b = s.button {
+            // neighbouring fingertips sit within pinch range of each other, so the thumb on its
+            // way to the middle tip can close the index pinch first: until it's a drag / scroll,
+            // the clearly tighter pinch takes over (not once this one is opening: the thumb
+            // passes the other fingertip again on its way out)
+            let mine = b.side == .left ? left : right, other = b.side == .left ? right : left
+            if b.phase == .pressed && other.on && mine.r < config.pinchOn && other.r < mine.r - Tuning.pinchMargin {
+                b.side = b.side == .left ? .right : .left
+                s.button = b
+            }
+            if !(b.side == .left ? left.on : right.on) {
+                s.button = nil
+                switch b.phase {
+                case .drag: out.append(.leftUp); say("Fim de arrastar")
+                case .scroll: say("Fim de scroll")
+                case .pressed:
+                    if shape == .point || shape == .rock {
+                        click(b.side)
+                    } else {
+                        s.pendingClick = (b.side, now + Tuning.releaseWait)
+                    }
+                }
+                return
+            }
+            guard b.phase == .pressed else { return }
+            let moved = ctrl.heightDistance(to: b.anchor) > Tuning.dragThreshold
+            guard moved || now - b.t0 > Tuning.hold else { return }
+            if b.side == .left {
+                b.phase = .drag
+                out.append(.leftDown)
+                say("A arrastar")
+            } else {
+                b.phase = .scroll
+                s.scrollY = moved ? b.anchor.y : ctrl.y  // the move that started it scrolls too
+                say("Scroll")
+            }
+            s.button = b
+            return
+        }
+        // a new press: the pinch that just closed; both at once → the tighter one
+        let side: Side?
+        if left.rose && (!right.rose || left.r <= right.r) {
+            side = .left
+        } else if right.rose {
+            side = .right
+        } else {
+            side = nil
+        }
+        guard let side = side else { return }
+        s.pendingClick = nil
+        s.button = Button(side: side, phase: .pressed, t0: now, anchor: ctrl)
+        if s.cur != nil { s.cur = cursorAt(now - Tuning.clickLookback) }  // before the fingers nudged it
     }
 
     private func lost(_ now: Double) {
-        fire(s.gest.reset())
         let since = s.lostSince ?? now
         s.lostSince = since
-        if s.switcher && now - since >= Tuning.switcherGrace {  // one dropped frame no longer cancels it
+        // a short dropout keeps everything: pinches, drag, cursor, mode
+        if !s.gone && now - since >= Tuning.lossGrace {
+            s.gone = true
+            releaseButton()
+            s.pendingClick = nil
+            s.leftPinch = Pinch(); s.rightPinch = Pinch(); s.pinkyPinch = Pinch()
+            s.smoother = LandmarkSmoother()
+            s.sizes = []
+            s.prevCtrl = nil
+            s.speed = 0
+            s.prevUV = nil
+            s.ext = nil
+            s.flat = false; s.flatGate = Debounce(); s.shutT0 = nil; s.shutDone = false
+            s.poseRaw = .point; s.poseT = now  // a returning pose must hold again
+            s.slow = false
+            status.pinch = 0
+        }
+        if s.switcher && now - since >= Tuning.switcherGrace {
             out.append(.cancelSwitcher)
             say("Cancelar")
             s.switcher = false
@@ -294,8 +424,8 @@ public final class HandMouseEngine {
 
     // MARK: - Helpers
 
-    private func mode(_ now: Double, handSeen: Bool) -> HandMode {
-        guard handSeen else { return .noHand }
+    private func mode(_ now: Double, present: Bool) -> HandMode {
+        guard present else { return .noHand }
         let thumbHeld = s.poseRaw == .thumb
         let lockIn = max(0, Tuning.lockHold - (now - s.poseT))
         if s.ctrlLock { return .shortcutsLocked(unlockIn: thumbHeld && !s.lockDone ? lockIn : nil) }
@@ -303,25 +433,32 @@ public final class HandMouseEngine {
         if s.switcher { return .switcher }
         if s.flat { return .flat }
         if thumbHeld { return .frozen(lockIn: config.shortcutGestures ? lockIn : .infinity) }
-        switch s.gest.state {
-        case .idle: break
-        case .drag: return .dragging
-        case .scroll: return .scrolling
-        default: return .clicking
+        if let b = s.button {
+            switch b.phase {
+            case .drag: return .dragging
+            case .scroll: return .scrolling
+            case .pressed: return .clicking
+            }
         }
-        return s.poseRaw == .fine ? .slow : .pointing
+        if s.pendingClick != nil { return .clicking }
+        return s.slow ? .slow : .pointing
     }
 
-    private func fire(_ events: [GestureEvent]) {
-        for e in events {
-            switch e {
-            case .leftClick: out.append(.leftClick); say("Clique")
-            case .rightClick: out.append(.rightClick); say("Clique direito")
-            case .dragStart: out.append(.leftDown); say("A arrastar")
-            case .dragEnd: out.append(.leftUp); say("Fim de arrastar")
-            case .scrollStart: say("Scroll")
-            case .scrollEnd: say("Fim de scroll")
-            }
+    /// Lets go of whatever button is held, without clicking.
+    private func releaseButton() {
+        guard let b = s.button else { return }
+        s.button = nil
+        switch b.phase {
+        case .drag: out.append(.leftUp); say("Fim de arrastar")
+        case .scroll: say("Fim de scroll")
+        case .pressed: break
+        }
+    }
+
+    private func click(_ side: Side) {
+        switch side {
+        case .left: out.append(.leftClick); say("Clique")
+        case .right: out.append(.rightClick); say("Clique direito")
         }
     }
 
@@ -348,16 +485,37 @@ public final class HandMouseEngine {
         guard !free, let c = c else { return .realCursor }
         return .point(u: c.u, v: c.v)
     }
+
+    private func clamped(_ c: UV) -> UV { UV(u: min(max(c.u, 0), 1), v: min(max(c.v, 0), 1)) }
 }
 
 struct UV: Equatable {
     var u, v: Double
 }
 
-/// Everything `reset()` wipes. Names follow handmouse.py's `main()` locals.
+private enum Side { case left, right }
+
+/// A pinch in progress. `pressed` = closed, not yet moved or held (a click if it opens now).
+private struct Button {
+    enum Phase { case pressed, drag, scroll }
+    var side: Side
+    var phase: Phase
+    let t0: Double
+    let anchor: HandPoint  // control point when it closed: the drag / scroll threshold counts from here
+}
+
+/// Everything `reset()` wipes.
 private struct EngineState {
-    var gest = Gestures()
-    var midPinch = Pinch(), pinkyPinch = Pinch()
+    var smoother = LandmarkSmoother()
+    var sizes: [Double] = []                 // recent hand sizes, averaged
+    var prevCtrl: (t: Double, p: HandPoint)?
+    var speed = 0.0                          // smoothed hand speed, frame heights/s
+    var slow = false                         // precision gain fully on (status .slow)
+    var ext: [Bool]?                         // last frame's extended fingers (hysteresis)
+    var thumbOut = false
+    var leftPinch = Pinch(), rightPinch = Pinch(), pinkyPinch = Pinch()
+    var button: Button?
+    var pendingClick: (side: Side, until: Double)?
     var cur: UV?                  // smoothed cursor (u, v); nil = not known yet
     var cursorUnknown = false     // Ctrl lock left the cursor wherever the real mouse put it
     var scrollY = 0.0
@@ -367,20 +525,21 @@ private struct EngineState {
     var fx = OneEuro(), fy = OneEuro()
     var prevUV: UV?, off = UV(u: 0, v: 0)
     var filterBox: HandBox?
-    var flat = false, shutT0: Double?, shutDone = false
+    var flat = false, flatGate = Debounce(), shutT0: Double?, shutDone = false
     var ctrlMode = false, ctrlSeen = -99.0
     var moveRaw: CtrlMove?, moveT = 0.0, moveDone = true
     var ctrlLock = false, lockDone = false  // Ctrl lock: shortcut mode at any hand angle, toggled by a long thumbs-up
     var lostSince: Double?
+    var gone = true               // no hand, grace over (or never seen one)
     var lastMove: HandAction?
 }
 
 /// Calibrates the active area: point with the index only and sweep the zone;
-/// an open hand held for 0.3 s with enough points finishes.
-/// Port of `calibrate()` / `box_from()`.
+/// an open hand held for 0.3 s with enough points finishes. Samples the cursor's
+/// control point (index/middle knuckles), the same point the engine maps.
 public final class BoxCalibrator {
     public init() {}
-    /// Index-tip samples collected so far.
+    /// Control-point samples collected so far.
     public private(set) var samples: [HandPoint] = []
     private var openT: Double?
     /// The box so far (nil until enough samples).
@@ -392,12 +551,12 @@ public final class BoxCalibrator {
         guard let hand = hand else { return nil }
         let ext = extended(hand.points)
         if ext == [true, false, false, false] {
-            samples.append(hand[Joint.index])
+            samples.append(controlPoint(hand.points))
             openT = nil
         } else if !ext.contains(false) && samples.count > Tuning.minSamples {
             let t0 = openT ?? t
             openT = t0
-            if t - t0 > Tuning.poseHold {
+            if t - t0 > Tuning.calOpenHold {
                 openT = nil
                 let box = boxFrom(samples)
                 if box.right - box.left < Tuning.minBoxSide || box.bottom - box.top < Tuning.minBoxSide { return nil }

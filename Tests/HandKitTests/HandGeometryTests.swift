@@ -6,58 +6,62 @@ import XCTest
 
 private func pts(_ xy: [(Double, Double)]) -> [HandPoint] { xy.map { HandPoint(x: $0.0, y: $0.1) } }
 
-final class GesturesTests: XCTestCase {
-    private func run(_ seq: [(Double, Bool)]) -> [GestureEvent] {
-        var g = Gestures()
-        return seq.flatMap { g.update(t: $0.0, pinched: $0.1) }
-    }
-
-    func testTapIsALeftClickAfterTheDoubleWindow() {
-        XCTAssertEqual(run([(0, true), (0.1, false), (0.5, false)]), [.leftClick])
-    }
-
-    func testDoubleTapIsARightClick() {
-        XCTAssertEqual(run([(0, true), (0.1, false), (0.2, true), (0.3, false), (0.8, false)]), [.rightClick])
-    }
-
-    func testHoldIsADrag() {
-        XCTAssertEqual(run([(0, true), (0.3, true), (0.6, false)]), [.dragStart, .dragEnd])
-    }
-
-    func testTapThenHoldIsAScroll() {
-        XCTAssertEqual(run([(0, true), (0.1, false), (0.2, true), (0.5, true), (0.7, false)]), [.scrollStart, .scrollEnd])
-    }
-
-    func testNoPinchNoEvents() {
-        XCTAssertEqual(run([(0, false), (0.5, false)]), [])
-    }
-
-    func testResetReleasesADrag() {
-        var g = Gestures()
-        _ = g.update(t: 0, pinched: true)
-        _ = g.update(t: 0.3, pinched: true)
-        XCTAssertEqual(g.reset(), [.dragEnd])
-        XCTAssertEqual(g.state, .idle)
-    }
-
-    func testPinchHysteresis() {
+final class PinchTests: XCTestCase {
+    func testPinchHysteresisAndDebounce() {
         var p = Pinch()
         let on = 0.30, off = 0.40, mid = (on + off) / 2
-        XCTAssertEqual([mid, on - 0.01, mid, off + 0.01, mid].map { p.update($0, on: on, off: off) },
-                       [false, true, true, false, false])
+        // one frame under the line is not enough; two in a row flip it; mid-band holds it
+        XCTAssertEqual([mid, on - 0.01, mid, on - 0.01, on - 0.01, mid, off + 0.01, mid, off + 0.01, off + 0.01]
+                        .map { p.update($0, on: on, off: off) },
+                       [false, false, false, false, true, true, true, true, true, false])
+    }
+
+    func testDebounceNeedsFramesInARow() {
+        var d = Debounce()
+        XCTAssertEqual([true, false, true, true, true, false, false].map { d.update($0, frames: 3) },
+                       [false, false, false, false, true, true, true])
+    }
+
+    func testPrecisionGain() {
+        XCTAssertEqual(precisionGain(speed: 0, fine: 0.4), 0.4)
+        XCTAssertEqual(precisionGain(speed: Tuning.slowSpeed, fine: 0.4), 0.4)
+        XCTAssertEqual(precisionGain(speed: (Tuning.slowSpeed + Tuning.fastSpeed) / 2, fine: 0.4), 0.7, accuracy: 1e-9)
+        XCTAssertEqual(precisionGain(speed: 5, fine: 0.4), 1)
     }
 }
 
 final class PoseTests: XCTestCase {
     func testPoseOf() {
-        let out = Tuning.thumbOut
-        XCTAssertEqual(poseOf(extended: [false, false, false, false], tuck: out - 0.1), .fist)
-        XCTAssertEqual(poseOf(extended: [false, false, false, false], tuck: out + 0.1), .thumb)
-        XCTAssertEqual(poseOf(extended: [true, false, false, true], tuck: out + 0.1), .rock)
-        XCTAssertEqual(poseOf(extended: [true, false, false, true], tuck: out - 0.1), .point)  // thumb folded = not rock
-        XCTAssertEqual(poseOf(extended: [true, true, true, true], tuck: out + 0.1), .point)    // open palm stays a cursor
-        XCTAssertEqual(poseOf(extended: [true, false, false, false], tuck: 0.1), .fine)
-        XCTAssertEqual(poseOf(extended: [true, false, false, false], tuck: out + 0.1), .fine)
+        XCTAssertEqual(poseOf(extended: [false, false, false, false], thumbOut: false), .fist)
+        XCTAssertEqual(poseOf(extended: [false, false, false, false], thumbOut: true), .thumb)
+        XCTAssertEqual(poseOf(extended: [true, false, false, true], thumbOut: true), .rock)
+        XCTAssertEqual(poseOf(extended: [true, false, false, true], thumbOut: false), .point)  // thumb folded = not rock
+        XCTAssertEqual(poseOf(extended: [true, true, true, true], thumbOut: true), .point)     // open palm stays a cursor
+        XCTAssertEqual(poseOf(extended: [true, false, false, false], thumbOut: false), .point) // index alone: plain pointing
+    }
+
+    func testExtendedByBendAngle() {
+        XCTAssertEqual(extended(FakeHand.open.points), [true, true, true, true])
+        XCTAssertEqual(extended(FakeHand.fist.points), [false, false, false, false])
+        XCTAssertEqual(extended(FakeHand.rock.points), [true, false, false, true])
+        // leaning at the camera: bones a third as long, still straight → still extended
+        XCTAssertEqual(extended(FakeHand.open.with { $0.tilt = 0.35 }.points), [true, true, true, true])
+    }
+
+    func testExtendedHysteresisAndShortBones() {
+        // index bent ~60° at its middle joint: curled from scratch, kept extended if it was
+        var p = FakeHand.open.points
+        let pip = p[6]
+        let len = 0.045 / Tuning.aspect
+        let a = 60.0 * .pi / 180
+        p[8] = HandPoint(x: pip.x + sin(a) * len, y: pip.y - cos(a) * 0.045)
+        XCTAssertFalse(extended(p)[0])
+        XCTAssertTrue(extended(p, was: [true, true, true, true])[0])
+        // finger aimed at the camera (bones collapse to a dot): keeps whatever it was
+        var dot = FakeHand.open.points
+        for j in 6...8 { dot[j] = HandPoint(x: dot[5].x, y: dot[5].y - 0.001 * Double(j - 5)) }
+        XCTAssertTrue(extended(dot, was: [true, true, true, true])[0])
+        XCTAssertFalse(extended(dot, was: [false, true, true, true])[0])
     }
 
     func testThumbUp() {
@@ -90,24 +94,25 @@ final class GeometryTests: XCTestCase {
         XCTAssertEqual(shapeDist([0, 0, 0, 0], [3, 4, 0, 0]), 2.5, accuracy: 1e-9)
     }
 
-    /// 21 points at (0.5, 0.5) with the index tip at u, v of the default box.
-    private func indexAt(_ u: Double, _ v: Double) -> [HandPoint] {
+    /// Point at u, v of the default box.
+    private func at(_ u: Double, _ v: Double) -> HandPoint {
         let b = HandBox.default
-        var p = [HandPoint](repeating: HandPoint(x: 0.5, y: 0.5), count: 21)
-        p[8] = HandPoint(x: b.left + u * (b.right - b.left), y: b.top + v * (b.bottom - b.top))
-        return p
+        return HandPoint(x: b.left + u * (b.right - b.left), y: b.top + v * (b.bottom - b.top))
     }
 
     func testEdgeSides() {
         let box = HandBox.default
-        XCTAssertTrue(edgeSides(indexAt(0.5, 0.5), box: box) == (false, false, false, false))   // centre: quiet
-        XCTAssertTrue(edgeSides(indexAt(0.5, 1.0), box: box) == (false, false, false, false))   // at the edge: quiet
-        XCTAssertTrue(edgeSides(indexAt(0.99, 0.01), box: box) == (false, false, false, false))
-        XCTAssertTrue(edgeSides(indexAt(0.5, 1.2), box: box).bottom)                            // outside: warn
-        XCTAssertTrue(edgeSides(indexAt(-0.1, 0.5), box: box).left)
-        var low = indexAt(0.5, 0.95)
-        low[0] = HandPoint(x: 0.5, y: 0.999)                                                    // wrist at the bottom edge
-        XCTAssertTrue(edgeSides(low, box: box) == (false, false, false, false))                 // index still inside: quiet
+        XCTAssertTrue(edgeSides(at(0.5, 0.5), box: box) == (false, false, false, false))   // centre: quiet
+        XCTAssertTrue(edgeSides(at(0.5, 1.0), box: box) == (false, false, false, false))   // at the edge: quiet
+        XCTAssertTrue(edgeSides(at(0.99, 0.01), box: box) == (false, false, false, false))
+        XCTAssertTrue(edgeSides(at(0.5, 1.2), box: box).bottom)                            // outside: warn
+        XCTAssertTrue(edgeSides(at(-0.1, 0.5), box: box).left)
+    }
+
+    func testControlPointIsTheKnuckleMidpoint() {
+        let p = FakeHand.open.points
+        XCTAssertEqual(controlPoint(p).x, (p[5].x + p[9].x) / 2, accuracy: 1e-12)
+        XCTAssertEqual(controlPoint(FakeHand.open.with { $0.thumb = .pinchIndex }.points), controlPoint(p))  // pinching doesn't move it
     }
 
     /// Wrist at 0; index..pinky knuckles at y = -length across width 0.3; fingertips at y = -r.
@@ -121,6 +126,7 @@ final class GeometryTests: XCTestCase {
         XCTAssertTrue(flatCurl(hand(1.5)) == (false, false))              // upright open hand (width/length 0.6)
         XCTAssertTrue(flatCurl(hand(0.25, length: 0.2)) == (true, true))  // tipped flat (short palm), tips pulled in
         XCTAssertTrue(flatCurl(hand(0.6, length: 0.2)) == (true, false))  // tipped flat, fingers still out
+        XCTAssertFalse(flatCurl(hand(1.5, length: 0.27)).flat)            // a slight tilt (1.1) no longer counts as flat
     }
 
     func testBoxFromDropsStrays() {
@@ -147,5 +153,21 @@ final class OneEuroTests: XCTestCase {
         var e = OneEuro()
         let moved = (0...30).map { i in e(Double(i) / 30, Double(i) / 30, minCutoff: 0.8, beta: 6) }  // 1 box/s
         XCTAssertGreaterThan(moved.last!, 0.9)
+    }
+}
+
+final class LandmarkSmootherTests: XCTestCase {
+    func testDoubtfulJointsKeepTheirSpotOnTheHand() {
+        var sm = LandmarkSmoother()
+        let a = FakeHand.open.landmarks
+        _ = sm(0, a)
+        // whole hand shifts right; the thumb tip is reported far off with low confidence
+        var moved = FakeHand.open.at(0.825, 0.375).points
+        moved[4] = HandPoint(x: 0, y: 0)
+        var conf = [Double](repeating: 0.9, count: 21)
+        conf[4] = 0.1
+        let out = sm(10, HandLandmarks(points: moved, confidence: conf)!)  // long gap: the filter jumps
+        XCTAssertEqual(out[4].x, a[4].x + 0.1, accuracy: 0.002)  // carried along with the hand, not to (0, 0)
+        XCTAssertEqual(out[4].y, a[4].y, accuracy: 0.002)
     }
 }

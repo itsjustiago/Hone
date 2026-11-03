@@ -24,11 +24,15 @@ final class HandMouseController {
     private(set) var error: String?
 
     let settings: HandMouseSettings
+    /// Diagnostic recording of the raw hand (Settings › Diagnóstico).
+    let recorder = HandRecorder()
 
     @ObservationIgnored private let tracker = HandTracker()
     @ObservationIgnored private let engine = HandMouseEngine()
     @ObservationIgnored private let performer = HandActionPerformer()
     @ObservationIgnored private let hud = HandMouseHUD()
+    /// The whole hand drawn around the cursor (Settings › "Mostrar a mão no ecrã").
+    @ObservationIgnored private let overlay = HandOverlay()
 
     /// Camera started only to calibrate: stops again when the calibration ends.
     @ObservationIgnored private var ownsCamera = false
@@ -112,6 +116,7 @@ final class HandMouseController {
         guard isTracking else { refreshHUD(); return }
         isTracking = false
         ownsCamera = false
+        recorder.stop() // keep what was recorded
         tracker.stop()
         performer.perform(engine.reset())
         performer.releaseAll()
@@ -120,6 +125,7 @@ final class HandMouseController {
         hud.model.landmarks = nil
         hud.model.status = HandStatus()
         hud.model.recentAction = nil
+        overlay.hide()
         refreshHUD()
     }
 
@@ -305,6 +311,7 @@ final class HandMouseController {
     private func handleFrame(_ t: TimeInterval, _ hand: HandLandmarks?) {
         guard isTracking else { return }
         if hand != nil || lastHandSeen == nil { lastHandSeen = t }
+        if recorder.isRecording { recorder.add(t: t, hand: hand) } // the raw hand, before the engine
 
         if let kind = calibration {
             calibrate(kind, t, hand)
@@ -315,6 +322,7 @@ final class HandMouseController {
             if autoOffExpired(t) { return }
         }
         updateHUD(t, hand)
+        if settings.showHandOverlay { overlay.update(hand: calibration == nil ? hand : nil, status: engine.status) }
     }
 
     /// The engine never clears its last action label, so the HUD gives it a short life.
@@ -356,6 +364,7 @@ final class HandMouseController {
     private func applySettings() {
         engine.config = settings.config
         performer.dryRun = settings.watchOnly
+        performer.glide = settings.glide
         hud.model.watchOnly = settings.watchOnly
         hud.model.box = settings.config.box
         tracker.wantsPreview = previewWanted
@@ -388,6 +397,7 @@ final class HandMouseController {
         } else {
             hud.hide()
         }
+        if isTracking && settings.showHandOverlay { overlay.show() } else { overlay.hide() }
     }
 
     /// A line in the pill for a moment, whatever the mode.
