@@ -5,12 +5,13 @@ import HoneDesign
 // Intended use (the controller wires it):
 //   let overlay = HandOverlay(); overlay.show()          // transparent, click-through, above everything
 //   overlay.update(hand: landmarks, status: status)      // every camera frame (~30 fps); overlay.hide() when done
-// The whole hand (21 joints and bones) is drawn around the cursor, at a constant size.
+// The whole hand is drawn around the cursor, at a constant size: a white cartoon glove
+// (HandGlove.swift) or the bare skeleton (21 joints and bones), per `style`.
 
 // MARK: - Overlay
 
 /// The hand itself, walking over the screen: a transparent panel on the screen the
-/// cursor is on, with the skeleton drawn around the cursor so the user sees what the
+/// cursor is on, with the hand drawn around the cursor so the user sees what the
 /// hand is doing (pinch closing, fist, scroll). It never takes focus, lets every
 /// click through and leaves the system cursor alone. Pure CoreGraphics, no SwiftUI.
 @MainActor
@@ -18,6 +19,8 @@ final class HandOverlay {
     /// Width / height of the camera frame. Landmarks are normalised per axis, so x needs
     /// this to keep the hand's proportions; the controller sets it from the real frame.
     var cameraAspect: CGFloat = 4.0 / 3.0
+    /// Glove or skeleton; takes effect on the next frame.
+    var style: HandStyle = .glove
 
     /// The drawn hand's size: wrist to the middle of the index and middle knuckles, in points.
     private static let handSize: CGFloat = 220
@@ -160,6 +163,9 @@ final class HandOverlay {
         case .frozen: frozen = true
         default: break
         }
+        if style == .glove {
+            pose.glove = HandGloveGeometry(points: pose.points, handSize: Self.handSize)
+        }
 
         targetAlpha = frozen ? 0.5 : 1
         advanceAlpha(now)
@@ -268,6 +274,8 @@ private struct HandOverlayPose {
     /// Dragging: every bone brighter.
     var bright = false
     var scrolling = false
+    /// The glove's shapes for this frame; nil draws the skeleton.
+    var glove: HandGloveGeometry?
 
     /// Palm centre and the radius of the hold ring around the hand (a fist gets a snug
     /// ring, an open hand a wider one).
@@ -281,14 +289,19 @@ private struct HandOverlayPose {
 
     /// Everything this pose can touch, shadows included: what must be redrawn when it changes.
     var bounds: CGRect {
-        var minX = CGFloat.infinity, minY = CGFloat.infinity
-        var maxX = -CGFloat.infinity, maxY = -CGFloat.infinity
-        for p in points {
-            minX = min(minX, p.x); maxX = max(maxX, p.x)
-            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        var rect: CGRect
+        if let glove {
+            rect = glove.bounds
+        } else {
+            var minX = CGFloat.infinity, minY = CGFloat.infinity
+            var maxX = -CGFloat.infinity, maxY = -CGFloat.infinity
+            for p in points {
+                minX = min(minX, p.x); maxX = max(maxX, p.x)
+                minY = min(minY, p.y); maxY = max(maxY, p.y)
+            }
+            rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+                .insetBy(dx: -28, dy: -28)
         }
-        var rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-            .insetBy(dx: -28, dy: -28)
         if scrolling {
             let tip = points[12]
             rect = rect.union(CGRect(x: tip.x - 16, y: tip.y - 62, width: 32, height: 48))
@@ -304,15 +317,11 @@ private struct HandOverlayPose {
 
 // MARK: - Canvas
 
-private struct HandOverlayRGB {
-    var r: CGFloat, g: CGFloat, b: CGFloat
+private typealias HandOverlayRGB = HandGlovePainter.RGB
 
+private extension HandGlovePainter.RGB {
     func mixed(withWhite t: CGFloat) -> HandOverlayRGB {
-        HandOverlayRGB(r: r + (1 - r) * t, g: g + (1 - g) * t, b: b + (1 - b) * t)
-    }
-
-    func cgColor(_ alpha: CGFloat = 1) -> CGColor {
-        CGColor(srgbRed: r, green: g, blue: b, alpha: alpha)
+        blended(with: .gray(1), t)
     }
 
     /// The hand mouse's tool colour, read from the design tokens.
@@ -369,35 +378,51 @@ private final class HandOverlayCanvas: NSView {
         }
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
-        // Dark halo: keeps the yellow readable on white pages and costs nothing on dark ones.
+        // Dark halo (ring, skeleton, chevrons; the glove casts its own): keeps them readable
+        // on white pages and costs nothing on dark ones.
         ctx.setShadow(offset: .zero, blur: 4, color: CGColor(gray: 0, alpha: 0.55))
 
+        // Hold ring (drag, close, switcher, lock) under the hand, the scroll chevrons above it.
+        if let hold = pose.hold { drawHoldRing(ctx, pose, progress: CGFloat(min(max(hold, 0), 1))) }
+        if let glove = pose.glove {
+            Self.gloves.paint(glove, in: ctx, pinch: pose.pinch, ringed: pose.ringed, bright: pose.bright)
+        } else {
+            drawSkeleton(ctx, pose)
+        }
+        if pose.scrolling { drawScrollChevrons(ctx, above: pose.points[12]) }
+
+        if layered { ctx.endTransparencyLayer() }
+        ctx.restoreGState()
+    }
+
+    /// Paints every glove; made once, with the tool colour.
+    private static let gloves = HandGlovePainter(tint: HandOverlayRGB.tint)
+
+    private func drawHoldRing(_ ctx: CGContext, _ pose: HandOverlayPose, progress: CGFloat) {
+        let ring = pose.holdRing
+        ctx.setLineWidth(3)
+        ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.35))
+        ctx.strokeEllipse(in: CGRect(x: ring.center.x - ring.radius, y: ring.center.y - ring.radius,
+                                     width: ring.radius * 2, height: ring.radius * 2))
+        guard progress > 0 else { return }
+        // Clockwise from 12 o'clock (y points down here, so a growing angle turns clockwise).
+        let steps = max(2, Int(72 * progress))
+        ctx.beginPath()
+        for step in 0...steps {
+            let angle = -CGFloat.pi / 2 + 2 * .pi * progress * CGFloat(step) / CGFloat(steps)
+            let point = CGPoint(x: ring.center.x + cos(angle) * ring.radius,
+                                y: ring.center.y + sin(angle) * ring.radius)
+            if step == 0 { ctx.move(to: point) } else { ctx.addLine(to: point) }
+        }
+        ctx.setLineWidth(5)
+        ctx.setStrokeColor(HandOverlayRGB.tint.mixed(withWhite: 0.15).cgColor())
+        ctx.strokePath()
+    }
+
+    /// The bare hand: yellow bones and joints.
+    private func drawSkeleton(_ ctx: CGContext, _ pose: HandOverlayPose) {
         let tint = HandOverlayRGB.tint
         let p = pose.points
-
-        // Hold ring (drag, close, switcher, lock): a track and the progress on top, under the hand.
-        if let hold = pose.hold {
-            let ring = pose.holdRing
-            let progress = CGFloat(min(max(hold, 0), 1))
-            ctx.setLineWidth(3)
-            ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.35))
-            ctx.strokeEllipse(in: CGRect(x: ring.center.x - ring.radius, y: ring.center.y - ring.radius,
-                                         width: ring.radius * 2, height: ring.radius * 2))
-            if progress > 0 {
-                // Clockwise from 12 o'clock (y points down here, so a growing angle turns clockwise).
-                let steps = max(2, Int(72 * progress))
-                ctx.beginPath()
-                for step in 0...steps {
-                    let angle = -CGFloat.pi / 2 + 2 * .pi * progress * CGFloat(step) / CGFloat(steps)
-                    let point = CGPoint(x: ring.center.x + cos(angle) * ring.radius,
-                                        y: ring.center.y + sin(angle) * ring.radius)
-                    if step == 0 { ctx.move(to: point) } else { ctx.addLine(to: point) }
-                }
-                ctx.setLineWidth(5)
-                ctx.setStrokeColor(tint.mixed(withWhite: 0.15).cgColor())
-                ctx.strokePath()
-            }
-        }
 
         // Bones, one path: the halo is cast once and overlaps stay clean.
         ctx.beginPath()
@@ -432,22 +457,19 @@ private final class HandOverlayCanvas: NSView {
                                              width: outer * 2, height: outer * 2))
             }
         }
+    }
 
-        // Scrolling: small up and down chevrons above the middle fingertip.
-        if pose.scrolling {
-            let tip = CGPoint(x: p[12].x, y: p[12].y - 36)
-            ctx.setLineWidth(3)
-            ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.95))
-            for (dy, s) in [(CGFloat(-11), CGFloat(1)), (11, -1)] {
-                ctx.beginPath()
-                ctx.move(to: CGPoint(x: tip.x - 6, y: tip.y + dy + 3 * s))
-                ctx.addLine(to: CGPoint(x: tip.x, y: tip.y + dy - 3 * s))
-                ctx.addLine(to: CGPoint(x: tip.x + 6, y: tip.y + dy + 3 * s))
-                ctx.strokePath()
-            }
+    /// Scrolling: small up and down chevrons above the middle fingertip.
+    private func drawScrollChevrons(_ ctx: CGContext, above fingertip: CGPoint) {
+        let tip = CGPoint(x: fingertip.x, y: fingertip.y - 36)
+        ctx.setLineWidth(3)
+        ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.95))
+        for (dy, s) in [(CGFloat(-11), CGFloat(1)), (11, -1)] {
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: tip.x - 6, y: tip.y + dy + 3 * s))
+            ctx.addLine(to: CGPoint(x: tip.x, y: tip.y + dy - 3 * s))
+            ctx.addLine(to: CGPoint(x: tip.x + 6, y: tip.y + dy + 3 * s))
+            ctx.strokePath()
         }
-
-        if layered { ctx.endTransparencyLayer() }
-        ctx.restoreGState()
     }
 }
