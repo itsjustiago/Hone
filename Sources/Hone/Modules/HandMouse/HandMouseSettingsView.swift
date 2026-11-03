@@ -194,6 +194,13 @@ struct HandMouseSettingsView: View {
     private func diagnostics(_ controller: HandMouseController) -> some View {
         let recorder = controller.recorder
         return SettingsSection(title: "Diagnóstico") {
+            if controller.isTracking {
+                SettingsRow(title: "Qualidade do tracking",
+                            subtitle: controller.quality.pipelineText + "\n" + controller.quality.jitterText) {
+                    EmptyView()
+                }
+                RowDivider()
+            }
             SettingsRow(title: "Gravar gestos", subtitle: recordingHint(recorder, controller)) {
                 Button(recorder.isRecording ? "A gravar… \(recorder.secondsLeft)s" : "Gravar 30 s de gestos") {
                     recorder.isRecording ? _ = recorder.stop() : recorder.start()

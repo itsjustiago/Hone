@@ -14,7 +14,9 @@ enum Tuning {
     static let minJointConfidence = 0.3  // a joint below this keeps its last spot on the hand instead of updating
     static let minHandConfidence = 0.35  // mean joint confidence below this = no hand at all
     static let sizeFrames = 5            // hand size (wrist to middle knuckle) = mean over this many frames
-    static let aspect = 4.0 / 3.0        // camera width / height (VGA): speeds and thresholds are in frame heights
+    /// Camera width / height: speeds and thresholds are in frame heights. 4:3 (VGA)
+    /// until the host reports the real frame through `HandMouseEngine.cameraAspect`.
+    nonisolated(unsafe) static var aspect = 4.0 / 3.0
     static let lossGrace = 0.3           // s without a hand before anything is released (Vision drops 1–3 frames often)
 
     // cursor
