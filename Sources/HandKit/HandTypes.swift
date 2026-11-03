@@ -8,7 +8,7 @@ import Foundation
 /// One normalized 2D point. x grows right, y grows DOWN (top-left origin), both 0…1
 /// across the camera frame. The frame is already mirrored, so moving the hand to
 /// your right moves x up.
-public struct HandPoint: Equatable, Sendable {
+public struct HandPoint: Codable, Equatable, Sendable {
     public var x: Double
     public var y: Double
     public init(x: Double, y: Double) { self.x = x; self.y = y }
@@ -17,15 +17,38 @@ public struct HandPoint: Equatable, Sendable {
 /// 21 hand joints in MediaPipe order (Vision maps 1:1):
 /// 0 wrist · 1–4 thumb CMC, MCP, IP, tip · 5–8 index MCP, PIP, DIP, tip ·
 /// 9–12 middle · 13–16 ring · 17–20 pinky.
-public struct HandLandmarks: Equatable, Sendable {
+public struct HandLandmarks: Codable, Equatable, Sendable {
     public static let count = 21
     public var points: [HandPoint]
-    /// `points.count` must be 21; returns nil otherwise.
-    public init?(points: [HandPoint]) {
-        guard points.count == Self.count else { return nil }
+    /// Per-joint confidence 0…1 from the detector, same order as `points`; nil when unknown.
+    public var confidence: [Double]?
+    /// `points.count` must be 21 (and `confidence`, when given); returns nil otherwise.
+    public init?(points: [HandPoint], confidence: [Double]? = nil) {
+        guard points.count == Self.count, confidence == nil || confidence?.count == Self.count else { return nil }
         self.points = points
+        self.confidence = confidence
     }
     public subscript(i: Int) -> HandPoint { points[i] }
+}
+
+/// Bones of the hand (pairs of joint ids), for drawing a skeleton.
+public enum HandSkeleton {
+    public static let bones: [(Int, Int)] = [
+        (0, 1), (1, 2), (2, 3), (3, 4),
+        (0, 5), (5, 6), (6, 7), (7, 8),
+        (5, 9), (9, 10), (10, 11), (11, 12),
+        (9, 13), (13, 14), (14, 15), (15, 16),
+        (13, 17), (17, 18), (18, 19), (19, 20), (0, 17),
+    ]
+}
+
+/// One recorded camera frame: for diagnostics recordings that tests replay.
+public struct HandFrame: Codable, Equatable, Sendable {
+    /// Seconds since the recording started.
+    public var t: Double
+    /// nil = no hand in that frame.
+    public var hand: HandLandmarks?
+    public init(t: Double, hand: HandLandmarks?) { self.t = t; self.hand = hand }
 }
 
 /// Where a window action aims.
@@ -94,6 +117,10 @@ public struct HandStatus: Equatable, Sendable {
     public var mode: HandMode = .noHand
     /// Human label of the last action (PT-PT), e.g. "Clique", "Copiar".
     public var lastAction: String?
+    /// How closed the click pinch is, 0 (open) … 1 (pinched). Feedback before the click fires.
+    public var pinch: Double = 0
+    /// Where the cursor is on the screen (u, v, 0…1), for drawing the hand around it; nil = not known.
+    public var cursor: (u: Double, v: Double)?
     /// 0…1 while a hold is in progress (drag, close, switcher, lock), else nil.
     public var holdProgress: Double?
     /// The index tip left the active area on that side (top, bottom, left, right).
@@ -102,7 +129,7 @@ public struct HandStatus: Equatable, Sendable {
 
     public static func == (a: HandStatus, b: HandStatus) -> Bool {
         a.mode == b.mode && a.lastAction == b.lastAction && a.holdProgress == b.holdProgress
-            && a.edges == b.edges
+            && a.edges == b.edges && a.pinch == b.pinch && a.cursor?.u == b.cursor?.u && a.cursor?.v == b.cursor?.v
     }
 }
 
@@ -136,14 +163,15 @@ public struct HandConfig: Codable, Equatable, Sendable {
     public var smoothing: Double = 0.8
     /// One-Euro beta. Higher = less lag on fast moves.
     public var responsiveness: Double = 6.0
-    /// Pinch on/off thresholds (fingertip gap / hand size).
+    /// Pinch on/off thresholds (thumb tip to fingertip gap / hand size), with hysteresis.
     public var pinchOn: Double = 0.30
     public var pinchOff: Double = 0.40
     /// Scroll speed in the original's unit: Windows wheel units per full frame height
     /// of hand movement (120 units = one notch ≈ 40 pt), so 3000 ≈ 1000 pt per frame height.
     public var scrollGain: Double = 3000
-    /// Slow mode cursor speed fraction.
-    public var fineSpeed: Double = 0.3
+    /// Cursor speed fraction while the hand moves slowly (precision near a target);
+    /// fast moves use the full box mapping and the offset catches up.
+    public var fineSpeed: Double = 0.4
     /// Window gestures (fist = minimize, flat + curl = close, rock = switcher).
     public var windowGestures: Bool = true
     /// Shortcut mode (⌘C/⌘V/⌘Z/⌘D/Return) and Ctrl lock.
