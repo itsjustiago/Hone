@@ -65,6 +65,15 @@ final class HandMouseSettings {
         didSet { d.set(showHandOverlay, forKey: "handMouse.showHandOverlay"); onChange?() }
     }
 
+    /// How the hand on screen looks: a white cartoon glove or the bare skeleton.
+    var handStyle: HandStyle {
+        didSet {
+            guard oldValue != handStyle else { return }
+            d.set(handStyle.rawValue, forKey: "handMouse.handStyle")
+            onChange?()
+        }
+    }
+
     /// The cursor eases toward the hand's position instead of jumping to it.
     var glide: Bool {
         didSet { d.set(glide, forKey: "handMouse.glide"); onChange?() }
@@ -95,6 +104,7 @@ final class HandMouseSettings {
         showHUD = d.object(forKey: "handMouse.showHUD") as? Bool ?? true
         showCameraPreview = d.object(forKey: "handMouse.showCameraPreview") as? Bool ?? false
         showHandOverlay = d.object(forKey: "handMouse.showHandOverlay") as? Bool ?? true
+        handStyle = d.string(forKey: "handMouse.handStyle").flatMap(HandStyle.init(rawValue:)) ?? .glove
         glide = d.object(forKey: "handMouse.glide") as? Bool ?? true
         autoOffMinutes = d.object(forKey: "handMouse.autoOffMinutes") as? Int ?? 2
         watchOnly = d.object(forKey: "handMouse.watchOnly") as? Bool ?? false
@@ -115,4 +125,12 @@ final class HandMouseSettings {
     private func save<T: Encodable>(_ value: T, _ key: String) {
         if let data = try? JSONEncoder().encode(value) { d.set(data, forKey: key) }
     }
+}
+
+/// How the hand is drawn on screen. Persisted by raw value.
+enum HandStyle: String, Codable, CaseIterable {
+    /// A white cartoon glove with volume.
+    case glove
+    /// Just the joints and the bones.
+    case skeleton
 }

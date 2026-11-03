@@ -408,6 +408,7 @@ final class HandMouseController {
         performer.glide = settings.glide
         hud.model.watchOnly = settings.watchOnly
         hud.model.box = settings.config.box
+        overlay.style = settings.handStyle
         tracker.wantsPreview = previewWanted
         if isTracking, settings.cameraID != appliedCameraID || settings.engine != appliedEngine {
             // A different camera or engine: restart the capture, keep the session.

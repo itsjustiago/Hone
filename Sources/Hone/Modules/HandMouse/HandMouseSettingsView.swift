@@ -57,6 +57,12 @@ struct HandMouseSettingsView: View {
                           subtitle: "A mão inteira desenhada à volta do cursor. Os cliques passam por ela.",
                           tint: tint, isOn: $settings.showHandOverlay)
                 RowDivider()
+                SettingsRow(title: "Estilo da mão",
+                            subtitle: "Luva: uma mão branca com volume. Esqueleto: só os pontos e os ossos.") {
+                    VibeMenuPicker("Estilo da mão", selection: $settings.handStyle,
+                                   options: Self.handStyleOptions, offscreen: !scrolls)
+                }
+                RowDivider()
                 ToggleRow(title: "Mostrar o estado",
                           subtitle: "Uma etiqueta no fundo do ecrã com o modo e o último gesto.",
                           tint: tint, isOn: $settings.showHUD)
@@ -321,6 +327,11 @@ struct HandMouseSettingsView: View {
     private static let engineOptions: [VibeMenuPicker<HandTrackingEngine>.Option] = [
         .init(.vision, title: "Apple Vision", label: "Apple Vision"),
         .init(.mediapipe, title: "MediaPipe Hands (recomendado)", label: "MediaPipe"),
+    ]
+
+    private static let handStyleOptions: [VibeMenuPicker<HandStyle>.Option] = [
+        .init(.glove, title: "Luva", label: "Luva"),
+        .init(.skeleton, title: "Esqueleto", label: "Esqueleto"),
     ]
 
     private static let autoOffOptions: [VibeMenuPicker<Int>.Option] = [
