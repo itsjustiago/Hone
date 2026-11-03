@@ -146,7 +146,7 @@ struct HandMouseSettingsView: View {
                     RowDivider()
                     guide("Mão deitada", "Inclina a mão para a câmara e fecha os dedos meio segundo: fecha a janela.")
                     RowDivider()
-                    guide("Seletor de janelas", "Indicador e mindinho esticados durante 2 s; aponta e abre a mão para escolher.")
+                    guide("Seletor de janelas", "Sinal de rock (indicador, mindinho e polegar esticados) abre o Mission Control; aponta e abre a mão para escolher.")
                 }
                 if config.shortcutGestures {
                     RowDivider()
