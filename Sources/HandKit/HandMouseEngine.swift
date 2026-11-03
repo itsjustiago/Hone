@@ -10,7 +10,9 @@ import Foundation
 /// or hold = drag), thumb–middle = right button (tap = right click, pinch and
 /// move up/down = scroll); a closing pinch freezes the cursor where it was just
 /// before; pinches need two frames to flip; losing the hand for under
-/// `Tuning.lossGrace` changes nothing. Under Ctrl lock the engine doesn't know
+/// `Tuning.lossGrace` changes nothing; pose gestures (fist, rock, thumbs-up, flat
+/// close) only count with the hand still, near the active area, and a fist has to
+/// be tight. Under Ctrl lock the engine doesn't know
 /// where the real mouse is, so window actions aim at `.realCursor` and no move
 /// is sent until the hand steers again.
 public final class HandMouseEngine {
@@ -79,6 +81,7 @@ public final class HandMouseEngine {
         if s.sizes.count > Tuning.sizeFrames { s.sizes.removeFirst(s.sizes.count - Tuning.sizeFrames) }
         let size = nonZero(s.sizes.reduce(0, +) / Double(s.sizes.count))
         let ctrl = controlPoint(p)
+        let near = nearBox(ctrl, box: config.box)  // pose gestures only count near the active area
 
         // hand speed (frame heights/s), smoothed: picks the precision gain
         if let prev = s.prevCtrl {
@@ -102,10 +105,11 @@ public final class HandMouseEngine {
         // a pinch owns its finger: bent to meet the thumb, it doesn't make the hand a fist
         var held = ext
         if let b = s.button { held[b.side == .left ? 0 : 1] = true }
-        let pose = poseOf(extended: held, thumbOut: s.thumbOut)
+        let pose = gesturePose(extended: held, thumbOut: s.thumbOut, thumbUp: thumbUp(p), tight: fistTight(p))
         if pose != s.poseRaw {
             s.poseRaw = pose
             s.poseT = now
+            s.poseAnchor = ctrl
             if pose == .thumb && s.cur != nil {  // undo the nudge from closing the hand
                 s.cur = cursorAt(now - Tuning.freezeLookback)
             }
@@ -113,10 +117,17 @@ public final class HandMouseEngine {
                 s.cur = cursorAt(now - Tuning.switchLookback)
             }
         }
+        // a hand that slides during the hold isn't giving a command: the hold starts over
+        if s.poseRaw != .point, let a = s.poseAnchor, ctrl.heightDistance(to: a) > Tuning.poseDrift {
+            s.poseT = now
+            s.poseAnchor = ctrl
+        }
         let stable: HandPose? = now - s.poseT > Tuning.poseHold ? s.poseRaw : nil
+        let quick: HandPose? = now - s.poseT > Tuning.pickHold ? s.poseRaw : nil
+        s.near = near
 
         // thumbs-up held lockHold s: Ctrl lock on / off (once per hold)
-        if config.shortcutGestures && s.poseRaw == .thumb && now - s.poseT >= Tuning.lockHold && !s.lockDone {
+        if config.shortcutGestures && s.poseRaw == .thumb && near && now - s.poseT >= Tuning.lockHold && !s.lockDone {
             s.lockDone = true
             s.ctrlLock.toggle()
             s.moveDone = true
@@ -124,7 +135,7 @@ public final class HandMouseEngine {
         }
         if s.poseRaw != .thumb {
             s.lockDone = false
-        } else if !s.lockDone && config.shortcutGestures {
+        } else if !s.lockDone && config.shortcutGestures && near {
             tint = (now - s.poseT) / Tuning.lockHold
         }
 
@@ -147,11 +158,13 @@ public final class HandMouseEngine {
         }
         let free = s.ctrlLock && !s.switcher  // Ctrl lock: hands off the cursor, the real mouse drives it
 
-        // close: hand tipped flat (flatFrames in a row) freezes the cursor; flat + fingertips
-        // curled closeHold s → close window. Without window gestures there is nothing to close.
+        // close: hand tipped flat (flatFrames in a row, near the box) freezes the cursor; then
+        // fingertips curled closeHold s, hand still → close window. The hand must have been flat
+        // AND open first: one that arrives already curled never closes. Without window gestures
+        // there is nothing to close.
         let wasFlat = s.flat
         var curled = false
-        if config.windowGestures && !((s.ctrlMode && !s.ctrlLock) || s.switcher) && s.button == nil {
+        if config.windowGestures && !((s.ctrlMode && !s.ctrlLock) || s.switcher) && s.button == nil && near {
             let fc = flatCurl(p)
             s.flat = s.flatGate.update(fc.flat, frames: Tuning.flatFrames)
             curled = fc.curled
@@ -160,8 +173,13 @@ public final class HandMouseEngine {
             s.flat = false
         }
         if s.flat && !wasFlat && s.cur != nil { s.cur = cursorAt(now - Tuning.ctrlLookback) }  // undo the drift from tipping
-        if s.flat && curled {
-            let t0 = s.shutT0 ?? now
+        if s.flat && !curled { s.flatOpenSeen = true }
+        if !s.flat { s.flatOpenSeen = false }
+        if s.flat && curled && s.flatOpenSeen {
+            let anchor = s.shutAnchor ?? ctrl
+            var t0 = s.shutT0 ?? now
+            if ctrl.heightDistance(to: anchor) > Tuning.poseDrift { t0 = now; s.shutAnchor = ctrl }  // sliding: start over
+            else { s.shutAnchor = anchor }
             s.shutT0 = t0
             if !s.shutDone { tint = (now - t0) / Tuning.closeHold }
             if now - t0 > Tuning.closeHold && !s.shutDone {
@@ -171,6 +189,7 @@ public final class HandMouseEngine {
             }
         } else {
             s.shutT0 = nil
+            s.shutAnchor = nil
             s.shutDone = false
         }
 
@@ -260,7 +279,7 @@ public final class HandMouseEngine {
         if pointing { status.edges = edgeSides(ctrl, box: box) }  // only warn while the hand steers the cursor
 
         // fist: minimize the window the cursor was on just before the curl dragged it away
-        let fistArmed = config.windowGestures && !s.fistDone && !s.switcher && (s.ctrlLock || !s.ctrlMode) && !s.flat
+        let fistArmed = config.windowGestures && !s.fistDone && !s.switcher && (s.ctrlLock || !s.ctrlMode) && !s.flat && near
         if s.poseRaw == .fist && fistArmed { tint = (now - s.poseT) / Tuning.poseHold }
         if stable == .fist && fistArmed {
             s.fistDone = true
@@ -272,23 +291,23 @@ public final class HandMouseEngine {
         // rock sign: open the switcher; point at a window, open the hand to pick it,
         // anything else cancels
         if s.switcher {
-            if stable == .point && !ext.contains(false) {
+            if quick == .point && !ext.contains(false) {
                 out.append(.pickInSwitcher)  // cursor already parked on the window
                 say("Escolher janela")
                 s.switcher = false
-            } else if let st = stable, st != .rock {
+            } else if let st = quick, st != .rock {
                 out.append(.cancelSwitcher)
                 say("Cancelar")
                 s.switcher = false
             }
-        } else if config.windowGestures && stable == .rock && !s.flat
+        } else if config.windowGestures && stable == .rock && !s.flat && near
                     && (!s.ctrlMode || now - s.poseT >= Tuning.switchHold) {
             s.switcher = true
             s.moveDone = true  // shortcut mode: back to neutral before the next move
             out.append(.openSwitcher)
             say("Seletor de janelas")
         }
-        if config.windowGestures && !s.switcher && s.poseRaw == .rock && !s.flat {  // rock held: switcher getting close
+        if config.windowGestures && !s.switcher && s.poseRaw == .rock && !s.flat && near {  // rock held: switcher getting close
             tint = (now - s.poseT) / (s.ctrlMode ? Tuning.switchHold : Tuning.poseHold)
         }
 
@@ -410,8 +429,9 @@ public final class HandMouseEngine {
             s.speed = 0
             s.prevUV = nil
             s.ext = nil
-            s.flat = false; s.flatGate = Debounce(); s.shutT0 = nil; s.shutDone = false
-            s.poseRaw = .point; s.poseT = now  // a returning pose must hold again
+            s.flat = false; s.flatGate = Debounce(); s.flatOpenSeen = false
+            s.shutT0 = nil; s.shutAnchor = nil; s.shutDone = false
+            s.poseRaw = .point; s.poseT = now; s.poseAnchor = nil  // a returning pose must hold again
             s.slow = false
             status.pinch = 0
         }
@@ -428,11 +448,12 @@ public final class HandMouseEngine {
         guard present else { return .noHand }
         let thumbHeld = s.poseRaw == .thumb
         let lockIn = max(0, Tuning.lockHold - (now - s.poseT))
-        if s.ctrlLock { return .shortcutsLocked(unlockIn: thumbHeld && !s.lockDone ? lockIn : nil) }
+        // away from the active area a thumbs-up freezes but never locks: no countdown to show
+        if s.ctrlLock { return .shortcutsLocked(unlockIn: thumbHeld && !s.lockDone && s.near ? lockIn : nil) }
         if s.ctrlMode { return .shortcuts }
         if s.switcher { return .switcher }
         if s.flat { return .flat }
-        if thumbHeld { return .frozen(lockIn: config.shortcutGestures ? lockIn : .infinity) }
+        if thumbHeld { return .frozen(lockIn: config.shortcutGestures && s.near ? lockIn : .infinity) }
         if let b = s.button {
             switch b.phase {
             case .drag: return .dragging
@@ -520,12 +541,16 @@ private struct EngineState {
     var cursorUnknown = false     // Ctrl lock left the cursor wherever the real mouse put it
     var scrollY = 0.0
     var poseRaw = HandPose.point, poseT = 0.0, fistDone = false
+    var poseAnchor: HandPoint?    // control point when the pose began (or its hold last restarted): drift is measured from here
+    var near = false              // last frame's hand was near the active area (pose gestures armed)
     var switcher = false
     var hist: [(t: Double, uv: UV)] = []  // recent cursor positions, for the lookbacks
     var fx = OneEuro(), fy = OneEuro()
     var prevUV: UV?, off = UV(u: 0, v: 0)
     var filterBox: HandBox?
     var flat = false, flatGate = Debounce(), shutT0: Double?, shutDone = false
+    var flatOpenSeen = false      // flat with the fingers open first: only then may curling them close the window
+    var shutAnchor: HandPoint?    // control point when the close hold (re)started
     var ctrlMode = false, ctrlSeen = -99.0
     var moveRaw: CtrlMove?, moveT = 0.0, moveDone = true
     var ctrlLock = false, lockDone = false  // Ctrl lock: shortcut mode at any hand angle, toggled by a long thumbs-up

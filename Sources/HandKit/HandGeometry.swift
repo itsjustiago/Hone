@@ -36,7 +36,8 @@ enum Tuning {
     static let curlAngle = 55.0          // degrees of bend at a finger's middle joint above which it's curled
     static let curlHysteresis = 10.0     // degrees: an extended finger stays so up to curlAngle + this, a curled one needs curlAngle - this
     static let minBone = 0.08            // finger bone / hand size below this = finger aimed at the camera: keep its last state
-    static let poseHold = 0.5            // s a fist / rock pose must hold before it fires
+    static let poseHold = 0.8            // s a fist / rock pose must hold (still, near the box) before it fires
+    static let pickHold = 0.5            // s a pose must hold inside the switcher to pick / cancel (nothing to undo there)
     static let fistLookback = 0.30       // s: minimize the window the cursor was on before the hand began curling
     static let thumbOut = 0.60           // thumb tip to ring knuckle / hand size; above = thumb out
     static let thumbOutHysteresis = 0.05 // ± around thumbOut so a thumb near the line doesn't flicker
@@ -47,10 +48,16 @@ enum Tuning {
     static let thumbStraight = 0.92      // ⌘D: thumb base-to-tip / joint path; 1 = dead straight, bent < this
     static let thumbHold = 0.25          // s a shortcut pose must hold before it fires (skips poses passed through)
     static let lockHold = 2.0            // s of thumbs-up that toggles Ctrl lock
-    static let closeHold = 0.6           // s flat + curled must hold before the window closes (it can't be undone)
-    static let flatRatio = 1.25          // palm width / palm length above this = hand tipped flat (~1.3-1.6 flat, <0.75 upright)
-    static let flatFrames = 3            // frames in a row the hand must read flat (a tilt passing through doesn't freeze)
+    static let closeHold = 1.0           // s flat + curled must hold before the window closes (it can't be undone)
+    static let flatRatio = 1.35          // palm width / palm length above this = hand tipped flat (~1.3-1.6 flat, <0.75 upright)
+    static let flatFrames = 6            // frames in a row the hand must read flat (a tilt passing through doesn't freeze)
     static let curlReach = 1.05          // fingertip-to-wrist / palm width below this = curled (~0.85 curled, ~1.3 flat-open)
+    static let fistReach = 0.85          // mean fingertip-to-wrist / hand size (wrist to middle knuckle) below this = a tight fist
+                                         // (a relaxed hand sits ~1.0-1.2, an open one ~1.8)
+    static let poseDrift = 0.05          // frame heights the control point may slide during a pose hold; more restarts it
+                                         // (a moving hand isn't giving a command)
+    static let boxMargin = 0.10          // frame fraction around the active area where pose gestures still count;
+                                         // outside (hand lowering to the desk) nothing fires
     static let ctrlMinMatch = 0.30       // floor for the captured threshold: thumb moves and fists shift the knuckles to ~0.22
     static let ctrlLoosen = 1.0          // multiply the captured threshold: >1 = shortcut mode easier to enter, <1 = stricter
     static let ctrlExit = 0.15           // s off the Ctrl pose before shortcut mode ends (one bad frame doesn't drop it)
@@ -136,6 +143,33 @@ func poseOf(extended: [Bool], thumbOut: Bool) -> HandPose {
     if !extended.contains(true) { return thumbOut ? .thumb : .fist }  // thumbs-up = freeze
     if extended == [true, false, false, true] && thumbOut { return .rock }  // thumb out keeps pinches from matching
     return .point
+}
+
+/// The gesture a hand is making (what fires commands): like `poseOf`, but a fist
+/// must be tight and a thumbs-up must point up. A relaxed, half-curled hand is
+/// `.point`: it keeps steering the cursor and fires nothing.
+func gesturePose(extended: [Bool], thumbOut: Bool, thumbUp: Bool, tight: Bool) -> HandPose {
+    if !extended.contains(true) {
+        if thumbOut && thumbUp { return .thumb }
+        return tight ? .fist : .point
+    }
+    if extended == [true, false, false, true] && thumbOut { return .rock }
+    return .point
+}
+
+/// Fingertips pulled in close to the wrist: mean tip-to-wrist distance / hand size
+/// below `Tuning.fistReach`.
+func fistTight(_ p: [HandPoint]) -> Bool {
+    let wrist = p[Joint.wrist]
+    let size = nonZero(wrist.heightDistance(to: p[Joint.midMCP]))
+    let reach = [8, 12, 16, 20].reduce(0.0) { $0 + p[$1].heightDistance(to: wrist) } / 4 / size
+    return reach < Tuning.fistReach
+}
+
+/// The control point is inside the box grown by `Tuning.boxMargin` on every side.
+func nearBox(_ c: HandPoint, box: HandBox) -> Bool {
+    let m = Tuning.boxMargin
+    return box.left - m <= c.x && c.x <= box.right + m && box.top - m <= c.y && c.y <= box.bottom + m
 }
 
 /// Per finger (index..pinky): straight at the middle joint (bend < `curlAngle`) and
