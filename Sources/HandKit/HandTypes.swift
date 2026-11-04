@@ -51,10 +51,33 @@ public struct HandFrame: Codable, Equatable, Sendable {
     public init(t: Double, hand: HandLandmarks?) { self.t = t; self.hand = hand }
 }
 
+/// A screen in points, global coordinates with the origin at the primary display's
+/// top-left, y down (CG space).
+public struct HandRect: Equatable, Sendable {
+    public var x, y, width, height: Double
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x; self.y = y; self.width = width; self.height = height
+    }
+}
+
+/// The screens the cursor may be on and which one the active area maps to.
+public struct HandDesktop: Equatable, Sendable {
+    public var screens: [HandRect]
+    /// Index into `screens` of the one the box maps to: the built-in display (the
+    /// camera's), else the primary.
+    public var home: Int
+    public init(screens: [HandRect], home: Int) {
+        self.screens = screens; self.home = home
+    }
+    /// One unit screen (0, 0, 1, 1): what the engine uses until the host says
+    /// otherwise; u, v and points coincide.
+    public static let single = HandDesktop(screens: [HandRect(x: 0, y: 0, width: 1, height: 1)], home: 0)
+}
+
 /// Where a window action aims.
 public enum CursorTarget: Equatable, Sendable {
-    /// u, v in 0…1 across the current screen (top-left origin).
-    case point(u: Double, v: Double)
+    /// x, y in global points (CG space: origin at the primary display's top-left, y down).
+    case point(x: Double, y: Double)
     /// Ctrl lock leaves the cursor to the real mouse: aim wherever it is now.
     case realCursor
 }
@@ -70,11 +93,10 @@ public enum HandShortcut: String, Equatable, Sendable {
 
 /// What the engine asks the host to do, in order, for one frame.
 public enum HandAction: Equatable, Sendable {
-    /// Put the cursor at u, v (0…1 across the current screen, top-left origin).
+    /// Put the cursor at x, y: global points in CG space (origin at the primary
+    /// display's top-left, y down), always on one of `HandDesktop.screens`.
     /// `dragging` = the left button is held (post a drag, not a move).
-    case moveCursor(u: Double, v: Double, dragging: Bool)
-    /// Move to the next screen; the cursor re-centres on the hand there.
-    case nextScreen
+    case moveCursor(x: Double, y: Double, dragging: Bool)
     case leftClick
     case rightClick
     case leftDown
@@ -119,17 +141,19 @@ public struct HandStatus: Equatable, Sendable {
     public var lastAction: String?
     /// How closed the click pinch is, 0 (open) … 1 (pinched). Feedback before the click fires.
     public var pinch: Double = 0
-    /// Where the cursor is on the screen (u, v, 0…1), for drawing the hand around it; nil = not known.
-    public var cursor: (u: Double, v: Double)?
+    /// Where the cursor is, in global points (CG space, like `moveCursor`), for drawing
+    /// the hand around it; nil = not known.
+    public var cursor: (x: Double, y: Double)?
     /// 0…1 while a hold is in progress (drag, close, switcher, lock), else nil.
     public var holdProgress: Double?
-    /// The index tip left the active area on that side (top, bottom, left, right).
+    /// The cursor is held at the edge of the screens on that side (top, bottom, left,
+    /// right): the hand goes on, the cursor doesn't. Only while pointing.
     public var edges: (top: Bool, bottom: Bool, left: Bool, right: Bool) = (false, false, false, false)
     public init() {}
 
     public static func == (a: HandStatus, b: HandStatus) -> Bool {
         a.mode == b.mode && a.lastAction == b.lastAction && a.holdProgress == b.holdProgress
-            && a.edges == b.edges && a.pinch == b.pinch && a.cursor?.u == b.cursor?.u && a.cursor?.v == b.cursor?.v
+            && a.edges == b.edges && a.pinch == b.pinch && a.cursor?.x == b.cursor?.x && a.cursor?.y == b.cursor?.y
     }
 }
 

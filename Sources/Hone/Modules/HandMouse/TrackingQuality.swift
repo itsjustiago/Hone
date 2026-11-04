@@ -24,11 +24,10 @@ final class TrackingQuality {
     private(set) var cursorJitter: Double?
 
     @ObservationIgnored private var handMeter = HandJitterMeter()
-    /// The cursor's extent is in screen heights; 0.01 = about 10 pt.
-    @ObservationIgnored private var cursorMeter = HandJitterMeter(restSpan: 0.01)
+    /// The cursor's extent is in screen points.
+    @ObservationIgnored private var cursorMeter = HandJitterMeter(restSpan: 10)
     @ObservationIgnored private var lastHandTime: TimeInterval?
     @ObservationIgnored private var lastPublish: TimeInterval = 0
-    @ObservationIgnored private var screenHeight = 0.0
 
     private static let publishInterval: TimeInterval = 0.25
     /// Vision drops a frame now and then; a hand missing shorter than this keeps the window.
@@ -38,10 +37,10 @@ final class TrackingQuality {
     /// Aspect to use before the first frame says what the camera really gives.
     private static let defaultAspect = 4.0 / 3.0
 
-    /// One frame. `cursor` = where the cursor is (u, v, 0…1 across `screen`) while it
-    /// follows the hand; nil whenever it isn't steering (click, freeze, calibration…).
-    func update(t: TimeInterval, hand: HandLandmarks?, cursor: (u: Double, v: Double)?,
-                screen: CGSize, tracker: HandTracker) {
+    /// One frame. `cursor` = where the cursor is (global points) while it follows the
+    /// hand; nil whenever it isn't steering (click, freeze, calibration…).
+    func update(t: TimeInterval, hand: HandLandmarks?, cursor: (x: Double, y: Double)?,
+                tracker: HandTracker) {
         let size = tracker.frameSize
         let aspect = size.height > 0 ? Double(size.width) / Double(size.height) : Self.defaultAspect
 
@@ -50,9 +49,8 @@ final class TrackingQuality {
             // x scaled by the aspect: both axes in frame heights.
             let knuckle = hand[Self.middleKnuckle]
             handMeter.add(t: t, point: HandPoint(x: knuckle.x * aspect, y: knuckle.y))
-            if let cursor, screen.width > 0, screen.height > 0 {
-                screenHeight = screen.height
-                cursorMeter.add(t: t, point: HandPoint(x: cursor.u * screen.width / screen.height, y: cursor.v))
+            if let cursor {
+                cursorMeter.add(t: t, point: HandPoint(x: cursor.x, y: cursor.y))
             } else {
                 cursorMeter.reset()
             }
@@ -69,7 +67,7 @@ final class TrackingQuality {
         resolution = size.height > 0 ? "\(size.width)×\(size.height)" : ""
         roiActive = tracker.roiActive
         handJitter = handMeter.jitter.map { $0 * 1000 }
-        cursorJitter = cursorMeter.jitter.map { $0 * screenHeight }
+        cursorJitter = cursorMeter.jitter
     }
 
     /// Back to nothing: the camera stopped or restarted.

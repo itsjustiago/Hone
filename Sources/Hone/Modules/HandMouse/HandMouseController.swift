@@ -157,8 +157,15 @@ final class HandMouseController {
         refreshHUD()
     }
 
+    /// The screens as macOS arranges them (full frames, global CG points); the box maps
+    /// the built-in display, where the camera is, else the primary.
     private func screensChanged() {
-        engine.screenCount = performer.screenCount
+        let screens = NSScreen.screens
+        let frames = HandActionPerformer.screenFrames(screens)
+        let home = screens.firstIndex { $0.displayID.map { CGDisplayIsBuiltin($0) != 0 } ?? false } ?? 0
+        engine.desktop = HandDesktop(
+            screens: frames.map { HandRect(x: $0.minX, y: $0.minY, width: $0.width, height: $0.height) },
+            home: home)
     }
 
     private func cameraDenied() {
@@ -349,21 +356,14 @@ final class HandMouseController {
 
     /// Feeds the diagnostics: the raw hand, and the cursor only while it follows the hand.
     private func updateQuality(_ t: TimeInterval, _ hand: HandLandmarks?) {
-        var cursor: (u: Double, v: Double)?
+        var cursor: (x: Double, y: Double)?
         if calibration == nil {
             switch engine.status.mode {
             case .pointing, .slow: cursor = engine.status.cursor
             default: break
             }
         }
-        quality.update(t: t, hand: hand, cursor: cursor, screen: currentScreenSize, tracker: tracker)
-    }
-
-    /// The screen the cursor is on (the performer's current one).
-    private var currentScreenSize: CGSize {
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return .zero }
-        return screens[min(performer.screenIndex, screens.count - 1)].frame.size
+        quality.update(t: t, hand: hand, cursor: cursor, tracker: tracker)
     }
 
     /// The engine never clears its last action label, so the HUD gives it a short life.
@@ -462,7 +462,7 @@ final class HandMouseController {
     // MARK: System events
 
     /// The camera must not outlive the screen it was meant for; screen changes keep the
-    /// engine's screen count right.
+    /// engine's screens right.
     private func observeSystem() {
         guard observers.isEmpty else { return }
         let workspace = NSWorkspace.shared.notificationCenter
@@ -479,7 +479,7 @@ final class HandMouseController {
             }
             observers.append((center, token))
         }
-        // Screens plugged in or out while running (the performer clamps its own index).
+        // Screens plugged in, out or rearranged while running.
         let screens = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
