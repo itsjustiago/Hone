@@ -30,7 +30,7 @@ struct FakeHand {
     var loose = false
     /// Where the control point (mean of the index and middle knuckles) lands. Default:
     /// centre of the default box.
-    var control = HandPoint(x: 0.725, y: 0.625)
+    var control = HandPoint(x: 0.725, y: 0.75)
 
     static let open = FakeHand()
     static let fist = FakeHand(fingers: [false, false, false, false], thumb: .tucked)

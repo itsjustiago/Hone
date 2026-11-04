@@ -69,7 +69,7 @@ final class HandMouseEngineCursorTests: XCTestCase {
 
     func testEdgesWarnWhenTheHandLeavesTheBox() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.98, 0.55), for: 0.2)  // right of the box
+        d.hold(FakeHand.open.at(0.98, 0.70), for: 0.2)  // right of the box
         XCTAssertTrue(d.engine.status.edges == (false, false, false, true))
         XCTAssertEqual(d.moves.last!.u, 1)  // clamped
     }
@@ -362,8 +362,8 @@ final class HandMouseEngineWindowTests: XCTestCase {
 
     func testFlatOutsideTheBoxDoesNotFreeze() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.99), for: 0.5)
-        d.hold(FakeHand.open.with { $0.flat = true }.at(0.725, 0.99), for: 1.0)
+        d.hold(FakeHand.open.at(0.725, 0.40), for: 0.5)
+        d.hold(FakeHand.open.with { $0.flat = true }.at(0.725, 0.40), for: 1.0)
         XCTAssertNotEqual(d.engine.status.mode, .flat)
     }
 
@@ -417,25 +417,25 @@ final class HandMouseEngineWindowTests: XCTestCase {
 
     func testFistOutsideTheBoxDoesNothing() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.99), for: 0.5)  // below the box (bottom 0.85 + margin 0.10)
+        d.hold(FakeHand.open.at(0.725, 0.40), for: 0.5)  // above the box (top 0.55 − margin 0.10)
         d.clear()
-        d.hold(FakeHand.fist.at(0.725, 0.99), for: 2.0)
+        d.hold(FakeHand.fist.at(0.725, 0.40), for: 2.0)
         XCTAssertEqual(d.events, [])
     }
 
     func testRockOutsideTheBoxDoesNothing() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.99), for: 0.5)
+        d.hold(FakeHand.open.at(0.725, 0.40), for: 0.5)
         d.clear()
-        d.hold(FakeHand.rock.at(0.725, 0.99), for: 2.0)
+        d.hold(FakeHand.rock.at(0.725, 0.40), for: 2.0)
         XCTAssertEqual(d.events, [])
     }
 
     func testFistInTheMarginStillMinimizes() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.90), for: 0.5)  // 0.05 below the box: inside the margin
+        d.hold(FakeHand.open.at(0.725, 0.50), for: 0.5)  // 0.05 above the box: inside the margin
         d.clear()
-        d.hold(FakeHand.fist.at(0.725, 0.90), for: 1.0)
+        d.hold(FakeHand.fist.at(0.725, 0.50), for: 1.0)
         XCTAssertEqual(minimizes(d.events), 1)
     }
 
@@ -494,10 +494,10 @@ final class HandMouseEngineShortcutTests: XCTestCase {
 
     func testThumbsUpOutsideTheBoxDoesNotLock() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.99), for: 0.5)
+        d.hold(FakeHand.open.at(0.725, 0.40), for: 0.5)
         var modes: [HandMode] = []
         for _ in 0..<90 {  // 3 s
-            d.step(FakeHand.thumbsUp.at(0.725, 0.99))
+            d.step(FakeHand.thumbsUp.at(0.725, 0.40))
             modes.append(d.engine.status.mode)
         }
         XCTAssertFalse(modes.contains { if case .shortcutsLocked = $0 { return true } else { return false } })

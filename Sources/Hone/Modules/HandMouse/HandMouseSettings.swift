@@ -93,10 +93,10 @@ final class HandMouseSettings {
         let d = UserDefaults.standard
         shortcut = Self.load(HandShortcutKey.self, "handMouse.shortcut", d) ?? .default
         var stored = Self.load(HandConfig.self, "handMouse.config", d) ?? HandConfig()
-        // v3 sits lower: the hand at screen level, not up at the camera (v2 moved to the knuckles).
-        if d.integer(forKey: "handMouse.boxVersion") < 3 {
+        // v4 sits in the lower half: the hand at screen level, not up at the camera (v3 was still too high).
+        if d.integer(forKey: "handMouse.boxVersion") < 4 {
             stored.box = .default
-            d.set(3, forKey: "handMouse.boxVersion")
+            d.set(4, forKey: "handMouse.boxVersion")
         }
         config = stored
         cameraID = d.string(forKey: "handMouse.cameraID")
