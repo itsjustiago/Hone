@@ -140,14 +140,18 @@ final class HandOverlay {
             }
         }
 
-        // Cursor in the canvas (flipped: origin top-left, same as the camera and u, v).
+        // Cursor in the canvas (flipped: origin top-left, same as the camera).
         // Shortcut lock leaves the cursor to the real mouse, so the hand follows that instead.
         let realCursor = CGPoint(x: mouse.x - frame.minX, y: frame.maxY - mouse.y)
         var anchor = realCursor
         if let cursor = status.cursor {
             if case .shortcutsLocked = status.mode {} else {
-                anchor = CGPoint(x: min(max(cursor.u, 0), 1) * frame.width,
-                                 y: min(max(cursor.v, 0), 1) * frame.height)
+                // The engine's cursor is in CG points (y down from the primary's top): to
+                // Cocoa first, then into the canvas like the real mouse.
+                let primaryHeight = NSScreen.screens.first?.frame.height ?? frame.maxY
+                let cocoaY = primaryHeight - CGFloat(cursor.y)
+                anchor = CGPoint(x: min(max(CGFloat(cursor.x) - frame.minX, 0), frame.width),
+                                 y: min(max(frame.maxY - cocoaY, 0), frame.height))
             }
         }
 

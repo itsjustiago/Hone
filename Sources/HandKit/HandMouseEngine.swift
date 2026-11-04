@@ -18,8 +18,19 @@ import Foundation
 public final class HandMouseEngine {
     public var config: HandConfig
     public private(set) var status = HandStatus()
-    /// How many screens the host has (for `nextScreen` wrap-around bookkeeping).
-    public var screenCount: Int = 1
+    /// The screens (global points, CG space) and the one the active area maps to. Past
+    /// the box the cursor carries on to the screens around home, as the macOS
+    /// arrangement places them, and is held at the edge where there is none. A change
+    /// drops the cursor: the next frame puts it back under the hand.
+    public var desktop: HandDesktop = .single {
+        didSet {
+            guard desktop != oldValue else { return }
+            s.cur = nil
+            s.hist.removeAll()  // spots on the old layout
+            s.lastMove = nil
+            s.homeShift %= max(desktop.screens.count, 1)
+        }
+    }
     /// Camera width / height of the frames fed in (4:3 by default). Distances, speeds
     /// and finger angles are measured in frame heights, so a 16:9 camera must say so.
     public var cameraAspect: Double {
@@ -55,7 +66,7 @@ public final class HandMouseEngine {
             say("Atalhos desligados")
         }
         status.mode = mode(t, present: present)
-        status.cursor = s.cur.map { (u: $0.u, v: $0.v) }
+        status.cursor = s.cur.map { (x: $0.x, y: $0.y) }
         status.holdProgress = tint.map { min(max($0, 0), 1) }
         return out
     }
@@ -210,16 +221,17 @@ public final class HandMouseEngine {
         let pinky = s.pinkyPinch.update(rPinky, on: config.pinchOn, off: config.pinchOff)
         status.pinch = 1 - min(max((rIndex - config.pinchOn) / nonZero(config.pinchOff - config.pinchOn + 0.15), 0), 1)
 
-        // next screen: thumb + pinky, only with the hand inside the box. The thumb crosses
-        // the middle fingertip on its way there: drop a click that started on the way.
-        if pinky && !wasPinky && pointing && inBox && screenCount > 1 && (s.button?.phase ?? .pressed) == .pressed {
+        // next screen: thumb + pinky, only with the hand inside the box. The box maps the
+        // next screen from now on; the cursor reappears there where the hand is. The thumb
+        // crosses the middle fingertip on its way there: drop a click that started on the way.
+        if pinky && !wasPinky && pointing && inBox && desktop.screens.count > 1 && (s.button?.phase ?? .pressed) == .pressed {
+            s.homeShift = (s.homeShift + 1) % desktop.screens.count
             s.button = nil
             s.pendingClick = nil
             s.cur = nil
             s.off = UV(u: 0, v: 0)
-            s.hist.removeAll()  // u, v of the old screen mean nothing on the new one
+            s.hist.removeAll()  // spots on the old screen
             s.lastMove = nil
-            out.append(.nextScreen)
             say("Ecrã seguinte")
         }
 
@@ -257,6 +269,7 @@ public final class HandMouseEngine {
             s.off.v *= k
         }
         s.prevUV = f
+        var raw: ScreenPoint?  // where the box mapping puts the cursor, before it is held on a screen
         if free {
             // the real mouse drives the cursor: nothing to send, nothing to look back at
             s.cur = nil
@@ -265,16 +278,17 @@ public final class HandMouseEngine {
         } else {
             if s.cur == nil && (live || !s.cursorUnknown) {
                 s.off = UV(u: 0, v: 0)
-                s.cur = clamped(f)
+                raw = onHome(f)
                 s.cursorUnknown = false
             } else if live {
-                s.cur = clamped(UV(u: f.u + s.off.u, v: f.v + s.off.v))
+                raw = onHome(UV(u: f.u + s.off.u, v: f.v + s.off.v))
             }
+            if let raw { s.cur = confined(raw) }
             if let c = s.cur {
-                if !live { s.off = UV(u: c.u - f.u, v: c.v - f.v) }
+                if !live { let b = boxUnits(c); s.off = UV(u: b.u - f.u, v: b.v - f.v) }
                 s.hist.append((now, c))
                 if s.hist.count > Tuning.historyLength { s.hist.removeFirst(s.hist.count - Tuning.historyLength) }
-                let move = HandAction.moveCursor(u: c.u, v: c.v, dragging: s.button?.phase == .drag)
+                let move = HandAction.moveCursor(x: c.x, y: c.y, dragging: s.button?.phase == .drag)
                 if move != s.lastMove {
                     out.append(move)
                     s.lastMove = move
@@ -282,7 +296,8 @@ public final class HandMouseEngine {
             }
         }
         s.slow = live && fine < 1 && s.speed < Tuning.slowSpeed
-        if pointing { status.edges = edgeSides(ctrl, box: box) }  // only warn while the hand steers the cursor
+        // held at the edge of the screens: only warn while the hand steers the cursor
+        if pointing, let raw, let c = s.cur { status.edges = (raw.y < c.y, raw.y > c.y, raw.x < c.x, raw.x > c.x) }
 
         // fist: minimize the window the cursor was on just before the curl dragged it away
         let fistArmed = config.windowGestures && !s.fistDone && !s.switcher && (s.ctrlLock || !s.ctrlMode) && !s.flat && near
@@ -504,20 +519,73 @@ public final class HandMouseEngine {
     private func say(_ label: String) { status.lastAction = label }
 
     /// The cursor at or just after `then`, else where it is now.
-    private func cursorAt(_ then: Double) -> UV? {
-        s.hist.first { $0.t >= then }?.uv ?? s.cur
+    private func cursorAt(_ then: Double) -> ScreenPoint? {
+        s.hist.first { $0.t >= then }?.p ?? s.cur
     }
 
-    private func aim(_ c: UV?, free: Bool) -> CursorTarget {
+    private func aim(_ c: ScreenPoint?, free: Bool) -> CursorTarget {
         guard !free, let c = c else { return .realCursor }
-        return .point(u: c.u, v: c.v)
+        return .point(x: c.x, y: c.y)
     }
 
-    private func clamped(_ c: UV) -> UV { UV(u: min(max(c.u, 0), 1), v: min(max(c.v, 0), 1)) }
+    // MARK: - Screens
+
+    /// The desktop's screens; none given = the unit screen.
+    private var screens: [HandRect] { desktop.screens.isEmpty ? HandDesktop.single.screens : desktop.screens }
+
+    /// The screen the box maps to: the desktop's home, moved on by the next-screen gesture.
+    private var home: HandRect {
+        let screens = self.screens
+        return screens[(min(max(desktop.home, 0), screens.count - 1) + s.homeShift) % screens.count]
+    }
+
+    /// Box units (0…1 across the box, unbounded) → global points around the home screen.
+    private func onHome(_ b: UV) -> ScreenPoint {
+        let h = home
+        return ScreenPoint(x: h.x + b.u * h.width, y: h.y + b.v * h.height)
+    }
+
+    /// Global points → box units: the inverse of `onHome`.
+    private func boxUnits(_ p: ScreenPoint) -> UV {
+        let h = home
+        return UV(u: (p.x - h.x) / nonZero(h.width), v: (p.y - h.y) / nonZero(h.height))
+    }
+
+    /// `p` if a screen holds it (edges included), else the nearest point of the nearest
+    /// screen; a tie goes to home.
+    private func confined(_ p: ScreenPoint) -> ScreenPoint {
+        let screens = self.screens
+        if screens.contains(where: { $0.holds(p) }) { return p }
+        var best = home.nearest(to: p)
+        var bestDistance = best.distance(to: p)
+        for screen in screens {
+            let q = screen.nearest(to: p)
+            let d = q.distance(to: p)
+            if d < bestDistance { best = q; bestDistance = d }
+        }
+        return best
+    }
 }
 
+/// A spot in the active area's units: 0…1 across the box (unbounded).
 struct UV: Equatable {
     var u, v: Double
+}
+
+/// A spot in global points (CG space: origin at the primary display's top-left, y down).
+struct ScreenPoint: Equatable {
+    var x, y: Double
+    func distance(to o: ScreenPoint) -> Double { hypot(x - o.x, y - o.y) }
+}
+
+extension HandRect {
+    /// Edges included.
+    func holds(_ p: ScreenPoint) -> Bool { x <= p.x && p.x <= x + width && y <= p.y && p.y <= y + height }
+
+    /// The point of the rectangle (edges included) nearest to `p`.
+    func nearest(to p: ScreenPoint) -> ScreenPoint {
+        ScreenPoint(x: min(max(p.x, x), x + width), y: min(max(p.y, y), y + height))
+    }
 }
 
 private enum Side { case left, right }
@@ -543,14 +611,15 @@ private struct EngineState {
     var leftPinch = Pinch(), rightPinch = Pinch(), pinkyPinch = Pinch()
     var button: Button?
     var pendingClick: (side: Side, until: Double)?
-    var cur: UV?                  // smoothed cursor (u, v); nil = not known yet
+    var cur: ScreenPoint?         // smoothed cursor, global points, held on a screen; nil = not known yet
+    var homeShift = 0             // screens the next-screen gesture has moved the box on from the desktop's home
     var cursorUnknown = false     // Ctrl lock left the cursor wherever the real mouse put it
     var scrollY = 0.0
     var poseRaw = HandPose.point, poseT = 0.0, fistDone = false
     var poseAnchor: HandPoint?    // control point when the pose began (or its hold last restarted): drift is measured from here
     var near = false              // last frame's hand was near the active area (pose gestures armed)
     var switcher = false
-    var hist: [(t: Double, uv: UV)] = []  // recent cursor positions, for the lookbacks
+    var hist: [(t: Double, p: ScreenPoint)] = []  // recent cursor positions, for the lookbacks
     var fx = OneEuro(), fy = OneEuro()
     var prevUV: UV?, off = UV(u: 0, v: 0)
     var filterBox: HandBox?

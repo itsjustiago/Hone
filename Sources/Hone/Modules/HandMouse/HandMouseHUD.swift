@@ -275,7 +275,8 @@ private struct Indicator: View {
     }
 }
 
-/// A red mark on each side of the pill where the index tip has left the active area.
+/// A red mark on each side of the pill where the cursor is held at the edge of the
+/// screens (the hand goes on past the active area, the cursor can't).
 private struct EdgeMarks: View {
     let edges: (top: Bool, bottom: Bool, left: Bool, right: Bool)
 
@@ -337,7 +338,7 @@ private struct HandPreview: View {
         let calibrating = model.calibration != nil
 
         // Area in use: faint while calibrating (the new one is drawn solid), red on the
-        // side(s) the index tip has crossed otherwise.
+        // side(s) where the cursor is held at the edge of the screens otherwise.
         let box = model.box
         let rect = CGRect(x: box.left * size.width, y: box.top * size.height,
                           width: (box.right - box.left) * size.width,

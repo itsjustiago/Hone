@@ -99,8 +99,8 @@ final class Driver {
     var events: [HandAction] {
         actions.filter { if case .moveCursor = $0 { return false } else { return true } }
     }
-    var moves: [(u: Double, v: Double, dragging: Bool)] {
-        actions.compactMap { if case let .moveCursor(u, v, d) = $0 { return (u, v, d) } else { return nil } }
+    var moves: [(x: Double, y: Double, dragging: Bool)] {
+        actions.compactMap { if case let .moveCursor(x, y, d) = $0 { return (x, y, d) } else { return nil } }
     }
     /// Total scroll asked for.
     var scrolled: Double {

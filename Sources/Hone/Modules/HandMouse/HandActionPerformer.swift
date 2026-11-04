@@ -20,10 +20,6 @@ final class HandActionPerformer {
         didSet { if !glide { stopGlide() } }
     }
 
-    /// Screens in play: the primary one first, then the rest in `NSScreen.screens` order.
-    var screenCount: Int { max(1, NSScreen.screens.count) }
-    private(set) var screenIndex = 0
-
     private let source = CGEventSource(stateID: .hidSystemState)
     private var leftHeld = false
     /// Click count of the left press in progress: 1 single, 2 double, 3 triple.
@@ -45,8 +41,6 @@ final class HandActionPerformer {
     private var glidePoint = CGPoint.zero
     private var glideTimer: Timer?
     private var glideLastTick: TimeInterval = 0
-    /// The next move jumps (a new screen): easing across screens would sweep over both.
-    private var glideJumpNext = false
     /// Share of the remaining distance covered per 1/60 s tick.
     private static let glideRate = 0.45
     /// Closer than this (pt), the cursor has arrived.
@@ -61,12 +55,8 @@ final class HandActionPerformer {
     func perform(_ action: HandAction) {
         guard !dryRun else { return }
         switch action {
-        case let .moveCursor(u, v, dragging):
-            moveCursor(to: globalPoint(u: u, v: v), dragging: dragging)
-        case .nextScreen:
-            screenIndex = (clampedScreenIndex() + 1) % screenCount
-            stopGlide()
-            glideJumpNext = true
+        case let .moveCursor(x, y, dragging):
+            moveCursor(to: CGPoint(x: x, y: y), dragging: dragging)
         case .leftClick:
             jumpToGlideTarget()
             click(.left)
@@ -127,22 +117,28 @@ final class HandActionPerformer {
 
     // MARK: Cursor
 
-    private func clampedScreenIndex() -> Int {
-        let index = min(screenIndex, screenCount - 1)
-        screenIndex = index
-        return index
+    /// Every screen's full frame in global CG points, in `NSScreen.screens` order. Cocoa
+    /// frames are bottom-left based; CG's origin is the primary display's top-left, y down.
+    static func screenFrames(_ screens: [NSScreen] = NSScreen.screens) -> [CGRect] {
+        guard let primaryHeight = screens.first?.frame.height else { return [] }
+        return screens.map {
+            CGRect(x: $0.frame.minX, y: primaryHeight - $0.frame.maxY, width: $0.frame.width, height: $0.frame.height)
+        }
     }
 
-    /// u, v (0…1 across the current screen, top-left origin) → global CG point.
-    /// Cocoa frames are bottom-left based; CG's origin is the primary display's top-left.
-    private func globalPoint(u: Double, v: Double) -> CGPoint {
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return CGPoint(x: 0, y: 0) }
-        let frame = screens[clampedScreenIndex()].frame
-        let primaryHeight = screens[0].frame.height
-        let u = min(max(u, 0), 1), v = min(max(v, 0), 1)
-        return CGPoint(x: frame.minX + u * (frame.width - 1),
-                       y: primaryHeight - frame.maxY + v * (frame.height - 1))
+    /// The screen holding `point`: the one whose inside holds it (a shared edge belongs to
+    /// the screen right of or below it), else one whose far edge it sits on.
+    private static func screenHolding(_ point: CGPoint, in frames: [CGRect]) -> Int? {
+        frames.firstIndex { $0.contains(point) }
+            ?? frames.firstIndex { $0.minX <= point.x && point.x <= $0.maxX && $0.minY <= point.y && point.y <= $0.maxY }
+    }
+
+    /// The engine holds the cursor on the screens up to their far edges, which are a
+    /// point past the last pixel: keep it on the screen it falls on.
+    private static func keptOnScreen(_ point: CGPoint, in frames: [CGRect]) -> CGPoint {
+        guard let i = screenHolding(point, in: frames) else { return point }
+        let f = frames[i]
+        return CGPoint(x: min(max(point.x, f.minX), f.maxX - 1), y: min(max(point.y, f.minY), f.maxY - 1))
     }
 
     /// The cursor's spot. A move we just posted may not show in the system's answer
@@ -154,9 +150,13 @@ final class HandActionPerformer {
     }
 
     /// The engine's cursor request: straight to the point, or eased by the glide timer.
-    private func moveCursor(to point: CGPoint, dragging: Bool) {
-        guard glide, !glideJumpNext else {
-            glideJumpNext = false
+    /// Never eased from one screen to another: that would sweep over both.
+    private func moveCursor(to target: CGPoint, dragging: Bool) {
+        let frames = Self.screenFrames()
+        let point = Self.keptOnScreen(target, in: frames)
+        // Easing goes on from the glide's spot, or starts from where the cursor really is.
+        let from = glideTimer != nil ? glidePoint : currentLocation()
+        guard glide, Self.screenHolding(point, in: frames) == Self.screenHolding(from, in: frames) else {
             stopGlide()
             move(to: point, dragging: dragging)
             return
@@ -164,8 +164,7 @@ final class HandActionPerformer {
         glideTarget = point
         glideDragging = dragging
         guard glideTimer == nil else { return }
-        // Easing starts from where the cursor really is.
-        glidePoint = currentLocation()
+        glidePoint = from
         guard hypot(point.x - glidePoint.x, point.y - glidePoint.y) >= Self.glideArrived else { return }
         glideLastTick = ProcessInfo.processInfo.systemUptime
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
@@ -295,7 +294,7 @@ final class HandActionPerformer {
         let point: CGPoint
         switch target {
         case .realCursor: point = currentLocation()
-        case let .point(u, v): point = globalPoint(u: u, v: v)
+        case let .point(x, y): point = Self.keptOnScreen(CGPoint(x: x, y: y), in: Self.screenFrames())
         }
         axQueue.async {
             guard let window = Self.standardWindow(at: point) else { return }

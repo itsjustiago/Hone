@@ -27,10 +27,10 @@ final class HandMouseEngineCursorTests: XCTestCase {
         d.slide(.open, from: uv(0.2, 0.5), to: uv(0.8, 0.5), over: 0.3)  // a brisk move: 1:1
         d.hold(FakeHand.open.at(uv(0.8, 0.5)), for: 1)
         let moves = d.moves
-        XCTAssertEqual(moves.first!.u, 0.2, accuracy: 1e-6)
-        XCTAssertEqual(moves.last!.u, 0.8, accuracy: 0.03)
-        XCTAssertEqual(moves.last!.v, 0.5, accuracy: 0.01)
-        XCTAssertTrue(zip(moves, moves.dropFirst()).allSatisfy { $1.u >= $0.u - 1e-9 })  // follows the hand right
+        XCTAssertEqual(moves.first!.x, 0.2, accuracy: 1e-6)
+        XCTAssertEqual(moves.last!.x, 0.8, accuracy: 0.03)
+        XCTAssertEqual(moves.last!.y, 0.5, accuracy: 0.01)
+        XCTAssertTrue(zip(moves, moves.dropFirst()).allSatisfy { $1.x >= $0.x - 1e-9 })  // follows the hand right
         XCTAssertTrue(moves.allSatisfy { !$0.dragging })
         XCTAssertEqual(d.events, [])
         XCTAssertEqual(d.engine.status.mode, .slow)  // still hand: precision gain on
@@ -40,13 +40,13 @@ final class HandMouseEngineCursorTests: XCTestCase {
         let d = Driver()
         d.hold(FakeHand.open.at(centre), for: 0.5)
         d.slide(.open, from: centre, to: uv(0.55, 0.5), over: 1)  // creeping toward a target
-        let crept = d.moves.last!.u - 0.5
+        let crept = d.moves.last!.x - 0.5
         XCTAssertLessThan(crept, 0.05 * 0.7)  // the cursor moved less than the hand
         XCTAssertGreaterThan(crept, 0.01)
         XCTAssertEqual(d.engine.status.mode, .slow)
         d.slide(.open, from: uv(0.55, 0.5), to: uv(0.9, 0.5), over: 0.2)  // a fast sweep
         d.hold(FakeHand.open.at(uv(0.9, 0.5)), for: 0.5)
-        XCTAssertEqual(d.moves.last!.u, 0.9, accuracy: 0.02)  // the box mapping is back
+        XCTAssertEqual(d.moves.last!.x, 0.9, accuracy: 0.02)  // the box mapping is back
     }
 
     func testStillHandSendsNoDuplicateMoves() {
@@ -61,8 +61,8 @@ final class HandMouseEngineCursorTests: XCTestCase {
         d.hold(FakeHand.open.at(uv(0.3, 0.4)), for: 0.3)
         d.slide(.open, from: uv(0.3, 0.4), to: uv(0.7, 0.6), over: 0.3)
         let last = d.moves.last!
-        XCTAssertEqual(d.engine.status.cursor?.u, last.u)
-        XCTAssertEqual(d.engine.status.cursor?.v, last.v)
+        XCTAssertEqual(d.engine.status.cursor?.x, last.x)
+        XCTAssertEqual(d.engine.status.cursor?.y, last.y)
         d.hold(.thumbsUp, for: 0.6)  // frozen: still known
         XCTAssertNotNil(d.engine.status.cursor)
     }
@@ -71,7 +71,7 @@ final class HandMouseEngineCursorTests: XCTestCase {
         let d = Driver()
         d.hold(FakeHand.open.at(0.98, 0.70), for: 0.2)  // right of the box
         XCTAssertTrue(d.engine.status.edges == (false, false, false, true))
-        XCTAssertEqual(d.moves.last!.u, 1)  // clamped
+        XCTAssertEqual(d.moves.last!.x, 1)  // clamped
     }
 
     func testThumbPinkyPinchSwitchesScreenOnlyWithSeveral() {
@@ -79,18 +79,92 @@ final class HandMouseEngineCursorTests: XCTestCase {
         let one = Driver()
         one.hold(.open, for: 0.5)
         one.hold(pinky, for: 0.2)
-        XCTAssertFalse(one.events.contains(.nextScreen))
+        XCTAssertNotEqual(one.engine.status.lastAction, "Ecrã seguinte")
+        XCTAssertEqual(one.moves.last!.x, 0.5, accuracy: 0.01)
 
         let two = Driver()
-        two.engine.screenCount = 2
+        two.engine.desktop = HandDesktop(screens: [HandRect(x: 0, y: 0, width: 1000, height: 600),
+                                                   HandRect(x: 1000, y: 0, width: 800, height: 600)], home: 0)
         two.hold(.open, for: 0.5)
+        XCTAssertEqual(two.moves.last!.x, 500, accuracy: 1)
         two.clear()
         two.hold(pinky, for: 0.2)
-        XCTAssertEqual(two.events, [.nextScreen])
-        // the host moves screens first, then gets a position on the new one
-        let i = two.actions.firstIndex(of: .nextScreen)!
-        guard case .moveCursor = two.actions[i + 1] else { return XCTFail("no move after nextScreen") }
+        XCTAssertEqual(two.events, [])  // the engine moves the box on by itself: nothing for the host
+        // the same spot of the hand, on the other screen
+        XCTAssertEqual(two.moves.last!.x, 1400, accuracy: 1)
+        XCTAssertEqual(two.moves.last!.y, 300, accuracy: 1)
         XCTAssertEqual(two.engine.status.lastAction, "Ecrã seguinte")
+        two.hold(.open, for: 0.3)
+        two.hold(pinky, for: 0.2)
+        XCTAssertEqual(two.moves.last!.x, 500, accuracy: 1)  // and round to the first again
+    }
+}
+
+/// The box maps the home screen; past it the cursor carries on to the screens around
+/// home as macOS arranges them, and is held at the edge where there is none.
+final class HandMouseEngineDesktopTests: XCTestCase {
+    /// Home 1000×600 at the origin, a taller screen on its left.
+    private func driver() -> Driver {
+        let d = Driver()
+        d.engine.desktop = HandDesktop(screens: [HandRect(x: 0, y: 0, width: 1000, height: 600),
+                                                 HandRect(x: -1600, y: 0, width: 1600, height: 900)], home: 0)
+        return d
+    }
+
+    /// Hand still at the centre, then a brisk move (1:1) to `to` and a rest there.
+    private func sweep(_ d: Driver, to: HandPoint) {
+        d.hold(FakeHand.open.at(centre), for: 0.5)
+        d.slide(.open, from: centre, to: to, over: 0.3)
+        d.hold(FakeHand.open.at(to), for: 0.5)
+    }
+
+    func testTheBoxMapsTheHomeScreen() {
+        let d = driver()
+        d.hold(FakeHand.open.at(centre), for: 0.5)
+        XCTAssertEqual(d.moves.last!.x, 500, accuracy: 1)
+        XCTAssertEqual(d.moves.last!.y, 300, accuracy: 1)
+        XCTAssertEqual(d.engine.status.cursor?.x ?? 0, 500, accuracy: 1)
+
+        // home need not be the first screen nor at the origin (built-in beside a primary external)
+        let e = Driver()
+        e.engine.desktop = HandDesktop(screens: [HandRect(x: 0, y: 0, width: 1920, height: 1080),
+                                                 HandRect(x: -1000, y: 200, width: 1000, height: 600)], home: 1)
+        e.hold(FakeHand.open.at(centre), for: 0.5)
+        XCTAssertEqual(e.moves.last!.x, -500, accuracy: 1)
+        XCTAssertEqual(e.moves.last!.y, 500, accuracy: 1)
+    }
+
+    func testPastTheBoxTheCursorGoesOnToTheScreenThere() {
+        let d = driver()
+        sweep(d, to: uv(-0.3, 0.5))
+        XCTAssertLessThan(d.moves.last!.x, 0)  // on the left screen
+        XCTAssertEqual(d.moves.last!.x, -300, accuracy: 50)
+        XCTAssertTrue(d.engine.status.edges == (false, false, false, false))  // nothing holds it back
+    }
+
+    func testWithNoScreenThereTheCursorIsHeldAtTheEdge() {
+        let right = driver()
+        sweep(right, to: uv(1.08, 0.5))
+        XCTAssertEqual(right.moves.last!.x, 1000)
+        XCTAssertTrue(right.engine.status.edges == (false, false, false, true))
+
+        let below = driver()
+        sweep(below, to: uv(0.5, 1.1))
+        XCTAssertEqual(below.moves.last!.y, 600)
+        XCTAssertEqual(below.moves.last!.x, 500, accuracy: 30)
+        XCTAssertTrue(below.engine.status.edges == (false, true, false, false))
+    }
+
+    func testInAGapTheCursorGoesToTheNearestScreen() {
+        // a screen up and to the right of home: right of home, below it, is a gap
+        let d = Driver()
+        d.engine.desktop = HandDesktop(screens: [HandRect(x: 0, y: 0, width: 1000, height: 600),
+                                                 HandRect(x: 1000, y: -800, width: 1200, height: 800)], home: 0)
+        sweep(d, to: uv(1.08, 0.05))  // ≈ (1080, 30): 30 pt below the other screen, 80 right of home
+        let last = d.moves.last!
+        XCTAssertEqual(last.y, 0)  // on the other screen's bottom edge
+        XCTAssertGreaterThan(last.x, 1000)
+        XCTAssertTrue(d.engine.status.edges == (false, true, false, false))
     }
 }
 
@@ -103,7 +177,7 @@ final class HandMouseEngineClickTests: XCTestCase {
         let before = d.engine.status.cursor!
         d.clear()
         // pinch while the knuckles drift a little (under the drag threshold): the cursor stays put
-        var frozen: (u: Double, v: Double)?
+        var frozen: (x: Double, y: Double)?
         for i in 1...6 {
             d.step(leftPinch.at(centre.x, centre.y + 0.001 * Double(i)))
             guard d.engine.status.mode == .clicking, let c = d.engine.status.cursor else { continue }
@@ -115,14 +189,14 @@ final class HandMouseEngineClickTests: XCTestCase {
         let click = d.log.firstIndex { $0.action == .leftClick }!
         XCTAssertLessThan(d.log[click].t - release, 0.1)  // right on release, no double-tap wait
         // the click lands where the cursor was before the fingers closed
-        let last = d.log[..<click].compactMap { e -> (u: Double, v: Double)? in
-            if case let .moveCursor(u, v, _) = e.action { return (u, v) } else { return nil }
+        let last = d.log[..<click].compactMap { e -> (x: Double, y: Double)? in
+            if case let .moveCursor(x, y, _) = e.action { return (x, y) } else { return nil }
         }.last ?? before
         XCTAssertNotNil(frozen)
-        XCTAssertEqual(last.u, frozen!.u, accuracy: 1e-12)
-        XCTAssertEqual(last.v, frozen!.v, accuracy: 1e-12)
-        XCTAssertEqual(last.u, before.u, accuracy: 0.002)
-        XCTAssertEqual(last.v, before.v, accuracy: 0.002)
+        XCTAssertEqual(last.x, frozen!.x, accuracy: 1e-12)
+        XCTAssertEqual(last.y, frozen!.y, accuracy: 1e-12)
+        XCTAssertEqual(last.x, before.x, accuracy: 0.002)
+        XCTAssertEqual(last.y, before.y, accuracy: 0.002)
         XCTAssertEqual(d.engine.status.lastAction, "Clique")
     }
 
@@ -159,7 +233,7 @@ final class HandMouseEngineClickTests: XCTestCase {
         let down = a.firstIndex(of: .leftDown)!, up = a.firstIndex(of: .leftUp)!
         XCTAssertFalse(a[..<down].contains { if case .moveCursor = $0 { return true } else { return false } })  // frozen till then
         let dragMoves = a[down..<up].compactMap { action -> Double? in
-            if case let .moveCursor(u, _, true) = action { return u } else { return nil }
+            if case let .moveCursor(x, _, true) = action { return x } else { return nil }
         }
         XCTAssertGreaterThan(dragMoves.count, 3)
         XCTAssertGreaterThan(dragMoves.last!, dragMoves.first! + 0.1)  // the drag carried the cursor
@@ -286,9 +360,9 @@ final class HandMouseEngineWindowTests: XCTestCase {
         d.clear()
         d.hold(.fist, for: 1)
         XCTAssertEqual(d.events.count, 1)
-        guard case let .minimizeWindow(.point(u, v)) = d.events.first else { return XCTFail("\(d.events)") }
-        XCTAssertEqual(u, 0.5, accuracy: 0.01)
-        XCTAssertEqual(v, 0.5, accuracy: 0.01)
+        guard case let .minimizeWindow(.point(x, y)) = d.events.first else { return XCTFail("\(d.events)") }
+        XCTAssertEqual(x, 0.5, accuracy: 0.01)
+        XCTAssertEqual(y, 0.5, accuracy: 0.01)
         XCTAssertEqual(d.engine.status.lastAction, "Minimizar")
     }
 
@@ -325,9 +399,9 @@ final class HandMouseEngineWindowTests: XCTestCase {
         XCTAssertEqual(d.engine.status.holdProgress!, 0.5 / Tuning.closeHold, accuracy: 0.1)
         d.hold(FakeHand.fist.with { $0.flat = true }, for: 0.7)
         XCTAssertEqual(d.events.count, 1)
-        guard case let .closeWindow(.point(u, v)) = d.events.first else { return XCTFail("\(d.events)") }
-        XCTAssertEqual(u, 0.5, accuracy: 0.01)
-        XCTAssertEqual(v, 0.5, accuracy: 0.01)
+        guard case let .closeWindow(.point(x, y)) = d.events.first else { return XCTFail("\(d.events)") }
+        XCTAssertEqual(x, 0.5, accuracy: 0.01)
+        XCTAssertEqual(y, 0.5, accuracy: 0.01)
         XCTAssertEqual(d.engine.status.lastAction, "Fechar janela")
     }
 
