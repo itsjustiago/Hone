@@ -60,14 +60,14 @@ final class PoseTests: XCTestCase {
         XCTAssertTrue(thumbUp(FakeHand.thumbsUp.points))
         XCTAssertFalse(thumbUp(FakeHand.relaxed.points))  // thumb out to the side
 
-        let box = HandBox.default  // 0.50…0.95 × 0.15…0.60
-        XCTAssertTrue(nearBox(HandPoint(x: 0.7, y: 0.4), box: box))      // inside
-        XCTAssertTrue(nearBox(HandPoint(x: 0.7, y: 0.69), box: box))     // in the margin
-        XCTAssertTrue(nearBox(HandPoint(x: 0.41, y: 0.1), box: box))
-        XCTAssertFalse(nearBox(HandPoint(x: 0.7, y: 0.71), box: box))    // past the margin: hand going down
-        XCTAssertFalse(nearBox(HandPoint(x: 1.06, y: 0.4), box: box))
-        XCTAssertFalse(nearBox(HandPoint(x: 0.39, y: 0.4), box: box))
-        XCTAssertFalse(nearBox(HandPoint(x: 0.7, y: 0.04), box: box))
+        let box = HandBox.default  // 0.50…0.95 × 0.40…0.85
+        XCTAssertTrue(nearBox(HandPoint(x: 0.7, y: 0.65), box: box))     // inside
+        XCTAssertTrue(nearBox(HandPoint(x: 0.7, y: 0.94), box: box))     // in the margin
+        XCTAssertTrue(nearBox(HandPoint(x: 0.41, y: 0.35), box: box))
+        XCTAssertFalse(nearBox(HandPoint(x: 0.7, y: 0.96), box: box))    // past the margin: hand going down
+        XCTAssertFalse(nearBox(HandPoint(x: 1.06, y: 0.65), box: box))
+        XCTAssertFalse(nearBox(HandPoint(x: 0.39, y: 0.65), box: box))
+        XCTAssertFalse(nearBox(HandPoint(x: 0.7, y: 0.29), box: box))
     }
 
     func testExtendedByBendAngle() {
@@ -192,7 +192,7 @@ final class LandmarkSmootherTests: XCTestCase {
         let a = FakeHand.open.landmarks
         _ = sm(0, a)
         // whole hand shifts right; the thumb tip is reported far off with low confidence
-        var moved = FakeHand.open.at(0.825, 0.375).points
+        var moved = FakeHand.open.at(0.825, 0.625).points
         moved[4] = HandPoint(x: 0, y: 0)
         var conf = [Double](repeating: 0.9, count: 21)
         conf[4] = 0.1

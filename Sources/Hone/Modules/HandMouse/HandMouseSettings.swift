@@ -93,10 +93,10 @@ final class HandMouseSettings {
         let d = UserDefaults.standard
         shortcut = Self.load(HandShortcutKey.self, "handMouse.shortcut", d) ?? .default
         var stored = Self.load(HandConfig.self, "handMouse.config", d) ?? HandConfig()
-        // v2 steers with the knuckles, not the index tip: a box calibrated before sits too high.
-        if d.integer(forKey: "handMouse.boxVersion") < 2 {
+        // v3 sits lower: the hand at screen level, not up at the camera (v2 moved to the knuckles).
+        if d.integer(forKey: "handMouse.boxVersion") < 3 {
             stored.box = .default
-            d.set(2, forKey: "handMouse.boxVersion")
+            d.set(3, forKey: "handMouse.boxVersion")
         }
         config = stored
         cameraID = d.string(forKey: "handMouse.cameraID")
@@ -104,7 +104,7 @@ final class HandMouseSettings {
         showHUD = d.object(forKey: "handMouse.showHUD") as? Bool ?? true
         showCameraPreview = d.object(forKey: "handMouse.showCameraPreview") as? Bool ?? false
         showHandOverlay = d.object(forKey: "handMouse.showHandOverlay") as? Bool ?? true
-        handStyle = d.string(forKey: "handMouse.handStyle").flatMap(HandStyle.init(rawValue:)) ?? .glove
+        handStyle = d.string(forKey: "handMouse.handStyle").flatMap(HandStyle.init(rawValue:)) ?? .skeleton
         glide = d.object(forKey: "handMouse.glide") as? Bool ?? true
         autoOffMinutes = d.object(forKey: "handMouse.autoOffMinutes") as? Int ?? 2
         watchOnly = d.object(forKey: "handMouse.watchOnly") as? Bool ?? false
