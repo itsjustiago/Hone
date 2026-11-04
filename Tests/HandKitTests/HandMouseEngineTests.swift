@@ -69,7 +69,7 @@ final class HandMouseEngineCursorTests: XCTestCase {
 
     func testEdgesWarnWhenTheHandLeavesTheBox() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.98, 0.3), for: 0.2)  // right of the box
+        d.hold(FakeHand.open.at(0.98, 0.55), for: 0.2)  // right of the box
         XCTAssertTrue(d.engine.status.edges == (false, false, false, true))
         XCTAssertEqual(d.moves.last!.u, 1)  // clamped
     }
@@ -362,8 +362,8 @@ final class HandMouseEngineWindowTests: XCTestCase {
 
     func testFlatOutsideTheBoxDoesNotFreeze() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.85), for: 0.5)
-        d.hold(FakeHand.open.with { $0.flat = true }.at(0.725, 0.85), for: 1.0)
+        d.hold(FakeHand.open.at(0.725, 0.99), for: 0.5)
+        d.hold(FakeHand.open.with { $0.flat = true }.at(0.725, 0.99), for: 1.0)
         XCTAssertNotEqual(d.engine.status.mode, .flat)
     }
 
@@ -417,25 +417,25 @@ final class HandMouseEngineWindowTests: XCTestCase {
 
     func testFistOutsideTheBoxDoesNothing() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.85), for: 0.5)  // below the box (bottom 0.60 + margin 0.10)
+        d.hold(FakeHand.open.at(0.725, 0.99), for: 0.5)  // below the box (bottom 0.85 + margin 0.10)
         d.clear()
-        d.hold(FakeHand.fist.at(0.725, 0.85), for: 2.0)
+        d.hold(FakeHand.fist.at(0.725, 0.99), for: 2.0)
         XCTAssertEqual(d.events, [])
     }
 
     func testRockOutsideTheBoxDoesNothing() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.85), for: 0.5)
+        d.hold(FakeHand.open.at(0.725, 0.99), for: 0.5)
         d.clear()
-        d.hold(FakeHand.rock.at(0.725, 0.85), for: 2.0)
+        d.hold(FakeHand.rock.at(0.725, 0.99), for: 2.0)
         XCTAssertEqual(d.events, [])
     }
 
     func testFistInTheMarginStillMinimizes() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.65), for: 0.5)  // 0.05 below the box: inside the margin
+        d.hold(FakeHand.open.at(0.725, 0.90), for: 0.5)  // 0.05 below the box: inside the margin
         d.clear()
-        d.hold(FakeHand.fist.at(0.725, 0.65), for: 1.0)
+        d.hold(FakeHand.fist.at(0.725, 0.90), for: 1.0)
         XCTAssertEqual(minimizes(d.events), 1)
     }
 
@@ -494,10 +494,10 @@ final class HandMouseEngineShortcutTests: XCTestCase {
 
     func testThumbsUpOutsideTheBoxDoesNotLock() {
         let d = Driver()
-        d.hold(FakeHand.open.at(0.725, 0.85), for: 0.5)
+        d.hold(FakeHand.open.at(0.725, 0.99), for: 0.5)
         var modes: [HandMode] = []
         for _ in 0..<90 {  // 3 s
-            d.step(FakeHand.thumbsUp.at(0.725, 0.85))
+            d.step(FakeHand.thumbsUp.at(0.725, 0.99))
             modes.append(d.engine.status.mode)
         }
         XCTAssertFalse(modes.contains { if case .shortcutsLocked = $0 { return true } else { return false } })
@@ -546,7 +546,7 @@ final class CalibrationTests: XCTestCase {
         var result: HandBox?
         for i in 0..<10 {
             for j in 0..<10 {
-                result = c.process(t: t, hand: FakeHand.indexOnly.at(0.3 + 0.5 * Double(i) / 9, 0.2 + 0.4 * Double(j) / 9).landmarks)
+                result = c.process(t: t, hand: FakeHand.indexOnly.at(0.3 + 0.5 * Double(i) / 9, 0.45 + 0.4 * Double(j) / 9).landmarks)
                 t += 1.0 / 30
                 if c.samples.count == 30 { XCTAssertNil(c.currentBox) }
                 if c.samples.count == 31 { XCTAssertNotNil(c.currentBox) }
@@ -559,14 +559,14 @@ final class CalibrationTests: XCTestCase {
             t += 1.0 / 30
         }
         XCTAssertGreaterThan(t - openAt, Tuning.calOpenHold)
-        XCTAssertEqual(result, HandBox(left: 0.3, top: 0.2, right: 0.8, bottom: 0.6))  // the knuckles' sweep
+        XCTAssertEqual(result, HandBox(left: 0.3, top: 0.45, right: 0.8, bottom: 0.85))  // the knuckles' sweep
     }
 
     func testTinySweepIsRejected() {
         let c = BoxCalibrator()
         var t = 0.0
         for i in 0..<40 {
-            _ = c.process(t: t, hand: FakeHand.indexOnly.at(0.4 + 0.05 * Double(i % 5) / 4, 0.3).landmarks)
+            _ = c.process(t: t, hand: FakeHand.indexOnly.at(0.4 + 0.05 * Double(i % 5) / 4, 0.55).landmarks)
             t += 1.0 / 30
         }
         for _ in 0..<30 {
