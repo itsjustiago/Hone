@@ -11,8 +11,8 @@ final class IslandStages {
     /// stand-ins in the tests.
     struct Environment {
         var makePanel: @MainActor (IslandActions) -> IslandStagePanel = { IslandPanel(actions: $0) }
-        /// Whether an app in full screen covers the screen of each geometry, in order.
-        var covers: @MainActor ([NotchGeometry]) -> [Bool] = { IslandFullScreen.current(on: $0) }
+        /// Whether an app in full screen covers each screen, in order.
+        var covers: @MainActor ([IslandScreen]) -> [Bool] = { IslandFullScreen.current(on: $0) }
         var pointer: @MainActor () -> CGPoint = { NSEvent.mouseLocation }
     }
 
@@ -37,9 +37,9 @@ final class IslandStages {
     private var appName: String?
     private var claude: ClaudeSnapshot?
 
-    /// Polls for an app in full screen while something can show on its own, or some
-    /// island is covered. One for every screen: each tick reads the window list once.
-    /// See `startCoverPoll`.
+    /// Polls for an app in full screen while something can show on its own, some
+    /// island is covered, or some island is a virtual notch (always on screen). One
+    /// for every screen: each tick reads the window list once. See `startCoverPoll`.
     private var coverTimer: Timer?
     /// One look at the screens once a Space has settled, when there is no poll to bring forward.
     private var settleCheck: Timer?
@@ -88,8 +88,8 @@ final class IslandStages {
         let order = plan.map(\.id)
         stages.sort { (order.firstIndex(of: $0.id) ?? 0) < (order.firstIndex(of: $1.id) ?? 0) }
 
-        // With nothing to show the panels are away: no need to look.
-        if content.hasContent { lookAtScreens() }
+        // With nothing to show the real notch's panels are away: no need to look.
+        if anyOnScreen { lookAtScreens() }
         stages.forEach { $0.apply() }
         stages.forEach { $0.confirmPointer() }
         updateCoverPoll(lookedJustNow: true)
@@ -99,7 +99,7 @@ final class IslandStages {
         let covers = environment.covers
         let host = IslandStage.Host(
             isPolling: { [weak self] in self?.coverTimer != nil },
-            covers: { geometry in covers([geometry]).first ?? false },
+            covers: { screen in covers([screen]).first ?? false },
             coverChanged: { [weak self] in self?.updateCoverPoll(lookedJustNow: true) },
             pointer: environment.pointer,
             send: commands.send,
@@ -167,16 +167,26 @@ final class IslandStages {
     /// with it: a look at the screens if something showed up, the poll, the pointer.
     private func handle(_ event: IslandEvent, at now: Date = Date(), applying: Bool = true) {
         let hadContent = content.hasContent
+        let wasPolling = isPolling
         content.handle(event, at: now)
         for stage in stages { stage.handle(event, at: now) }
+        var looked = false
         if content.hasContent && !hadContent {
             // Look before the first `apply()`: something that shows up while an app is
             // in full screen must not flash the island over it.
             lookAtScreens()
+            looked = true
         }
         // Not only when `hasContent` flips: a session going from idle to working, or a
         // track going away with sessions listed, changes what the poll is for.
         updateCoverPoll()
+        if isPolling && !wasPolling && !looked {
+            // The island can show now (a session went from idle to working, with a film
+            // already in full screen) and nobody has looked since the poll was off: its
+            // first tick is 2 s away. Look before the `apply()`, or the island would
+            // show over the full screen until then.
+            lookAtScreens()
+        }
         for stage in stages { stage.contentChanged(hadContent: hadContent, at: now) }
         if applying { stages.forEach { $0.apply() } }
     }
@@ -186,8 +196,9 @@ final class IslandStages {
     /// An app can go full screen on its own Space (the Space changes, or the app in
     /// front does) or with no sign at all, which the poll catches.
     func frontChanged(spaceChanged: Bool) {
-        // With nothing to show the panels are off the screens anyway: nothing to hide or show.
-        guard content.hasContent, !stages.isEmpty else { return }
+        // With nothing to show the real notch's panels are off the screens anyway:
+        // nothing to hide or show. A virtual notch is always on screen.
+        guard anyOnScreen, !stages.isEmpty else { return }
         refreshCovers()
         // Back from a full-screen Space the window server hid the panels without telling
         // us, so what the states hold about the pointer may be stale.
@@ -208,11 +219,18 @@ final class IslandStages {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.settleCheck = nil
-                if self.content.hasContent { self.refreshCovers() }
+                if self.anyOnScreen { self.refreshCovers() }
             }
         }
         RunLoop.main.add(check, forMode: .common)
         settleCheck = check
+    }
+
+    /// Whether some island may be on screen, so its screen is worth a look: there is
+    /// something to show (a real notch's panel is away otherwise), or an island is a
+    /// virtual notch, which is always there.
+    private var anyOnScreen: Bool {
+        content.hasContent || stages.contains { $0.geometry.isVirtual }
     }
 
     /// Looks at every island's screen with one read of the window list, and shows or
@@ -220,7 +238,7 @@ final class IslandStages {
     private func refreshCovers() {
         guard !stages.isEmpty else { return }
         var changed = false
-        for (stage, covered) in zip(stages, environment.covers(stages.map(\.geometry))) {
+        for (stage, covered) in zip(stages, environment.covers(stages.map(\.screen))) {
             if stage.refresh(covered: covered) { changed = true }
         }
         if changed { updateCoverPoll(lookedJustNow: true) }
@@ -233,7 +251,7 @@ final class IslandStages {
     private func lookAtScreens() -> Bool {
         guard !stages.isEmpty else { return false }
         var changed = false
-        for (stage, covered) in zip(stages, environment.covers(stages.map(\.geometry))) {
+        for (stage, covered) in zip(stages, environment.covers(stages.map(\.screen))) {
             if stage.setCovered(covered) { changed = true }
         }
         return changed
@@ -241,11 +259,14 @@ final class IslandStages {
 
     /// Starts or stops the poll to match `IslandCoverPoll.isNeeded` on any screen.
     /// Called when the content changes and when a screen's `covered` does. Covered
-    /// with nothing to show needs no poll: the panels are away anyway.
+    /// with nothing to show needs no poll on a real notch: the panel is away anyway.
+    /// A virtual notch is always on screen, so it counts as able to show on its own,
+    /// and covered with or without content: with one connected the poll always runs.
     private func updateCoverPoll(lookedJustNow: Bool = false) {
         let needed = stages.contains {
-            IslandCoverPoll.isNeeded(canShowOnItsOwn: $0.state.canShowOnItsOwn,
-                                     covered: $0.covered && $0.state.hasContent)
+            let virtual = $0.geometry.isVirtual
+            return IslandCoverPoll.isNeeded(canShowOnItsOwn: $0.state.canShowOnItsOwn || virtual,
+                                            covered: $0.covered && ($0.state.hasContent || virtual))
         }
         if needed {
             startCoverPoll()
@@ -255,15 +276,15 @@ final class IslandStages {
         stopCoverPoll()
         // The poll goes quiet with sessions still listed: one last look, so `covered`
         // isn't left as it was up to 2 s ago. If a screen is covered, it starts again.
-        if content.hasContent, !lookedJustNow, lookAtScreens() { updateCoverPoll(lookedJustNow: true) }
+        if anyOnScreen, !lookedJustNow, lookAtScreens() { updateCoverPoll(lookedJustNow: true) }
     }
 
     /// A borderless window can go full screen with no Space change and no change of
     /// the app in front (a game when it finishes loading, a player's own full screen,
     /// Keynote), so nothing announces it: the screens are looked at every few seconds.
-    /// Only while something can show on its own (a track, a session at work) or an
-    /// island is covered; with only idle sessions listed they are hidden, and the
-    /// hover looks for itself.
+    /// Only while something can show on its own (a track, a session at work), an
+    /// island is covered, or one is a virtual notch (always on screen); with only idle
+    /// sessions listed on real notches they are hidden, and the hover looks for itself.
     private func startCoverPoll() {
         guard coverTimer == nil else { return }
         let poll = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
@@ -279,6 +300,6 @@ final class IslandStages {
         coverTimer = nil
     }
 
-    /// Whether the full-screen poll runs: for the tests, which never let it fire.
+    /// Whether the full-screen poll runs. The tests read it too, and never let it fire.
     var isPolling: Bool { coverTimer != nil }
 }

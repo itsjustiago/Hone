@@ -317,6 +317,86 @@ final class IslandFullScreenTests: XCTestCase {
         XCTAssertFalse(covers(IslandFullScreen.windows(from: info.reversed())))
     }
 
+    // MARK: Spaces
+
+    private let internalUUID = "37D8832A-2D66-02CA-B9F7-8F30A301B230"
+    private let monitorUUID = "A1B2C3D4-0000-4000-8000-123456789ABC"
+
+    /// One entry of `SLSCopyManagedDisplaySpaces`, as the window server gives it: the
+    /// current Space is a dictionary among the display's others, with its `"type"`.
+    private func spaces(_ display: String?, type: Int?) -> [String: Any] {
+        var entry: [String: Any] = ["Spaces": [["type": 0], ["type": 4]], "Has Alert": false]
+        if let display { entry["Display Identifier"] = display }
+        if let type { entry["Current Space"] = ["type": NSNumber(value: type), "id64": 7, "ManagedSpaceID": 7] }
+        return entry
+    }
+
+    func testTheDisplaysInAFullScreenSpaceAreTheOnesWhoseCurrentSpaceIsType4() {
+        let list = [spaces(internalUUID, type: 4), spaces(monitorUUID, type: 0)]
+        XCTAssertEqual(IslandFullScreen.fullScreenDisplays(in: list), [internalUUID])
+        XCTAssertEqual(IslandFullScreen.fullScreenDisplays(in: list.reversed()), [internalUUID])
+        // Both in full screen, or neither.
+        XCTAssertEqual(IslandFullScreen.fullScreenDisplays(in: [spaces(internalUUID, type: 4),
+                                                                 spaces(monitorUUID, type: 4)]),
+                       [internalUUID, monitorUUID])
+        XCTAssertEqual(IslandFullScreen.fullScreenDisplays(in: [spaces(internalUUID, type: 0),
+                                                                 spaces(monitorUUID, type: 0)]), [])
+        XCTAssertEqual(IslandFullScreen.fullScreenDisplays(in: []), [])
+    }
+
+    func testOtherTypesOfSpaceAreNotFullScreen() {
+        // 0 is a desktop; anything else (a tile, a system Space) is not the full screen of an app.
+        for type in [0, 1, 2, 3, 5, -1] {
+            XCTAssertEqual(IslandFullScreen.fullScreenDisplays(in: [spaces(internalUUID, type: type)]), [],
+                           "type \(type)")
+        }
+    }
+
+    func testAnEntryWithoutACurrentSpaceOrAnIdentifierIsSkipped() {
+        let list = [spaces(internalUUID, type: nil),
+                    spaces(nil, type: 4),
+                    ["Display Identifier": monitorUUID, "Current Space": ["id64": 7]],
+                    ["Display Identifier": monitorUUID, "Current Space": "full screen"],
+                    ["Display Identifier": 42, "Current Space": ["type": 4]]]
+        XCTAssertEqual(IslandFullScreen.fullScreenDisplays(in: list), [])
+        // One good entry among them still counts.
+        XCTAssertEqual(IslandFullScreen.fullScreenDisplays(in: list + [spaces(monitorUUID, type: 4)]), [monitorUUID])
+    }
+
+    func testWithSharedSpacesTheMainEntryIsInFullScreenForEveryScreen() {
+        let list = [spaces("Main", type: 4)]
+        let fullScreen = IslandFullScreen.fullScreenDisplays(in: list)
+        XCTAssertEqual(fullScreen, ["Main"])
+        for uuid in [internalUUID, monitorUUID, nil] {
+            XCTAssertTrue(IslandFullScreen.isFullScreenSpace(displayUUID: uuid, fullScreen: fullScreen,
+                                                             entryCount: list.count), "\(uuid ?? "nil")")
+        }
+        // On the desktop it is no one's.
+        let desktop = IslandFullScreen.fullScreenDisplays(in: [spaces("Main", type: 0)])
+        XCTAssertFalse(IslandFullScreen.isFullScreenSpace(displayUUID: internalUUID, fullScreen: desktop, entryCount: 1))
+    }
+
+    func testASingleScreenIsLookedUpByItsOwnUUID() {
+        XCTAssertTrue(IslandFullScreen.isFullScreenSpace(displayUUID: internalUUID, fullScreen: [internalUUID],
+                                                         entryCount: 1))
+        XCTAssertFalse(IslandFullScreen.isFullScreenSpace(displayUUID: monitorUUID, fullScreen: [internalUUID],
+                                                          entryCount: 2))
+    }
+
+    func testEachScreenHasItsOwnSpaceWhenTheyAreNotShared() {
+        let fullScreen: Set = [internalUUID]
+        XCTAssertTrue(IslandFullScreen.isFullScreenSpace(displayUUID: internalUUID, fullScreen: fullScreen, entryCount: 2))
+        XCTAssertFalse(IslandFullScreen.isFullScreenSpace(displayUUID: monitorUUID, fullScreen: fullScreen, entryCount: 2))
+        // A screen with no UUID is never in a full-screen Space of its own.
+        XCTAssertFalse(IslandFullScreen.isFullScreenSpace(displayUUID: nil, fullScreen: fullScreen, entryCount: 2))
+        XCTAssertFalse(IslandFullScreen.isFullScreenSpace(displayUUID: nil, fullScreen: [], entryCount: 0))
+    }
+
+    func testAMainEntryAmongSeveralDoesNotMakeEveryScreenFullScreen() {
+        // "Main" only stands for all the screens when it is the list's one entry.
+        XCTAssertFalse(IslandFullScreen.isFullScreenSpace(displayUUID: monitorUUID, fullScreen: ["Main"], entryCount: 2))
+    }
+
     // MARK: The poll
 
     func testThePollRunsForSomethingThatCanShowOrACoveredIsland() {

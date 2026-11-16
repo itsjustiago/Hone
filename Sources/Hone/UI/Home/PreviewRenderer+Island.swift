@@ -36,7 +36,7 @@ extension PreviewRenderer {
 
     /// The island on an external screen, where there is no notch: the virtual one,
     /// the width of a real notch and as tall as a plain menu bar, hangs from the
-    /// menu bar (a strip across the top, with no notch cut into it).
+    /// menu bar (with no notch cut into it, the island draws its own).
     private static func externalIslandPages(song: NowPlayingTrack, cover: IslandArtwork?) -> [(String, AnyView)] {
         let working = ClaudeSnapshot(sessions: [onboarding, login, notes], myAgents: myAgents)
         return [
@@ -47,7 +47,7 @@ extension PreviewRenderer {
                    external: true)),
             ("ilha-externo-aberta",
              stage(.music(.expanded), track: song, artwork: cover, app: "Música", external: true)),
-            // Hidden with something to show (only idle sessions, or a long pause): the strip.
+            // Hidden (only idle sessions, a long pause, or nothing at all): the notch itself.
             ("ilha-externo-escondida",
              stage(.empty, track: nil, artwork: nil, app: "Música", external: true)),
         ]
@@ -156,7 +156,7 @@ extension PreviewRenderer {
                               app: String, claude: ClaudeSnapshot? = nil, external: Bool = false) -> AnyView {
         let notch = CGSize(width: IslandMetrics.virtualNotchWidth, height: external ? 24 : 32)
         let height = max(190, IslandMetrics.size(for: layout, notch: notch).height + 30)
-        // The virtual notch's shape, as its panel draws it (hidden, the strip).
+        // The virtual notch's shape, as its panel draws it (hidden, the notch itself).
         let outline = external
             ? NotchGeometry(screenFrame: CGRect(x: 0, y: 0, width: 600, height: height), menuBarHeight: notch.height)
                 .outline(for: layout)

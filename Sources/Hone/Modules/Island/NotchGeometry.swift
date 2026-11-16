@@ -56,23 +56,28 @@ struct NotchGeometry: Equatable {
     }
 
     /// The island's size for `layout`: `IslandMetrics`', except hidden over a virtual
-    /// notch. There is no notch to hide in there, so the hidden island is a strip
-    /// along the top of the screen, as wide as the notch, to hover or click.
+    /// notch. There is no physical notch to hide inside, so the hidden island is the
+    /// notch itself, drawn in black: as wide as the notch with its two concave ears
+    /// either side (the shape's width takes the ears in, so the body is the notch's
+    /// width) and as tall as the notch. A real notch is hidden inside, with only a
+    /// hover zone.
     func size(for layout: IslandLayout) -> CGSize {
         guard isVirtual, layout.presentation == .hidden else {
             return IslandMetrics.size(for: layout, notch: notchRect.size)
         }
-        return CGSize(width: notchRect.width, height: IslandMetrics.stripHeight)
+        return CGSize(width: notchRect.width + 2 * IslandMetrics.earRadius(for: .hidden), height: notchRect.height)
     }
 
-    /// The shape at rest for `layout`. The strip is a plain rectangle (no ears, no
-    /// rounded corners): every point of it is opaque, so the window server gives it
-    /// the pointer, which passes through a borderless window where it is clear.
+    /// The shape at rest for `layout`. Hidden over a virtual notch it is the notch as
+    /// a real one is drawn: the radii are the hidden presentation's, and compact grows
+    /// from it to the sides.
     func outline(for layout: IslandLayout) -> IslandOutline {
         let outline = IslandOutline(layout, notch: notchRect.size)
         guard isVirtual, layout.presentation == .hidden else { return outline }
-        let strip = size(for: layout)
-        return IslandOutline(width: strip.width, height: strip.height, earRadius: 0, bottomRadius: 0,
+        let notch = size(for: layout)
+        return IslandOutline(width: notch.width, height: notch.height,
+                             earRadius: IslandMetrics.earRadius(for: .hidden),
+                             bottomRadius: IslandMetrics.bottomRadius(for: .hidden),
                              coverSize: outline.coverSize)
     }
 }
@@ -84,9 +89,6 @@ enum IslandMetrics {
     /// The hover zone sits this far inside the notch on each side, so the island's
     /// black never shows beside the physical notch.
     static let hiddenInset: CGFloat = 6
-    /// The hidden island over a virtual notch: a black strip this tall along the
-    /// top of the screen. All it covers of the menu bar.
-    static let stripHeight: CGFloat = 3
     /// Compact wings are as wide as the notch is tall, plus this.
     static let wingExtra: CGFloat = 6
     static let peekMinWidth: CGFloat = 300
