@@ -24,8 +24,8 @@ final class IslandStage {
     struct Host {
         /// Whether the shared full-screen poll runs: `covered` is then never old.
         var isPolling: @MainActor () -> Bool = { false }
-        /// Whether an app in full screen covers the screen of `geometry` now.
-        var covers: @MainActor (NotchGeometry) -> Bool = { _ in false }
+        /// Whether an app in full screen covers `screen` now.
+        var covers: @MainActor (IslandScreen) -> Bool = { _ in false }
         /// `covered` changed on a look of the stage's own: the poll may have to start.
         var coverChanged: @MainActor () -> Void = {}
         /// The pointer, in global AppKit coordinates.
@@ -185,9 +185,11 @@ final class IslandStage {
             return
         }
         let now = Date()
-        // Hidden with something to show, the island keeps its hover zone: inside a
-        // real notch, or the strip along the top of a screen with a virtual one.
-        panel.show(state.layout(at: now), on: geometry, keepsWindow: state.hasContent)
+        // Hidden with something to show, the island keeps its hover zone inside a real
+        // notch. A virtual notch is always there, as a real one is: it is the black
+        // notch on the menu bar, with or without something to show (without, it
+        // ignores the pointer, which is the state's doing).
+        panel.show(state.layout(at: now), on: geometry, keepsWindow: state.hasContent || geometry.isVirtual)
         guard let next = state.nextChange(after: now) else { return }
         let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.apply() }
@@ -213,7 +215,7 @@ final class IslandStage {
             guard state.hasContent, !hovering else { return }
             // Without the poll (only idle sessions) nobody has looked at the screen:
             // look before the island opens over a full-screen app.
-            if !host.isPolling(), setCovered(host.covers(geometry)) {
+            if !host.isPolling(), setCovered(host.covers(screen)) {
                 host.coverChanged()
                 apply()
                 if covered { return }

@@ -97,6 +97,8 @@ final class IslandScreensTests: XCTestCase {
     func testTheMeasuresFollowTheVirtualNotchHeight() {
         let geometry = NotchGeometry(screenFrame: monitor, menuBarHeight: 24)
         // Compact: the notch plus a wing (the notch's height and 6) on each side.
+        // Hidden: the notch itself, with its two ears.
+        XCTAssertEqual(geometry.islandFrame(for: .hidden).size, CGSize(width: 185 + 2 * 6, height: 24))
         XCTAssertEqual(geometry.islandFrame(for: .compact).size, CGSize(width: 185 + 2 * 30, height: 24))
         XCTAssertEqual(geometry.islandFrame(for: .peek).size, CGSize(width: 300, height: 54))
         XCTAssertEqual(geometry.islandFrame(for: .expanded).size,
@@ -231,6 +233,10 @@ final class IslandScreensTests: XCTestCase {
         XCTAssertTrue(text.contains("ecrã 1 · interno · 120 Hz"))
         XCTAssertTrue(text.contains("notch virtual 867.5,1056 185×24"))
         XCTAssertTrue(text.contains("notch real 2583.5,950 185×32"))
+        // Hidden: the notch with its ears (197 wide) on the external, the hover zone inside the real one.
+        XCTAssertTrue(text.contains("ilha escondida 861.5,1056 197×24\n"))
+        XCTAssertTrue(text.contains("ilha escondida 2589.5,950 173×32\n"))
+        XCTAssertFalse(text.contains("faixa"))
         XCTAssertTrue(text.contains("plano «Todos os ecrãs»: 5 (virtual), 1 (real)"))
         XCTAssertTrue(text.contains("tampa fechada, plano «Todos os ecrãs»: 5 (virtual)"))
         XCTAssertTrue(text.contains("tampa fechada, plano «Ecrã com notch»: nenhum ecrã"))

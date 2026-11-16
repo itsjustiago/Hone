@@ -20,6 +20,8 @@ final class IslandStagesTests: XCTestCase {
     }
 
     private lazy var laptop = IslandScreen(id: 1, geometry: notched(rect(0, 0, 1512, 982)))
+    /// A second screen with a real notch, for the tests where only real notches matter.
+    private lazy var studio = IslandScreen(id: 9, geometry: notched(rect(1512, 0, 1512, 982)))
     private lazy var monitor = IslandScreen(id: 5, geometry: NotchGeometry(screenFrame: rect(1512, 0, 1920, 1080),
                                                                          menuBarHeight: 24))
     private lazy var tv = IslandScreen(id: 7, geometry: NotchGeometry(screenFrame: rect(-2560, 0, 2560, 1440),
@@ -86,24 +88,34 @@ final class IslandStagesTests: XCTestCase {
 
     // MARK: The hidden island (pure)
 
-    func testAHiddenVirtualIslandIsAThinStripAlongTheTopOfItsScreen() {
-        let geometry = monitor.geometry
-        let strip = geometry.islandFrame(for: .empty)
-        XCTAssertEqual(strip, rect(geometry.notchRect.minX, geometry.screenFrame.maxY - 3, 185, 3))
-        XCTAssertEqual(strip.height, IslandMetrics.stripHeight, "it covers 3 points of the menu bar, no more")
-        XCTAssertEqual(geometry.islandFrame(for: .hidden), strip)
-        // A plain rectangle: no clear corner for the pointer to fall through.
-        let outline = geometry.outline(for: .empty)
-        XCTAssertEqual(outline.size, strip.size)
-        XCTAssertEqual(outline.earRadius, 0)
-        XCTAssertEqual(outline.bottomRadius, 0)
-        // Hidden whatever else the layout holds.
-        var waiting = IslandLayout.empty
-        waiting.claudeActivity = .waiting
-        XCTAssertEqual(geometry.islandFrame(for: waiting), strip)
-        // On show, the virtual island is as big as anywhere else.
-        XCTAssertEqual(geometry.outline(for: .music(.compact)),
-                       IslandOutline(.music(.compact), notch: geometry.notchRect.size))
+    func testAHiddenVirtualIslandIsTheNotchItselfAtTheTopOfItsScreen() {
+        for screen in [monitor, tv] {
+            let geometry = screen.geometry
+            let height = geometry.notchRect.height
+            // The notch's width plus the two ears beside it, as tall as the menu bar.
+            let notch = geometry.islandFrame(for: .empty)
+            XCTAssertEqual(notch.size, CGSize(width: 185 + 2 * IslandMetrics.wingExtra, height: height), "\(screen.id)")
+            XCTAssertEqual(notch.midX, geometry.notchRect.midX)
+            XCTAssertEqual(notch.maxY, geometry.screenFrame.maxY)
+            XCTAssertEqual(geometry.islandFrame(for: .hidden), notch)
+            // Drawn as a real notch is: the body (the shape minus its ears) is the notch.
+            let outline = geometry.outline(for: .empty)
+            XCTAssertEqual(outline.size, notch.size)
+            XCTAssertEqual(outline.earRadius, IslandMetrics.earRadius(for: .hidden))
+            XCTAssertEqual(outline.bottomRadius, IslandMetrics.bottomRadius(for: .hidden))
+            XCTAssertEqual(outline.width - 2 * outline.earRadius, geometry.notchRect.width)
+            XCTAssertEqual(outline.coverSize, IslandOutline(.empty, notch: geometry.notchRect.size).coverSize)
+            // Hidden whatever else the layout holds.
+            var waiting = IslandLayout.empty
+            waiting.claudeActivity = .waiting
+            XCTAssertEqual(geometry.islandFrame(for: waiting), notch)
+            XCTAssertEqual(geometry.outline(for: waiting), outline)
+            // On show, the island grows from it to the sides, as anywhere else.
+            XCTAssertEqual(geometry.outline(for: .music(.compact)),
+                           IslandOutline(.music(.compact), notch: geometry.notchRect.size))
+            XCTAssertGreaterThan(geometry.islandFrame(for: .compact).width, notch.width)
+        }
+        XCTAssertEqual(tv.geometry.islandFrame(for: .empty).size, CGSize(width: 197, height: 30))
     }
 
     func testAHiddenIslandOverARealNotchIsTheHoverZoneInsideIt() {
@@ -153,6 +165,8 @@ final class IslandStagesTests: XCTestCase {
     private var hubs: [IslandStages] = []
     /// Where the stand-in pointer is: far from every screen unless a test moves it.
     private let pointer = PointerBox()
+    /// Which screens an app in full screen covers: a test changes it while the hub runs.
+    private let covered = CoveredBox()
 
     override func tearDown() async throws {
         hubs.forEach { $0.closeAll() }
@@ -161,14 +175,16 @@ final class IslandStagesTests: XCTestCase {
 
     private func makeHub(covered: Set<CGDirectDisplayID> = [], screens: [IslandScreen]) -> IslandStages {
         let pointer = pointer
+        let coveredBox = self.covered
+        coveredBox.ids = covered
+        coveredBox.asked = []
         let hub = IslandStages(
             openOnHover: true, peekOnTrackChange: true,
             environment: IslandStages.Environment(
                 makePanel: { FakePanel(actions: $0) },
-                covers: { geometries in
-                    geometries.map { geometry in
-                        screens.first { $0.geometry == geometry }.map { covered.contains($0.id) } ?? false
-                    }
+                covers: { screens in
+                    coveredBox.asked.append(screens)
+                    return screens.map { coveredBox.ids.contains($0.id) }
                 },
                 pointer: { pointer.location }))
         hubs.append(hub)
@@ -313,21 +329,30 @@ final class IslandStagesTests: XCTestCase {
         XCTAssertEqual(try fake(hub, 1).shown.last?.layout.presentation, .compact)
     }
 
-    func testAVirtualIslandWithNothingToShowAsksForNoWindow() throws {
+    func testAVirtualIslandWithNothingToShowStaysAsTheNotchButIgnoresThePointer() throws {
         let hub = makeHub(screens: [laptop, monitor])
         hub.reconcile(to: [laptop, monitor])
+        // Nothing was ever shown: the notch is there from the start.
+        XCTAssertEqual(try fake(hub, 5).shown.last?.keepsWindow, true)
         hub.trackChanged(track("a"))
         hub.trackChanged(nil)
         let virtual = try fake(hub, 5)
         XCTAssertEqual(virtual.shown.last?.layout.presentation, .hidden)
-        XCTAssertEqual(virtual.shown.last?.keepsWindow, false)
-        XCTAssertFalse(virtual.wantsWindow)
-        XCTAssertFalse(try fake(hub, 1).wantsWindow, "nor does the real notch")
+        XCTAssertEqual(virtual.shown.last?.keepsWindow, true)
+        XCTAssertTrue(virtual.wantsWindow)
+        XCTAssertFalse(try fake(hub, 1).wantsWindow, "the real notch is the screen's own: no window for nothing")
+
+        // Without anything to open, the pointer and a click do nothing.
+        let notch = monitor.geometry.islandFrame(for: .empty)
+        pointer.location = CGPoint(x: notch.midX, y: notch.maxY - 1)
         virtual.actions.hover(true)
-        XCTAssertEqual(hub.stage(on: 5)?.hovering, false)
+        virtual.actions.click()
+        let stage = try XCTUnwrap(hub.stage(on: 5))
+        XCTAssertFalse(stage.hovering)
+        XCTAssertEqual(stage.state.presentation(at: Date().addingTimeInterval(5)), .hidden)
     }
 
-    func testAHiddenVirtualIslandWithSomethingToShowKeepsTheStripAndOpensFromIt() throws {
+    func testAHiddenVirtualIslandWithSomethingToShowOpensFromTheNotch() throws {
         let hub = makeHub(screens: [laptop, monitor])
         hub.reconcile(to: [laptop, monitor])
         // Only an idle session listed: something to show, nothing on show.
@@ -336,14 +361,15 @@ final class IslandStagesTests: XCTestCase {
         let shown = try XCTUnwrap(virtual.shown.last)
         XCTAssertEqual(shown.layout.presentation, .hidden)
         XCTAssertEqual(shown.keepsWindow, true)
-        XCTAssertTrue(virtual.wantsWindow, "the strip stays, to open the island from")
-        XCTAssertEqual(shown.geometry.islandFrame(for: shown.layout).height, IslandMetrics.stripHeight)
+        XCTAssertTrue(virtual.wantsWindow, "the notch stays, to open the island from")
+        XCTAssertEqual(shown.geometry.islandFrame(for: shown.layout).size,
+                       CGSize(width: 185 + 2 * IslandMetrics.wingExtra, height: 24))
         // The real notch keeps its hover zone, as before.
         XCTAssertEqual(try fake(hub, 1).shown.last?.keepsWindow, true)
 
-        // The pointer comes up to the strip: the island opens, as from a real notch.
-        let strip = monitor.geometry.islandFrame(for: .empty)
-        pointer.location = CGPoint(x: strip.midX, y: strip.maxY - 1)
+        // The pointer comes up to the notch: the island opens, as from a real one.
+        let notch = monitor.geometry.islandFrame(for: .empty)
+        pointer.location = CGPoint(x: notch.midX, y: notch.maxY - 1)
         virtual.actions.hover(true)
         XCTAssertEqual(hub.stage(on: 5)?.hovering, true)
         let opened = Date().addingTimeInterval(IslandTiming().hoverDwell + 0.01)
@@ -354,6 +380,36 @@ final class IslandStagesTests: XCTestCase {
         virtual.actions.hover(false)
         virtual.actions.click()
         XCTAssertEqual(hub.stage(on: 5)?.state.presentation(at: Date()), .expanded)
+    }
+
+    func testAVirtualIslandCoveredByAFullScreenAppHidesEvenWithNothingToShow() throws {
+        let hub = makeHub(covered: [5], screens: [laptop, monitor])
+        hub.reconcile(to: [laptop, monitor])
+        let stage = try XCTUnwrap(hub.stage(on: 5))
+        let virtual = try fake(hub, 5)
+        XCTAssertFalse(stage.state.hasContent)
+        XCTAssertTrue(stage.covered, "the virtual notch is always there to be covered")
+        XCTAssertGreaterThan(virtual.hides, 0)
+        XCTAssertTrue(virtual.shown.isEmpty, "never shown over the full screen")
+
+        // The app leaves full screen with a change of Space: the notch is back.
+        covered.ids = []
+        hub.frontChanged(spaceChanged: true)
+        XCTAssertFalse(stage.covered)
+        XCTAssertEqual(virtual.shown.last?.keepsWindow, true)
+        XCTAssertTrue(virtual.wantsWindow)
+
+        // And goes again, with no sign at all: the poll's look finds it.
+        covered.ids = [5]
+        hub.frontChanged(spaceChanged: false)
+        XCTAssertTrue(stage.covered)
+        XCTAssertTrue(hub.isPolling)
+    }
+
+    func testTheCoverCheckIsAskedAboutScreensNotGeometries() {
+        let hub = makeHub(screens: [laptop, monitor])
+        hub.reconcile(to: [laptop, monitor])
+        XCTAssertEqual(covered.asked.last, [laptop, monitor], "ids included, to find each screen's Space")
     }
 
     func testANewGeometryMovesTheSameIslandAndLetsGoOfTheHover() throws {
@@ -379,19 +435,20 @@ final class IslandStagesTests: XCTestCase {
     }
 
     func testThePollStopsWhenTheOnlyCoveredScreenLeaves() {
-        let hub = makeHub(covered: [5], screens: [laptop, monitor])
-        hub.reconcile(to: [laptop, monitor])
+        let hub = makeHub(covered: [9], screens: [laptop, studio])
+        hub.reconcile(to: [laptop, studio])
         // Only an idle session: nothing shows on its own, so only the cover needs watching.
         hub.claudeChanged(ClaudeSnapshot(sessions: [session("i", .idle)], myAgents: []), notices: [])
-        XCTAssertEqual(hub.stage(on: 5)?.covered, true)
+        XCTAssertEqual(hub.stage(on: 9)?.covered, true)
+        XCTAssertEqual(hub.stage(on: 1)?.covered, false)
         XCTAssertTrue(hub.isPolling, "a covered screen is watched until the app leaves full screen")
         hub.reconcile(to: [laptop])
         XCTAssertFalse(hub.isPolling)
     }
 
-    func testNothingToShowNoPoll() {
-        let hub = makeHub(screens: [laptop, monitor])
-        hub.reconcile(to: [laptop, monitor])
+    func testNothingToShowNoPollOnRealNotches() {
+        let hub = makeHub(screens: [laptop, studio])
+        hub.reconcile(to: [laptop, studio])
         XCTAssertFalse(hub.isPolling)
         hub.claudeChanged(ClaudeSnapshot(sessions: [session("i", .idle)], myAgents: []), notices: [])
         XCTAssertFalse(hub.isPolling, "only idle sessions: hidden, the hover looks for itself")
@@ -403,11 +460,76 @@ final class IslandStagesTests: XCTestCase {
         hub.reconcile(to: [])
         XCTAssertFalse(hub.isPolling, "no screen, nothing to watch")
     }
+
+    func testTheRealNotchAloneWithNothingToShowIsNotWatchedNorLookedAt() {
+        let hub = makeHub(screens: [laptop])
+        hub.reconcile(to: [laptop])
+        XCTAssertFalse(hub.isPolling)
+        XCTAssertTrue(covered.asked.isEmpty, "its panel is away anyway: no look at the window list")
+        hub.frontChanged(spaceChanged: true)
+        XCTAssertTrue(covered.asked.isEmpty)
+    }
+
+    func testAVirtualIslandIsWatchedEvenWithNothingToShow() {
+        let hub = makeHub(screens: [laptop, monitor])
+        hub.reconcile(to: [laptop, monitor])
+        XCTAssertFalse(hub.stages.contains { $0.state.hasContent })
+        XCTAssertTrue(hub.isPolling, "it is on screen all the time: a full screen can start any time")
+        hub.claudeChanged(ClaudeSnapshot(sessions: [session("i", .idle)], myAgents: []), notices: [])
+        XCTAssertTrue(hub.isPolling)
+        hub.trackChanged(track("a"))
+        hub.trackChanged(nil)
+        XCTAssertTrue(hub.isPolling)
+        hub.reconcile(to: [laptop])
+        XCTAssertFalse(hub.isPolling, "the virtual notch left")
+        hub.reconcile(to: [laptop, tv])
+        XCTAssertTrue(hub.isPolling)
+        hub.closeAll()
+        XCTAssertFalse(hub.isPolling)
+    }
+
+    // MARK: Looking before showing
+
+    func testAnIslandThatCanShowNowLooksFirstWhenASessionStartsWorkingOverAFullScreen() throws {
+        let hub = makeHub(screens: [laptop])
+        hub.reconcile(to: [laptop])
+        // Only an idle session: shown nowhere, and no poll watching the screen.
+        hub.claudeChanged(ClaudeSnapshot(sessions: [session("c", .idle)], myAgents: []), notices: [])
+        let panel = try fake(hub, 1)
+        XCTAssertFalse(hub.isPolling)
+        XCTAssertEqual(hub.stage(on: 1)?.covered, false)
+
+        // A film goes full screen, unannounced; then the session starts working. The
+        // island must not show for the 2 s until the poll's first tick.
+        covered.ids = [1]
+        hub.claudeChanged(ClaudeSnapshot(sessions: [session("c", .working)], myAgents: []), notices: [])
+        XCTAssertTrue(hub.isPolling)
+        XCTAssertEqual(hub.stage(on: 1)?.covered, true)
+        XCTAssertFalse(panel.shown.contains { $0.layout.presentation == .compact },
+                       "never compact over the full screen")
+        XCTAssertGreaterThan(panel.hides, 0)
+    }
+
+    func testTheLookBeforeShowingIsOneReadWhenTheContentAlreadyLooked() {
+        let hub = makeHub(screens: [laptop])
+        hub.reconcile(to: [laptop])
+        covered.asked = []
+        // Something shows up: the look for new content, and the poll starting, make one read.
+        hub.trackChanged(track("a"))
+        XCTAssertEqual(covered.asked.count, 1)
+    }
 }
 
 @MainActor
 private final class PointerBox {
     var location = CGPoint(x: -100_000, y: -100_000)
+}
+
+/// The screens an app in full screen covers, and what the hub asked about them.
+@MainActor
+private final class CoveredBox {
+    var ids: Set<CGDirectDisplayID> = []
+    var asked: [[IslandScreen]] = []
 }
 
 /// A panel with no window: it records what the stage asked of it.

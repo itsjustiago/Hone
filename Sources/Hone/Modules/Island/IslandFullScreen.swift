@@ -4,10 +4,13 @@ import CoreGraphics
 /// Whether an app in full screen covers the island's screen, so the island steps
 /// aside until it ends. Pure, so it is tested without a window.
 ///
-/// A native full-screen app has its own Space, and the window server already keeps
-/// the island out of it (see `IslandPanel.makeWindow`). This covers what it can't:
-/// borderless windows the size of the screen (games, players, Keynote) that sit in
-/// the ordinary Space, and the moment before the Space change is known.
+/// A native full-screen app has its own Space, and the window server is meant to keep
+/// the island out of it (see `IslandPanel.makeWindow`), but it did not always: the
+/// island showed over a film in full screen. So the Space of each screen is read too
+/// (`fullScreenDisplays`): a screen whose current Space is a full-screen one is
+/// covered, whatever the windows say. The window check covers the rest: borderless
+/// windows the size of the screen (games, players, Keynote) that sit in the ordinary
+/// Space, and the moment before the Space change is known.
 ///
 /// Bounds alone are not enough. On a notched screen a native full-screen window
 /// stops below the notch, so its bounds equal those of a maximized window when the
@@ -109,6 +112,37 @@ enum IslandFullScreen {
             return Window(pid: pid, layer: layer, bounds: bounds, alpha: alpha)
         }
     }
+
+    // MARK: Spaces
+
+    /// The `"type"` of a full-screen Space in the window server's Space list (a desktop is 0).
+    static let fullScreenSpaceType = 4
+    /// The `"Display Identifier"` of the one entry the list has when the displays share
+    /// their Spaces ("Displays have separate Spaces" off): a UUID otherwise, one per display.
+    static let sharedSpacesIdentifier = "Main"
+
+    /// The displays whose current Space is a full-screen one, from the window server's
+    /// list of Spaces (`SLSCopyManagedDisplaySpaces`): each entry has the display's
+    /// `"Display Identifier"` and a `"Current Space"` with its `"type"`. An entry
+    /// missing either, or with a Space of another type, is left out.
+    static func fullScreenDisplays(in spaces: [[String: Any]]) -> Set<String> {
+        Set(spaces.compactMap { entry in
+            guard let display = entry["Display Identifier"] as? String,
+                  let current = entry["Current Space"] as? [String: Any],
+                  (current["type"] as? NSNumber)?.intValue == fullScreenSpaceType
+            else { return nil }
+            return display
+        })
+    }
+
+    /// Whether the screen of the display `displayUUID` is in a full-screen Space, given
+    /// `fullScreen` (`fullScreenDisplays`) from a list of `entryCount` entries. With
+    /// shared Spaces the list has the one entry, `"Main"`, for every screen: when that
+    /// one is in full screen, they all are.
+    static func isFullScreenSpace(displayUUID: String?, fullScreen: Set<String>, entryCount: Int) -> Bool {
+        if let displayUUID, fullScreen.contains(displayUUID) { return true }
+        return entryCount == 1 && fullScreen.contains(sharedSpacesIdentifier)
+    }
 }
 
 /// When the controller looks at the screen on a timer (the full-screen poll).
@@ -124,34 +158,78 @@ enum IslandCoverPoll {
 
 // MARK: - The real system (AppKit, not pure)
 
+/// The window server's list of Spaces, read from SkyLight. This is private API: there
+/// is no public one for "which Space is this screen in", and the window server did not
+/// keep the island out of a full-screen Space by itself. It needs no permission (it is
+/// the same list Mission Control draws from, with no window contents in it). The two
+/// functions are looked up once; if either is missing (a system that renamed them)
+/// there are no Spaces, nothing is covered by this check, and the window check goes on.
+private enum IslandSpaces {
+    typealias ConnFn = @convention(c) () -> Int32
+    typealias SpacesFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
+
+    private static let functions: (connection: ConnFn, spaces: SpacesFn)? = {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY),
+              let connection = dlsym(handle, "SLSMainConnectionID"),
+              let spaces = dlsym(handle, "SLSCopyManagedDisplaySpaces")
+        else { return nil }
+        return (unsafeBitCast(connection, to: ConnFn.self), unsafeBitCast(spaces, to: SpacesFn.self))
+    }()
+
+    /// One entry per display (or the one `"Main"` entry), empty when the list is not there.
+    static func read() -> [[String: Any]] {
+        guard let functions,
+              let list = functions.spaces(functions.connection())?.takeRetainedValue() as? [[String: Any]]
+        else { return [] }
+        return list
+    }
+}
+
 extension IslandFullScreen {
-    /// Whether an app in full screen covers the screen of each geometry right now,
-    /// in the same order, from one read of the window list. `false` for all when the
-    /// system won't list its windows: the islands stay.
+    /// The UUID string of a display, the form `"Display Identifier"` has in the list of Spaces.
+    static func displayUUID(of id: CGDirectDisplayID) -> String? {
+        guard let uuid = CGDisplayCreateUUIDFromDisplayID(id)?.takeRetainedValue() else { return nil }
+        return CFUUIDCreateString(nil, uuid) as String?
+    }
+
+    /// Whether an app in full screen covers each screen right now, in the same order:
+    /// the window list says so (one read for all of them), or the screen's current
+    /// Space is a full-screen one (one read of the Spaces). The window check says
+    /// `false` for all when the system won't list its windows: the islands stay.
     @MainActor
-    static func current(on geometries: [NotchGeometry]) -> [Bool] {
-        guard !geometries.isEmpty, let primaryHeight = NSScreen.screens.first?.frame.height,
-              let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                                    kCGNullWindowID) as? [[String: Any]]
-        else { return geometries.map { _ in false } }
+    static func current(on screens: [IslandScreen]) -> [Bool] {
+        guard !screens.isEmpty else { return [] }
         let options = NSApp.currentSystemPresentationOptions
         let frontmost = NSWorkspace.shared.frontmostApplication.map {
             Frontmost(pid: $0.processIdentifier, isFullScreen: isFullScreen(options))
         }
-        let windows = windows(from: info)
-        let covered = geometries.map { geometry in
-            covers(screen: cgRect(fromAppKit: geometry.screenFrame, primaryScreenHeight: primaryHeight),
-                   topInset: geometry.notchRect.height,
-                   windows: windows,
-                   ownPID: ProcessInfo.processInfo.processIdentifier,
-                   frontmost: frontmost,
-                   islandLevel: IslandPanel.level.rawValue)
+        var byWindows = screens.map { _ in false }
+        if let primaryHeight = NSScreen.screens.first?.frame.height,
+           let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                 kCGNullWindowID) as? [[String: Any]] {
+            let windows = windows(from: info)
+            byWindows = screens.map { screen in
+                covers(screen: cgRect(fromAppKit: screen.geometry.screenFrame, primaryScreenHeight: primaryHeight),
+                       topInset: screen.geometry.notchRect.height,
+                       windows: windows,
+                       ownPID: ProcessInfo.processInfo.processIdentifier,
+                       frontmost: frontmost,
+                       islandLevel: IslandPanel.level.rawValue)
+            }
         }
+        let spaces = IslandSpaces.read()
+        let fullScreen = fullScreenDisplays(in: spaces)
+        let bySpace = screens.map {
+            isFullScreenSpace(displayUUID: displayUUID(of: $0.id), fullScreen: fullScreen, entryCount: spaces.count)
+        }
+        let covered = zip(byWindows, bySpace).map { $0 || $1 }
         // Testing by hand: `HONE_DEBUG_ISLAND=1` logs every look, to tell a miss of this
         // check from one of the window server's (native full screen, see `IslandPanel`).
         if ProcessInfo.processInfo.environment["HONE_DEBUG_ISLAND"] != nil {
-            NSLog("Hone island: covered=%@ options=%lu frontmost=%d",
-                  covered.map { $0 ? "1" : "0" }.joined(separator: ","), options.rawValue, frontmost?.pid ?? -1)
+            func flags(_ values: [Bool]) -> String { values.map { $0 ? "1" : "0" }.joined(separator: ",") }
+            NSLog("Hone island: covered=%@ windows=%@ spaces=%@ spaceEntries=%d options=%lu frontmost=%d",
+                  flags(covered), flags(byWindows), flags(bySpace), spaces.count,
+                  options.rawValue, frontmost?.pid ?? -1)
         }
         return covered
     }

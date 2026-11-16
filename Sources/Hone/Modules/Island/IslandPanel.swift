@@ -92,7 +92,7 @@ final class IslandPanel {
     /// Shows `layout` around the notch of `geometry`. With `keepsWindow` false
     /// (nothing to show: no track, no Claude session), the panel leaves the screen
     /// once it has folded away. Hidden with something to show, it keeps the hover
-    /// zone: inside a real notch, or the strip along the top of the screen.
+    /// zone inside the notch: the real one, or the virtual one, drawn as a notch.
     func show(_ layout: IslandLayout, on geometry: NotchGeometry, keepsWindow: Bool) {
         let presentation = layout.presentation
         let request = Request(layout: layout, keepsWindow: keepsWindow)
