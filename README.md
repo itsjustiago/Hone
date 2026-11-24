@@ -18,6 +18,7 @@ to replace a pile of single-purpose utilities — each tool is a self-contained
 | **Clean Keyboard** | — | ✅ Working | Locks every key so you can wipe the keyboard clean without typing or firing shortcuts. A small floating card sits over the screen (nothing is covered); unlock with Esc ×3 or its button. |
 | **Quit on Close** | RedQuits / Quitter | ✅ Working | Closing an app's last window (red dot or ⌘W) quits the app instead of leaving it running with no windows — right away, or after a delay you pick (default 1 min), cancelled if you open a window again. Per-app lists; it only quits an app it can *prove* has no windows left, and the Finder and Steam are never touched. |
 | **Key Swap** | Karabiner-Elements | ✅ Working | Swaps ⌘ with ⌃ system-wide, both keys and both directions, so ⌃C / ⌃V / ⌃Z copy, paste and undo like on Windows. Tab is never swapped — ⌘Tab stays the app switcher, ⌃Tab keeps cycling tabs. ⌃+click stays the macOS right-click; per-app exception list. |
+| **Key Remap** | Karabiner-Elements / Modifier Keys | New (off by default) | Makes Fn / 🌐, ⌃, ⌥ and ⌘ work as any other key, one by one: Fn as ⌃, ⌘ as ⌥, a modifier as Esc, an arrow, an F-key or a letter, or a key switched off. It remaps in the HID layer, so it needs no permission and covers every keyboard, password fields included. With Key Swap on, a key that becomes ⌃ or ⌘ ends up as the other one (Fn → ⌃ acts as ⌘), and the pane says so. |
 | **Lid Fold** | — (adapted from MacDuo) | New (off by default) | Folds the built-in display as the lid moves, like the iPhone Duo: six effects (Duo, Ghost, Roll, Shutter, Flex, Iris) over the real desktop or a plain black fade. The real desktop needs Screen Recording and shows the recording indicator only while the lid moves; the fade captures nothing. Reads the lid-angle sensor (MacBook Air M2+, MacBook Pro 14"/16" M1 Pro+), has a "Testar" button for Macs without it, and never touches brightness or sleep: Sleepy keeps owning those. |
 
 ## Clippy, Screenly e Sleepy — agora dentro do Hone
@@ -156,6 +157,7 @@ Sources/Hone/
     ├── QuitOnClose/ QuitOnCloseModule · QuitOnCloseController · AppWindowWatcher ·
     │               QuitRules · WindowCensus · QuitOnCloseSettings(+View)
     ├── KeySwap/    KeySwapModule · KeySwapTap · KeySwapSettings(+View)
+    ├── KeyRemap/   KeyRemapModule · KeyRemapEngine · KeyRemapRules · KeyRemapSettings(+View)
     └── LidFold/    LidFoldModule · LidFoldSettings(+View)
 
 Sources/LidFoldKit/ Motor da Dobra da tampa (só frameworks do sistema, sem Kits): LidSensor (ângulo da
@@ -365,6 +367,37 @@ that IPC round-trip inside the callback is enough for the OS to kill the tap by
 timeout. In password fields with *secure input* macOS blocks every tap, so the
 swap is suspended there by the system itself.
 
+### How the Key Remap tool works
+
+Unlike Key Swap, this is **not** an event tap. `KeyRemapEngine` writes the system's
+`UserKeyMapping` property through a public `IOHIDEventSystemClient` — the same list
+`hidutil property --set` and System Settings' Modifier Keys write. Each entry is a
+source and a destination HID usage (`page << 32 | usage`: the Fn / 🌐 key is usage 3
+on Apple's vendor page 0xFF, the modifiers and every other key live on page 7).
+The remap happens before an event exists, so a remapped Fn is wholly the new key
+(Fn as ⌃ + arrows is ⌃ + arrows; an event tap would already get Home/End), every app and
+password field sees the new key, and nothing reads the keyboard — no Accessibility
+and no Input Monitoring. Nothing is written until a key is actually remapped.
+
+⌃ ⌥ ⌘ are remapped on both sides: left to left and right to right when the destination
+has sides (⌃ ⌥ ⌘ ⇧), and both to the one key otherwise. Fn becomes the *left* modifier.
+"Desligada" maps a key to usage 0 of the keyboard page, which is "no event".
+
+The mapping is one list shared with whoever else writes to it, so the engine reads it
+first, keeps every entry that isn't its own and replaces only the ones for the same
+source key. What it wrote is remembered in `keyRemap.applied`: `stop()` takes out
+exactly those pairs (and a launch with the tool off does the same, after a crash that
+never got to), leaving anybody else's entries alone. The pure part — the key catalogue,
+choices to pairs, merging and removing — is in `KeyRemapRules` and tested without the
+HID system.
+
+The system forgets the mapping on a restart and a keyboard plugged in later may not have
+it, so it is written again after wake (`NSWorkspace.didWakeNotification`) and whenever a
+keyboard service appears (`IOServiceAddMatchingNotification`, ~1 s after the last one).
+
+Key Swap is an event tap, so it runs *after* the HID mapping: with both on, Fn → ⌃
+reaches the apps as ⌘. The pane says so when a destination is ⌃ or ⌘ and Key Swap is on.
+
 ## Adding a new tool
 
 1. Create `Sources/Hone/Modules/<Name>/<Name>Module.swift` conforming to
@@ -381,4 +414,4 @@ permission flow are all wired off the protocol.
   and click-to-close-window.
 - Per-app scroll overrides (exclusion list) for the Scroll tool.
 - App icon + stable signing (so Accessibility grants survive rebuilds) + Sparkle updates.
-- Future modules: keyboard remaps, window snapping, clipboard history…
+- Future modules: window snapping, clipboard history…

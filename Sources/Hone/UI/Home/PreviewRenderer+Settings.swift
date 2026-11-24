@@ -39,6 +39,9 @@ extension PreviewRenderer {
             ("settings-keyswap", window("keySwap", off: off) {
                 tool("keySwap", settings: AnyView(KeySwapSettingsView(module: KeySwapModule())))
             }),
+            ("settings-keyremap", window("keyRemap", off: off) {
+                tool("keyRemap", settings: keyRemapSettings())
+            }),
             ("settings-windowsshortcuts", window("windowsShortcuts", off: off) {
                 tool("windowsShortcuts", settings: AnyView(WindowsShortcutsSettingsView(module: WindowsShortcutsModule())))
             }),
@@ -153,6 +156,18 @@ extension PreviewRenderer {
         return AnyView(LidFoldSettingsContent(
             settings: LidFoldSettings(defaults: defaults), tint: VibeToolColor.lidFold, isEnabled: true,
             status: status, hasScreenAccess: hasScreenAccess, test: {}, requestScreenAccess: {}))
+    }
+
+    /// The Key Remap pane from a scratch defaults suite, so it never reads or writes the real
+    /// choices: Fn as ⌃ with Key Swap on, which shows the "Repor tudo" button and the Key Swap note.
+    private static func keyRemapSettings() -> AnyView {
+        let name = "com.tiagof.hone.preview.keyremap"
+        let defaults = UserDefaults(suiteName: name) ?? .standard
+        defaults.removePersistentDomain(forName: name)
+        defaults.set(true, forKey: "keySwap.enabled")
+        let settings = KeyRemapSettings(defaults: defaults)
+        settings.map = ["fn": "control"]
+        return AnyView(KeyRemapSettingsView(settings: settings, keySwapDefaults: defaults))
     }
 
     private static func onboarding(_ accessibility: OnboardingAccessibility) -> AnyView {

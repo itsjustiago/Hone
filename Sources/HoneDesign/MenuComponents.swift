@@ -356,6 +356,9 @@ public struct VibeActionPill: View {
 /// ignores Hone's look. A SwiftUI `Menu` can't be the pill (on macOS it draws
 /// only the text and image of its label), so the pill is a plain button that
 /// pops an `NSMenu` up under itself.
+///
+/// A long list can be folded into submenus: options with the same `group` share one,
+/// which sits in the menu where the first of them is.
 public struct VibeMenuPicker<Value: Hashable>: View {
     public struct Option: Identifiable {
         public let value: Value
@@ -363,12 +366,18 @@ public struct VibeMenuPicker<Value: Hashable>: View {
         public let title: String
         /// On the pill: short enough for a narrow row.
         public let label: String
+        /// Name of the submenu the option goes in; `nil` lists it in the menu itself.
+        public let group: String?
+        /// A divider above it, for splitting the menu into runs.
+        public let dividerBefore: Bool
         public var id: Value { value }
 
-        public init(_ value: Value, title: String, label: String) {
+        public init(_ value: Value, title: String, label: String, group: String? = nil, dividerBefore: Bool = false) {
             self.value = value
             self.title = title
             self.label = label
+            self.group = group
+            self.dividerBefore = dividerBefore
         }
     }
 
@@ -424,16 +433,7 @@ public struct VibeMenuPicker<Value: Hashable>: View {
         }
         anchor.target = target
 
-        let menu = NSMenu(title: title)
-        menu.autoenablesItems = false
-        menu.appearance = NSAppearance(named: .darkAqua)
-        for (index, option) in options.enumerated() {
-            let item = NSMenuItem(title: option.title, action: #selector(MenuTarget.choose(_:)), keyEquivalent: "")
-            item.target = target
-            item.tag = index
-            item.state = option.value == selection ? .on : .off
-            menu.addItem(item)
-        }
+        let menu = Self.makeMenu(title: title, options: options, selection: selection, target: target)
 
         var origin = NSEvent.mouseLocation
         if let view = anchor.view, let window = view.window {
@@ -441,6 +441,45 @@ public struct VibeMenuPicker<Value: Hashable>: View {
             origin = NSPoint(x: pill.maxX - max(menu.size.width, pill.width), y: pill.minY - 4)
         }
         menu.popUp(positioning: nil, at: origin, in: nil)
+    }
+
+    /// The menu for `options`: one item each, tagged with its index, with a tick on the chosen
+    /// one. Options of a `group` go in that group's submenu; a divider goes where asked.
+    static func makeMenu(title: String, options: [Option], selection: Value, target: AnyObject) -> NSMenu {
+        let menu = NSMenu(title: title)
+        menu.autoenablesItems = false
+        menu.appearance = NSAppearance(named: .darkAqua)
+        var groupItems: [String: NSMenuItem] = [:]
+        for (index, option) in options.enumerated() {
+            let item = NSMenuItem(title: option.title, action: #selector(MenuTarget.choose(_:)), keyEquivalent: "")
+            item.target = target
+            item.tag = index
+            let chosen = option.value == selection
+            item.state = chosen ? .on : .off
+
+            guard let group = option.group else {
+                if option.dividerBefore { menu.addItem(.separator()) }
+                menu.addItem(item)
+                continue
+            }
+            // The group's item goes in with its first option, and is ticked when the choice is inside it.
+            let groupItem: NSMenuItem
+            if let existing = groupItems[group] {
+                groupItem = existing
+            } else {
+                groupItem = NSMenuItem(title: group, action: nil, keyEquivalent: "")
+                let submenu = NSMenu(title: group)
+                submenu.autoenablesItems = false
+                submenu.appearance = NSAppearance(named: .darkAqua)
+                groupItem.submenu = submenu
+                groupItems[group] = groupItem
+                if option.dividerBefore { menu.addItem(.separator()) }
+                menu.addItem(groupItem)
+            }
+            if chosen { groupItem.state = .on }
+            groupItem.submenu?.addItem(item)
+        }
+        return menu
     }
 }
 

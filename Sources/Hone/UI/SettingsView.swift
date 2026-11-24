@@ -3,7 +3,7 @@ import HoneDesign
 
 /// Sizes the Settings window and its pages agree on.
 enum SettingsLayout {
-    static let size = CGSize(width: 680, height: 680)
+    static let size = CGSize(width: 680, height: 714)
     static let sidebarWidth: CGFloat = 216
     /// The window has no visible title bar; content starts below its buttons.
     static let titlebar: CGFloat = 40

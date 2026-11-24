@@ -94,6 +94,8 @@ public enum VibeToolColor {
     public static let island = VibePalette.pink
     /// Shares Screenly's yellow: the palette is fully assigned, and a tweak and an app sit far apart in the list.
     public static let handMouse = VibePalette.yellow
+    /// Shares Scroll's blue: the palette is fully assigned, and the two sit far apart in the list.
+    public static let keyRemap = VibePalette.blue
 }
 
 // MARK: - Shape & space
