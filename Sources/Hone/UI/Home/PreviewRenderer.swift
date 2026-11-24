@@ -120,7 +120,7 @@ enum PreviewRenderer {
     }
 }
 
-/// The twelve tools as fake values (mirrors the modules' metadata).
+/// The tools as fake values (mirrors the modules' metadata).
 enum Fixture {
     struct Spec {
         let id, title, shortTitle, category, tagline, icon: String
@@ -146,6 +146,9 @@ enum Fixture {
         Spec(id: "keySwap", title: "Comando ⇄ Controlo", shortTitle: "⌘ ⇄ ⌃", category: "Teclado",
              tagline: "Troca ⌘ com ⌃ para copiares e colares como no Windows.",
              icon: "command.square.fill", tint: VibeToolColor.keySwap),
+        Spec(id: "keyRemap", title: "Trocar teclas", shortTitle: "Teclas", category: "Teclado",
+             tagline: "Faz a Fn, a ⌃, a ⌥ e a ⌘ funcionarem como outra tecla, uma a uma.",
+             icon: "keyboard.badge.ellipsis", tint: VibeToolColor.keyRemap),
         Spec(id: "windowsShortcuts", title: "Atalhos do Windows", shortTitle: "Atalhos", category: "Teclado",
              tagline: "Cortar e colar, F2, botões laterais, ⌘Q a segurar e janelas, como no Windows.",
              icon: "square.grid.2x2.fill", tint: VibeToolColor.windowsShortcuts),

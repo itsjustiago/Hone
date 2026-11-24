@@ -39,6 +39,7 @@ final class ModuleManager {
             AltTabModule(),
             QuitOnCloseModule(),
             KeySwapModule(),
+            KeyRemapModule(),
             WindowsShortcutsModule(),
             IslandModule(),
             HandMouseModule(),
